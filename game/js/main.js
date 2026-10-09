@@ -7,7 +7,7 @@ import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import {
   World, CELL, ROW, W, L, LZ, COLS, WALL, BRIDGE, LEVEL, BRIDGE_BOTTOM, BRIDGE_TOP, canStep,
 } from './world.js';
-import { createMaterial, buildInstanceMesh } from './render.js';
+import { createMaterial, createStarMaterial, buildInstanceMesh } from './render.js';
 
 // ---------- параметры игрока (их же учитывает проверка паттернов) ----------
 const P = {
@@ -54,7 +54,7 @@ renderer.setClearColor(0xffffff, 1);
 
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(75, 1, 0.05, 200);
-const material = createMaterial({ linearOut: useBloom });
+const materials = { main: createMaterial({ linearOut: useBloom }), star: createStarMaterial({ linearOut: useBloom }) };
 
 // Motion blur: смазывание по лучам от точки схода (весь мир летит из центра)
 // плюс горизонтальное — при резком уходе вбок. В центре кадра чётко.
@@ -148,7 +148,7 @@ function newSeed() { return Math.floor(Math.random() * 1e6); }
 
 function reset(s) {
   seed = s;
-  for (const m of meshes || []) { scene.remove(m); m.geometry.dispose(); }
+  for (const m of meshes || []) { scene.remove(m); disposeGroup(m); }
   meshes = [];
   built = 0;
   world = new World(seed);
@@ -165,18 +165,20 @@ function reset(s) {
   history.replaceState(null, '', u);
 }
 
+function disposeGroup(g) { g.traverse((o) => o.geometry && o.geometry.dispose()); }
+
 function ensureWorld() {
   const need = Math.ceil((pl.z + LZ * 6.5) / ROW) + 4;
   world.ensureRows(need);
   // меш строим, когда уже есть следующий паттерн — нужен для теней на стыке
   while (built < world.instances.length - 1) {
-    const m = buildInstanceMesh(world.instances[built++], material, world);
+    const m = buildInstanceMesh(world.instances[built++], materials, world);
     meshes.push(m);
     scene.add(m);
   }
   meshes = meshes.filter((m) => {
     if (m.userData.zEnd < pl.z - ROW * 3) {
-      scene.remove(m); m.geometry.dispose(); return false;
+      scene.remove(m); disposeGroup(m); return false;
     }
     return true;
   });

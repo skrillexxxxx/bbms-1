@@ -4,7 +4,9 @@
 // Формула одна и непрерывная, поэтому стыки кусков совпадают всегда.
 
 import * as THREE from 'three';
-import { COLS, CELL, ROW, LEVEL, W, L, LZ, WALL, BRIDGE, BRIDGE_BOTTOM, BRIDGE_TOP, hash2 } from './world.js';
+import {
+  COLS, CELL, ROW, LEVEL, W, L, LZ, WALL, BRIDGE, BRIDGE_BOTTOM, BRIDGE_TOP, hash2, aliveBackward,
+} from './world.js';
 
 const SEG = 1.0; // шаг разбиения по x/z, чтобы прямые рёбра красиво гнулись
 
@@ -13,6 +15,7 @@ const vert = /* glsl */ `
   attribute float aTop;
   attribute vec4 aBox;
   attribute float aAO;
+  attribute float aLight;
   uniform float uL;
   uniform float uLz;
   varying vec3 vPos;
@@ -25,6 +28,7 @@ const vert = /* glsl */ `
   varying float vS;
   varying float vWY;
   varying float vAO;
+  varying float vLight;
   void main() {
     vec4 f = modelMatrix * vec4(position, 1.0);   // плоские координаты относительно игрока
     float s = exp(-f.z / uLz);
@@ -46,6 +50,7 @@ const vert = /* glsl */ `
     vS = s;
     vWY = f.y * s;
     vAO = aAO;
+    vLight = aLight;
   }
 `;
 
@@ -68,6 +73,7 @@ const frag = /* glsl */ `
   varying float vS;
   varying float vWY;
   varying float vAO;
+  varying float vLight;
 
   float lineAA(float coord, float period, float width) {
     float d = abs(fract(coord / period + 0.5) - 0.5) * period;
@@ -80,11 +86,13 @@ const frag = /* glsl */ `
     float col;
 
     if (vStyle < 0.5) {
-      // земля: светлая, с тонкой сеткой по клеткам — чтобы чувствовалась скорость
-      col = 0.88;
+      // земля в «каньоне» между башнями — в тени; сетка по клеткам — чтобы чувствовалась скорость
+      col = 0.6;
       float g = max(lineAA(vPos.x, uCell, 0.03), lineAA(vPos.z, uRow, 0.03));
-      col = mix(col, 0.76, g * 0.8);
-      col *= vAO; // контактные тени у основания стен — видно, где проём
+      col = mix(col, 0.5, g * 0.8);
+      col *= vAO; // контактные тени у основания стен
+      // свет с неба падает туда, куда нужно бежать: светлое пятно = путь
+      col = col * (1.0 + vLight * 0.6) + vLight * 0.12;
     } else {
       // освещение по плоской нормали — стабильно, не зависит от поворота мира
       if (n.y > 0.5) col = 0.98;
@@ -102,22 +110,26 @@ const frag = /* glsl */ `
         float uMin = abs(n.x) > 0.5 ? vBox.y : vBox.x;
         float uMax = abs(n.x) > 0.5 ? vBox.w : vBox.z;
         float edge = min(u - uMin, uMax - u);
-        float floorH = 1.3;
+        float floorH = 3.3; // реальный этаж ~3.3 м (рост глаз 1.6)
         float fy = fract(y / floorH);
-        bool inBody = y > 1.2 && y < vTop - 0.9 && edge > 0.45;
+        bool inBody = y > 3.0 && y < vTop - 2.0 && edge > 0.8;
 
         if (vStyle > 1.5 && vStyle < 2.5 && inBody) {
           // ленточные окна — чёрные полосы, как на скринах
-          if (fy > 0.38 && fy < 0.78) col = 0.06;
+          if (fy > 0.3 && fy < 0.78) col = 0.06;
         } else if (vStyle > 2.5 && vStyle < 3.5 && inBody) {
           // сетка окон
-          float fu = fract((u - uMin) / 1.6);
-          if (fy > 0.35 && fy < 0.8 && fu > 0.22 && fu < 0.78) col = 0.07;
+          float fu = fract((u - uMin) / 2.6);
+          if (fy > 0.28 && fy < 0.8 && fu > 0.18 && fu < 0.82) col = 0.07;
         }
         // тонкие межэтажные линии
-        col = mix(col, col * 0.86, lineAA(y, floorH, 0.012));
-        // поддельное затенение у земли (кроме мостов — они висят в воздухе)
-        if (vStyle < 4.5) col *= mix(0.72, 1.0, smoothstep(0.0, 3.0, y));
+        col = mix(col, col * 0.86, lineAA(y, floorH, 0.02));
+        // свет только сверху: низ улицы в тени, к верху башен светлее
+        col *= mix(0.6, 1.0, smoothstep(0.0, 45.0, y));
+        // контактная тень у земли (кроме мостов — они висят в воздухе)
+        if (vStyle < 4.5) col *= mix(0.8, 1.0, smoothstep(0.0, 2.5, y));
+        // свет из прохода ложится на стены проёма, сильнее внизу
+        col *= 1.0 + vLight * 0.55 * (1.0 - smoothstep(0.0, 18.0, y));
       }
     }
 
@@ -150,9 +162,115 @@ export function createMaterial({ linearOut }) {
   });
 }
 
+// Звезда-блик в проёме, куда нужно свернуть. Четыре луча, как на иконке.
+// Рисуется через тот же изгиб; блум превращает её в сияние.
+const starVert = /* glsl */ `
+  attribute vec2 aCorner;
+  attribute float aSize;
+  uniform float uL;
+  uniform float uLz;
+  uniform float uFogNear;
+  uniform float uFogFar;
+  varying vec2 vUv;
+  varying float vFade;
+  void main() {
+    vec4 f = modelMatrix * vec4(position, 1.0);
+    float s = exp(-f.z / uLz);
+    float r = uL * s;
+    float phi = f.x / uL;
+    vec3 w = vec3(r * sin(phi), f.y * s, r * cos(phi));
+    vec4 mv = viewMatrix * vec4(w, 1.0);
+    mv.xy += aCorner * aSize * s;
+    gl_Position = projectionMatrix * mv;
+    vUv = aCorner;
+    // гаснет в тумане и вблизи — чтобы не слепила, когда пробегаем мимо
+    vFade = (1.0 - smoothstep(uFogNear, uFogFar, f.z)) * smoothstep(2.0, 9.0, f.z);
+  }
+`;
+
+const starFrag = /* glsl */ `
+  precision highp float;
+  uniform float uLinearOut;
+  varying vec2 vUv;
+  varying float vFade;
+  void main() {
+    vec2 p = vUv;
+    float r = length(p);
+    float core = exp(-r * r * 60.0) * 1.4;
+    float rays = exp(-abs(p.x) * 45.0) * exp(-abs(p.y) * 3.2) + exp(-abs(p.y) * 45.0) * exp(-abs(p.x) * 3.2);
+    float halo = exp(-r * 7.0) * 0.3;
+    float i = (core + rays * 0.8 + halo) * vFade;
+    vec3 c = vec3(1.0, 0.95, 0.86) * i;
+    if (uLinearOut > 0.5) c *= 1.6; // в HDR-цепочке блум подхватывает ярче единицы
+    gl_FragColor = vec4(c, 1.0);
+  }
+`;
+
+export function createStarMaterial({ linearOut }) {
+  return new THREE.ShaderMaterial({
+    vertexShader: starVert,
+    fragmentShader: starFrag,
+    transparent: true,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+    uniforms: {
+      uL: { value: L },
+      uLz: { value: LZ },
+      uFogNear: { value: LZ * 2.2 },
+      uFogFar: { value: LZ * 6.0 },
+      uLinearOut: { value: linearOut ? 1 : 0 },
+    },
+  });
+}
+
+// ---- свет на пути ----
+// Путь = «живые» клетки. Места решений: путь сместился вбок в узком месте
+// или площадь сужается во вход в коридор. Там — яркое пятно и звезда.
+function computeLight(world, inst) {
+  const a = Math.max(0, inst.rowStart - 3);
+  const rows = world.rows.slice(a);
+  const reach = world.reach.slice(a);
+  const alive = aliveBackward(rows, reach);
+  const light = rows.map(() => new Float32Array(COLS));
+  const events = [];
+  const cnt = alive.map((r) => r.reduce((n, v) => n + v, 0));
+  const bump = (r, c, v) => {
+    if (r < 0 || r >= rows.length || rows[r][c] === WALL) return;
+    light[r][c] = Math.max(light[r][c], v);
+  };
+  for (let r = 0; r < rows.length; r++) for (let c = 0; c < COLS; c++) if (alive[r][c]) bump(r, c, 0.1);
+  for (let r = 1; r < rows.length; r++) {
+    const ev = new Uint8Array(COLS);
+    for (let c = 0; c < COLS; c++) {
+      if (!alive[r][c]) continue;
+      const turn = !alive[r - 1][c] && cnt[r] <= 5;
+      const mouth = cnt[r] <= cnt[r - 1] - 2;
+      if (turn || mouth) ev[c] = 1;
+    }
+    for (let c = 0; c < COLS; c++) {
+      if (!ev[c]) continue;
+      bump(r, c, 1); bump(r + 1, c, 0.7); bump(r - 1, c, 0.55); bump(r - 2, c, 0.35);
+    }
+    // одна звезда на непрерывный кусок событий в ряду
+    for (let c = 0; c < COLS; c++) {
+      if (!ev[c] || ev[(c + COLS - 1) % COLS]) continue;
+      let w = 1;
+      while (w < COLS && ev[(c + w) % COLS]) w++;
+      const cc = c + (w - 1) / 2;
+      const code = rows[r][Math.floor(cc) % COLS];
+      const lvl = code === BRIDGE || code === WALL ? 0 : code;
+      events.push({ row: a + r, col: cc, lvl });
+    }
+  }
+  return { a, light, events };
+}
+
 // ---- сборка геометрии ----
 class Builder {
-  constructor() { this.pos = []; this.nor = []; this.sty = []; this.top = []; this.box = []; this.ao = []; this.idx = []; this.aoFn = null; }
+  constructor() {
+    this.pos = []; this.nor = []; this.sty = []; this.top = []; this.box = []; this.ao = []; this.lit = []; this.idx = [];
+    this.aoFn = null; this.lightFn = null;
+  }
 
   // прямоугольная грань, разбитая на сетку: origin + a*i + b*j
   quad(o, a, b, na, nb, normal, style, top, box) {
@@ -165,6 +283,7 @@ class Builder {
         this.sty.push(style); this.top.push(top); this.box.push(box[0], box[1], box[2], box[3]);
         const px = this.pos[this.pos.length - 3], pz = this.pos[this.pos.length - 1];
         this.ao.push(style === 0 && this.aoFn ? this.aoFn(px, pz) : 1);
+        this.lit.push(this.lightFn ? this.lightFn(px, pz) : 0);
       }
     }
     const row = na + 1;
@@ -209,13 +328,15 @@ class Builder {
     g.setAttribute('aTop', new THREE.Float32BufferAttribute(this.top, 1));
     g.setAttribute('aBox', new THREE.Float32BufferAttribute(this.box, 4));
     g.setAttribute('aAO', new THREE.Float32BufferAttribute(this.ao, 1));
+    g.setAttribute('aLight', new THREE.Float32BufferAttribute(this.lit, 1));
     g.setIndex(this.idx);
     return g;
   }
 }
 
 // Меш для одного вставленного паттерна. Координаты z — локальные (от начала паттерна).
-export function buildInstanceMesh(inst, material, world) {
+export function buildInstanceMesh(inst, materials, world) {
+  const material = materials.main;
   const b = new Builder();
   const rows = inst.rows;
   const nRows = rows.length;
@@ -242,6 +363,26 @@ export function buildInstanceMesh(inst, material, world) {
     const t = Math.min(1, d / 1.6);
     return 0.68 + 0.32 * t * t * (3 - 2 * t);
   };
+  const { a: la, light, events } = computeLight(world, inst);
+  b.lightFn = (x, zl) => {
+    const z = zl + z0;
+    const ci = Math.floor(x / CELL), ri = Math.floor(z / ROW);
+    let best = 0;
+    for (let dr = -1; dr <= 1; dr++) {
+      const lr = light[ri + dr - la];
+      if (!lr) continue;
+      for (let dc = -1; dc <= 1; dc++) {
+        const v = lr[((ci + dc) % COLS + COLS) % COLS];
+        if (v <= best) continue;
+        const cx0 = (ci + dc) * CELL, cz0 = (ri + dr) * ROW;
+        const dx = Math.max(cx0 - x, 0, x - (cx0 + CELL));
+        const dz = Math.max(cz0 - z, 0, z - (cz0 + ROW));
+        const f = Math.max(0, 1 - Math.hypot(dx, dz) / 2.2);
+        best = Math.max(best, v * f * f);
+      }
+    }
+    return best;
+  };
   b.ground(0, W, 0, nRows * ROW);
   b.aoFn = null;
 
@@ -266,7 +407,7 @@ export function buildInstanceMesh(inst, material, world) {
       const x0 = c * CELL, x1 = (c + w) * CELL;
       const zA = r * ROW, zB = (r + h) * ROW;
       if (v === WALL) {
-        const height = 10 + rnd * 24;
+        const height = 24 + rnd * 56;
         const style = 1 + Math.floor(hash2(inst.seed + 7, r * 17 + c) * 3); // 1..3
         // небольшой отступ, чтобы между башнями были щели-тени
         b.boxGeo(x0 + 0.15, x1 - 0.15, zA + 0.15, zB - 0.15, height, style);
@@ -278,10 +419,36 @@ export function buildInstanceMesh(inst, material, world) {
     }
   }
 
+  const group = new THREE.Group();
   const mesh = new THREE.Mesh(b.geometry(), material);
   mesh.frustumCulled = false; // реальная форма после изгиба не совпадает с плоскими границами
-  mesh.matrixAutoUpdate = true;
-  mesh.userData.zStart = inst.rowStart * ROW;
-  mesh.userData.zEnd = (inst.rowStart + nRows) * ROW;
-  return mesh;
+  group.add(mesh);
+
+  // звёзды только в своих рядах, не чаще чем раз в 3 ряда
+  const pos = [], corner = [], size = [], idx = [];
+  let lastRow = -99;
+  for (const e of events) {
+    if (e.row < inst.rowStart || e.row >= inst.rowStart + nRows || e.row - lastRow < 3) continue;
+    lastRow = e.row;
+    const x = (e.col + 0.5) * CELL, y = e.lvl * LEVEL + 3.2, z = (e.row - inst.rowStart + 0.5) * ROW;
+    const base = pos.length / 3;
+    for (const [cx, cy] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) {
+      pos.push(x, y, z); corner.push(cx, cy); size.push(4.5);
+    }
+    idx.push(base, base + 1, base + 2, base, base + 2, base + 3);
+  }
+  if (pos.length) {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    g.setAttribute('aCorner', new THREE.Float32BufferAttribute(corner, 2));
+    g.setAttribute('aSize', new THREE.Float32BufferAttribute(size, 1));
+    g.setIndex(idx);
+    const stars = new THREE.Mesh(g, materials.star);
+    stars.frustumCulled = false;
+    stars.renderOrder = 1;
+    group.add(stars);
+  }
+  group.userData.zStart = inst.rowStart * ROW;
+  group.userData.zEnd = (inst.rowStart + nRows) * ROW;
+  return group;
 }
