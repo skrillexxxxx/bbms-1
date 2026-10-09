@@ -1,8 +1,8 @@
 // Логика мира в «плоских» координатах: генерация из паттернов,
-// проверка проходимости и запросы высот для физики.
+// проверка проходимости и честности, запросы к клеткам для физики.
 // Без three.js, чтобы можно было гонять проверки в node.
 
-import { PATTERNS, BREATHER } from './patterns.js';
+import { PATTERNS, START, BREATHER } from './patterns.js';
 
 export const COLS = 12;          // колонок по кругу
 export const CELL = 4;           // ширина колонки (единиц)
@@ -16,8 +16,11 @@ export const DEPTH = 2.2;
 export const LZ = L * DEPTH;
 
 export const WALL = 255;
+export const BRIDGE = 254;        // улица с низким мостом сверху: только подкатом
+export const BRIDGE_BOTTOM = 1.1; // просвет под мостом
+export const BRIDGE_TOP = 2 * LEVEL; // верх моста на уровне крыши «2»
 
-const CHAR_LEVEL = { '.': 0, '1': 1, '2': 2, '3': 3, '#': WALL };
+const CHAR_CODE = { '.': 0, '1': 1, '2': 2, '3': 3, '#': WALL, b: BRIDGE };
 
 export function mulberry32(seed) {
   let a = seed >>> 0;
@@ -38,7 +41,7 @@ export function parsePattern(p) {
     const clean = s.replace(/\s/g, '');
     if (clean.length !== COLS) throw new Error(`pattern ${p.name}: row "${s}" must have ${COLS} cells`);
     return Uint8Array.from(clean, (ch) => {
-      const v = CHAR_LEVEL[ch];
+      const v = CHAR_CODE[ch];
       if (v === undefined) throw new Error(`pattern ${p.name}: unknown cell "${ch}"`);
       return v;
     });
@@ -60,36 +63,47 @@ function transformRows(rows, shift, mirror) {
 // ---- Проверка проходимости ----
 // Модель на уровне рядов: за один ряд игрок смещается максимум на 1 колонку,
 // забирается максимум на 1 уровень, спрыгивает с любой высоты,
-// и может перепрыгнуть один ряд-провал, если приземляется не выше +1 уровня.
+// может перепрыгнуть один ряд-провал (приземление не выше +1 уровня).
+// Под мост (b) можно только с уровня улицы — подкатом.
 const walk = (v) => v !== WALL;
+const lv = (v) => (v === BRIDGE ? 0 : v);
+
+// Можно ли зайти в клетку v, если стоим на высоте from (уровни).
+function enterable(from, v) {
+  if (!walk(v)) return false;
+  if (v === BRIDGE) return from === 0;
+  return v <= from + 1;
+}
 
 // Можно ли перейти из клетки c ряда rPrev в соседнюю (|c2−c| ≤ 1) клетку ряда rCur.
 export function canStep(rPrev, rCur, c, c2) {
-  const h = rCur[c2];
   const from = rPrev[c];
-  if (!walk(h) || !walk(from) || h > from + 1) return false;
+  if (!walk(from)) return false;
+  const f = lv(from);
+  if (!enterable(f, rCur[c2])) return false;
   if (c === c2) return true;
-  // без срезания углов: должна быть проходима одна из соседних клеток
-  const side = rPrev[c2];
-  const fwd = rCur[c];
-  return (walk(side) && side <= from + 1) || (walk(fwd) && fwd <= from + 1);
+  // смещение вбок — только если клетка сбоку свободна уже в текущем ряду:
+  // так у игрока есть целый ряд на манёвр, а не доля секунды за углом
+  return enterable(f, rPrev[c2]);
+}
+
+// Прыжок из ряда r через ряд r+1 в ряд r+2 по одной колонке.
+function canJumpOver(start, mid, land) {
+  if (!walk(start) || !walk(mid) || !walk(land)) return false;
+  if (mid === BRIDGE || land === BRIDGE) return false;
+  const s = lv(start);
+  return s > 0 && mid <= s && land <= s + 1;
 }
 
 function stepReach(Fprev, rPrev, rCur, Fprev2, rPrev2) {
   const F = new Uint8Array(COLS);
   for (let c2 = 0; c2 < COLS; c2++) {
-    const h = rCur[c2];
-    if (!walk(h)) continue;
+    if (!walk(rCur[c2])) continue;
     for (let d = -1; d <= 1 && !F[c2]; d++) {
       const c = mod(c2 + d, COLS);
       if (Fprev[c] && canStep(rPrev, rCur, c, c2)) F[c2] = 1;
     }
-    // прыжок через ряд
-    if (!F[c2] && Fprev2 && Fprev2[c2]) {
-      const start = rPrev2[c2];
-      const mid = rPrev[c2];
-      if (walk(mid) && mid <= start && h <= start + 1) F[c2] = 1;
-    }
+    if (!F[c2] && Fprev2 && Fprev2[c2] && canJumpOver(rPrev2[c2], rPrev[c2], rCur[c2])) F[c2] = 1;
   }
   return F;
 }
@@ -108,21 +122,68 @@ export function reachThrough(F0, rowLast, F0prev, rowPrev, rows) {
   return out;
 }
 
-// Самопроверка паттерна: из любой проходимой клетки входа есть путь к выходу.
+// «Живые» клетки: достижимы и из них можно добраться до последнего ряда.
+export function aliveBackward(rows, reach) {
+  const n = rows.length;
+  const alive = new Array(n);
+  alive[n - 1] = Uint8Array.from(reach[n - 1]);
+  for (let r = n - 2; r >= 0; r--) {
+    const a = new Uint8Array(COLS);
+    for (let c = 0; c < COLS; c++) {
+      if (!reach[r][c]) continue;
+      for (let d = -1; d <= 1 && !a[c]; d++) {
+        const c2 = mod(c + d, COLS);
+        if (alive[r + 1][c2] && canStep(rows[r], rows[r + 1], c, c2)) a[c] = 1;
+      }
+      if (!a[c] && r + 2 < n && alive[r + 2][c] && canJumpOver(rows[r][c], rows[r + 1][c], rows[r + 2][c])) a[c] = 1;
+    }
+    alive[r] = a;
+  }
+  return alive;
+}
+
+// Честность: обречённая клетка (достижима, но дальше пути нет) допустима,
+// только если в том же ряду от неё можно пройти вбок (без стен и высоких крыш)
+// до живой клетки — то есть это стена посреди открытой площади, видная издалека,
+// а не отдельный двор или коридор, в который можно свернуть вслепую.
+export function findUnfair(rows, reach, alive) {
+  for (let r = 0; r < rows.length; r++) {
+    for (let c = 0; c < COLS; c++) {
+      if (!reach[r][c] || alive[r][c]) continue;
+      // идём вбок по ряду только по клеткам, куда реально можно перейти с этой высоты
+      const f = lv(rows[r][c]);
+      let ok = false;
+      for (const dir of [-1, 1]) {
+        for (let k = 1; k < COLS && !ok; k++) {
+          const cc = mod(c + dir * k, COLS);
+          if (!enterable(f, rows[r][cc])) break;
+          if (alive[r][cc]) ok = true;
+        }
+      }
+      if (!ok) return { row: r, col: c };
+    }
+  }
+  return null;
+}
+
+// Самопроверка паттерна: из любой клетки входа есть путь к выходу, тупики только честные.
 export function validatePattern(p) {
   const rows = p.parsed;
-  const first = rows[0];
-  const F0 = Uint8Array.from(first, (v) => (walk(v) ? 1 : 0));
+  const F0 = Uint8Array.from(rows[0], (v) => (walk(v) ? 1 : 0));
   if (!F0.some(Boolean)) return { ok: false, reason: 'entry row is fully blocked' };
-  const res = reachThrough(F0, first, null, null, rows.slice(1));
-  if (!res) return { ok: false, reason: 'no path from entry to exit' };
+  const rest = reachThrough(F0, rows[0], null, null, rows.slice(1));
+  if (!rest) return { ok: false, reason: 'no path from entry to exit' };
+  const reach = [F0, ...rest];
+  const bad = findUnfair(rows, reach, aliveBackward(rows, reach));
+  if (bad) return { ok: false, reason: `hidden dead end at row ${bad.row + 1} (from bottom), col ${bad.col}` };
   return { ok: true };
 }
 
 const PARSED = PATTERNS.map(parsePattern);
+const START_P = parsePattern(START);
 const BREATHER_P = parsePattern(BREATHER);
-export const PATTERN_REPORT = PARSED.map((p) => ({ name: p.name, ...validatePattern(p) }));
-const USABLE = PARSED.filter((p, i) => PATTERN_REPORT[i].ok);
+export const PATTERN_REPORT = [START_P, ...PARSED].map((p) => ({ name: p.name, ...validatePattern(p) }));
+const USABLE = PARSED.filter((p, i) => PATTERN_REPORT[i + 1].ok);
 
 // ---- Генератор ----
 export class World {
@@ -134,12 +195,12 @@ export class World {
     this.rowInfo = [];   // { inst, name, local, total }
     this.instances = []; // вставленные паттерны
     this.instCount = 0;
-    // старт: открытая площадь, без поворота
-    const start = PARSED.find((p) => p.name === 'plaza') || BREATHER_P;
-    const rows = start.parsed;
-    const F0 = Uint8Array.from(rows[0], (v) => (walk(v) ? 1 : 0));
-    const reach = [F0, ...(reachThrough(F0, rows[0], null, null, rows.slice(1)) || [])];
-    this._push(start, rows, reach, 0, false);
+    this.fallbacks = 0;
+    // старт: прямой проспект, игрок в колонке 6
+    const rows = START_P.parsed;
+    const F0 = new Uint8Array(COLS); F0[6] = 1;
+    const reach = [F0, ...reachThrough(F0, rows[0], null, null, rows.slice(1))];
+    this._push(START_P, rows, reach, 0, false);
   }
 
   _push(p, rows, reach, shift, mirror) {
@@ -160,9 +221,9 @@ export class World {
     return inst;
   }
 
-  // сложность растёт с расстоянием
+  // сложность растёт с расстоянием; первые ~150 м — только простое
   _pickPattern(distance) {
-    const level = Math.min(3, 1 + distance / 600);
+    const level = distance < 150 ? 1 : Math.min(3, 1 + distance / 600);
     const pool = USABLE.map((p) => {
       const w = p.weight * (p.diff <= level ? 1 : Math.max(0, 1 - (p.diff - level)));
       return { p, w };
@@ -172,17 +233,27 @@ export class World {
     return pool[pool.length - 1].p;
   }
 
-  appendNext() {
+  // Пробует пристыковать ряды; проверяет честность на стыке (предыдущий паттерн + новый).
+  _tryRows(rows) {
     const n = this.rows.length;
     const Fl = this.reach[n - 1], rl = this.rows[n - 1];
     const Fp = this.reach[n - 2] || null, rp = this.rows[n - 2] || null;
-    const distance = n * ROW;
+    const reach = reachThrough(Fl, rl, Fp, rp, rows);
+    if (!reach) return null;
+    const last = this.instances[this.instances.length - 1];
+    const winRows = [...this.rows.slice(last.rowStart), ...rows];
+    const winReach = [...this.reach.slice(last.rowStart), ...reach];
+    if (findUnfair(winRows, winReach, aliveBackward(winRows, winReach))) return null;
+    return reach;
+  }
+
+  appendNext() {
+    const distance = this.rows.length * ROW;
     const last = this.instances[this.instances.length - 1];
 
-    for (let attempt = 0; attempt < 6; attempt++) {
-      let p = this._pickPattern(distance);
-      if (p.name === last.name && attempt < 3) continue; // без повторов подряд
-      // все повороты/зеркала в случайном порядке
+    for (let attempt = 0; attempt < 8; attempt++) {
+      const p = this._pickPattern(distance);
+      if (p.name === last.name && attempt < 4) continue; // без повторов подряд
       const combos = [];
       for (let s = 0; s < COLS; s++) { combos.push([s, false]); combos.push([s, true]); }
       for (let i = combos.length - 1; i > 0; i--) {
@@ -191,11 +262,14 @@ export class World {
       }
       for (const [shift, mirror] of combos) {
         const rows = transformRows(p.parsed, shift, mirror);
-        const reach = reachThrough(Fl, rl, Fp, rp, rows);
+        const reach = this._tryRows(rows);
         if (reach) return this._push(p, rows, reach, shift, mirror);
       }
     }
-    const reach = reachThrough(Fl, rl, Fp, rp, BREATHER_P.parsed);
+    // запасной вариант: открытая площадь подходит всегда
+    this.fallbacks++;
+    const n = this.rows.length;
+    const reach = reachThrough(this.reach[n - 1], this.rows[n - 1], this.reach[n - 2] || null, this.rows[n - 2] || null, BREATHER_P.parsed);
     return this._push(BREATHER_P, BREATHER_P.parsed, reach, 0, false);
   }
 
@@ -205,13 +279,11 @@ export class World {
     return added;
   }
 
-  // Высота поверхности в точке (x, z) плоского мира; Infinity — стена.
-  heightAt(x, z) {
+  // Код клетки в точке (x, z) плоского мира.
+  cellAt(x, z) {
     const ri = Math.floor(z / ROW);
     if (ri < 0 || ri >= this.rows.length) return 0;
-    const c = mod(Math.floor(x / CELL), COLS);
-    const v = this.rows[ri][c];
-    return v === WALL ? Infinity : v * LEVEL;
+    return this.rows[ri][mod(Math.floor(x / CELL), COLS)];
   }
 
   infoAt(z) {
