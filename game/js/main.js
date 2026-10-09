@@ -3,6 +3,7 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import {
   World, CELL, ROW, W, L, LZ, COLS, WALL, BRIDGE, LEVEL, BRIDGE_BOTTOM, BRIDGE_TOP, canStep,
 } from './world.js';
@@ -14,10 +15,11 @@ const P = {
   speedMax: 22,
   speedRamp: 1800,     // за сколько единиц пути разгон до максимума
   // вбок: пружина с инерцией — плавно, но быстро
-  lateralMax: 30,      // предел скорости вбок, ед/с
-  spring: 260,         // жёсткость пружины к точке, куда ведёт палец
-  damping: 32,         // ≈ 2·√spring — без раскачки
-  dragSens: 12,        // сколько единиц вбок за ширину экрана пальцем
+  // отклик растёт со скоростью бега: на разгоне пружина жёстче, потолок выше
+  lateralMax: 30,      // предел скорости вбок на старте, ед/с (дальше — 1.6 × скорость бега)
+  springW: 16,         // «частота» пружины на старте (жёсткость = W²)
+  dragSens: 12,        // сколько единиц вбок за ширину экрана при медленном ведении
+  dragAccel: 1.5,      // быстрый свайп даёт до (1 + dragAccel)× больше смещения
   keySpeed: 18,        // скорость «ведения» с клавиатуры
   radius: 0.45,
   step: 0.35,          // на сколько можно «перешагнуть» без прыжка
@@ -40,6 +42,7 @@ const P = {
 
 const params = new URLSearchParams(location.search);
 const useBloom = params.get('bloom') !== '0';
+const useBlur = params.get('blur') !== '0';
 const showDebug = params.has('debug');
 const autopilot = params.has('auto');
 
@@ -53,12 +56,53 @@ const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(75, 1, 0.05, 200);
 const material = createMaterial({ linearOut: useBloom });
 
+// Motion blur: смазывание по лучам от точки схода (весь мир летит из центра)
+// плюс горизонтальное — при резком уходе вбок. В центре кадра чётко.
+let blurPass = null;
+function createBlurPass() {
+  blurPass = new ShaderPass({
+    uniforms: {
+      tDiffuse: { value: null },
+      uCenter: { value: new THREE.Vector2(0.5, 0.5) },
+      uStrength: { value: 0 },
+      uLateral: { value: new THREE.Vector2(0, 0) },
+      uAspect: { value: 1 },
+    },
+    vertexShader: /* glsl */ `
+      varying vec2 vUv;
+      void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }
+    `,
+    fragmentShader: /* glsl */ `
+      uniform sampler2D tDiffuse;
+      uniform vec2 uCenter;
+      uniform float uStrength;
+      uniform vec2 uLateral;
+      uniform float uAspect;
+      varying vec2 vUv;
+      void main() {
+        vec2 d = vUv - uCenter;
+        float dist = length(d * vec2(uAspect, 1.0));
+        vec2 vel = d * uStrength * smoothstep(0.08, 0.7, dist) + uLateral;
+        if (dot(vel, vel) < 1e-7) { gl_FragColor = texture2D(tDiffuse, vUv); return; }
+        vec4 acc = vec4(0.0);
+        for (int i = 0; i < 8; i++) {
+          float t = float(i) / 7.0 - 0.5;
+          acc += texture2D(tDiffuse, vUv - vel * t);
+        }
+        gl_FragColor = acc / 8.0;
+      }
+    `,
+  });
+  return blurPass;
+}
+
 let composer = null, bloom = null;
 if (useBloom) {
   composer = new EffectComposer(renderer);
   composer.addPass(new RenderPass(scene, camera));
   bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.45, 0.55, 0.9);
   composer.addPass(bloom);
+  if (useBlur) composer.addPass(createBlurPass());
   composer.addPass(new OutputPass());
 }
 
@@ -191,8 +235,10 @@ function physicsStep(dt) {
   pl.z = nz;
 
   // вбок: пружина к цели пальца, без резких рывков
-  pl.vx += (P.spring * (pl.targetX - pl.x) - P.damping * pl.vx) * dt;
-  pl.vx = Math.max(-P.lateralMax, Math.min(P.lateralMax, pl.vx));
+  const w = P.springW * Math.pow(v / P.speedStart, 0.8);
+  const vmax = Math.max(P.lateralMax, 1.6 * v);
+  pl.vx += (w * w * (pl.targetX - pl.x) - 2 * w * pl.vx) * dt;
+  pl.vx = Math.max(-vmax, Math.min(vmax, pl.vx));
   const dx = pl.vx * dt;
   if (dx !== 0) {
     const side = pl.x + dx + Math.sign(dx) * r;
@@ -351,8 +397,15 @@ canvas.addEventListener('pointerdown', (e) => {
 });
 canvas.addEventListener('pointermove', (e) => {
   if (!touch || e.pointerId !== touch.id) return;
-  pl.targetX += (e.clientX - touch.x) * (P.dragSens / window.innerWidth);
+  // «ускорение» как у мыши: быстрый свайп уводит дальше, медленное ведение — точное
+  const dxPx = e.clientX - touch.x;
+  const dtMs = Math.max(1, e.timeStamp - (touch.lt || e.timeStamp - 16));
+  const screensPerSec = Math.abs(dxPx) / window.innerWidth / (dtMs / 1000);
+  touch.vel = (touch.vel || 0) * 0.5 + screensPerSec * 0.5;
+  const gain = 1 + P.dragAccel * Math.min(1, Math.max(0, (touch.vel - 1.2) / 2.5));
+  pl.targetX += dxPx * (P.dragSens / window.innerWidth) * gain;
   touch.x = e.clientX;
+  touch.lt = e.timeStamp;
   // свайпы срабатывают сразу, не дожидаясь отпускания пальца
   const dy = e.clientY - touch.sy, dxs = e.clientX - touch.sx;
   const now = performance.now();
@@ -443,6 +496,7 @@ function updateCamera(dt, running) {
 }
 
 // ---------- цикл ----------
+const _c = new THREE.Vector3();
 let last = performance.now();
 let fpsAcc = 0, fpsN = 0, fps = 0;
 
@@ -473,6 +527,16 @@ function frame(now) {
   for (const m of meshes) m.position.set(-pl.x, 0, m.userData.zStart - pl.z);
   updateCamera(dt, state === 'run');
 
+  if (blurPass) {
+    // точка схода (центр круга) на экране
+    _c.set(0, 0, 0).project(camera);
+    blurPass.uniforms.uCenter.value.set(_c.x * 0.5 + 0.5, _c.y * 0.5 + 0.5);
+    blurPass.uniforms.uAspect.value = camera.aspect;
+    const run = state === 'run' ? 1 : 0;
+    const sp = Math.min(1, Math.max(0, (speedNow() - 12) / 14));
+    blurPass.uniforms.uStrength.value = run * (0.015 + sp * 0.05 + cam.slide * 0.025);
+    blurPass.uniforms.uLateral.value.set(run * -pl.vx * 0.0009, 0);
+  }
   if (composer) composer.render(); else renderer.render(scene, camera);
 
   if (showDebug) {
