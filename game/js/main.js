@@ -18,8 +18,11 @@ const P = {
   // отклик растёт со скоростью бега: на разгоне пружина жёстче, потолок выше
   lateralMax: 30,      // предел скорости вбок на старте, ед/с (дальше — 1.6 × скорость бега)
   springW: 16,         // «частота» пружины на старте (жёсткость = W²)
-  dragSens: 12,        // сколько единиц вбок за ширину экрана при медленном ведении
-  dragAccel: 1.5,      // быстрый свайп даёт до (1 + dragAccel)× больше смещения
+  dragSens: 14,        // сколько единиц вбок за ширину экрана (линейно, без ускорения)
+  // «магнит» к проёму: если впереди стена, а рядом проход — мягко подтягиваем
+  assistTime: 0.35,    // за сколько секунд до стены начинает помогать
+  assistCols: 2,       // ищем проход не дальше стольких колонок
+  assistRate: 14,      // как быстро подтягивает цель
   keySpeed: 18,        // скорость «ведения» с клавиатуры
   radius: 0.45,
   step: 0.35,          // на сколько можно «перешагнуть» без прыжка
@@ -45,6 +48,7 @@ const useBloom = params.get('bloom') !== '0';
 const useBlur = params.get('blur') !== '0';
 const showDebug = params.has('debug');
 const autopilot = params.has('auto');
+const useAssist = params.get('assist') !== '0';
 
 // ---------- рендер ----------
 const canvas = document.getElementById('game');
@@ -214,6 +218,47 @@ function supportAt(x, z, y) {
   return s && s.hi <= y + P.step ? s.hi : 0;
 }
 
+// Помощь при повороте: если через assistTime секунд упрёмся в стену,
+// а в пределах assistCols колонок есть проход (и до него можно дойти вбок
+// по текущему ряду), цель пальца мягко подтягивается в этот проход.
+function steerAssist(dt, v, h) {
+  const r = P.radius;
+  const look = Math.max(ROW * 0.5, v * P.assistTime);
+  const zFront = pl.z + r;
+  const rowNow = Math.floor(zFront / ROW);
+  const rowAhead = Math.floor((zFront + look) / ROW);
+  if (rowAhead === rowNow) return;
+  const zA = (rowNow + 1) * ROW + ROW * 0.5; // середина следующего ряда
+  const zN = pl.z;
+  const freeAhead = (x) => !blocksBody(solidAt(x, zA), pl.y, h);
+  const freeNow = (x) => !blocksBody(solidAt(x, zN), pl.y, h);
+  // текущий курс (куда ведёт палец) упирается в стену?
+  const aim = pl.targetX;
+  const margin = r + 0.5; // цель должна быть внутри проёма с запасом, а не на кромке угла
+  if (freeAhead(aim - margin) && freeAhead(aim + margin)) return;
+  const col = Math.floor(aim / CELL);
+  let bestX = null, bestD = Infinity;
+  for (let d = -P.assistCols; d <= P.assistCols; d++) {
+    const c = col + d;
+    const cx = c * CELL + CELL / 2;
+    if (!freeAhead(cx)) continue;
+    // дойти вбок по текущему ряду: все клетки между нами и проходом свободны
+    let ok = true;
+    const from = Math.floor(pl.x / CELL);
+    for (let k = Math.min(from, c); k <= Math.max(from, c); k++) if (!freeNow(k * CELL + CELL / 2)) { ok = false; break; }
+    if (!ok) continue;
+    // ближайшая точка внутри колонки с запасом от углов
+    const x = Math.max(c * CELL + margin, Math.min((c + 1) * CELL - margin, aim));
+    const dist = Math.abs(x - aim);
+    if (dist < bestD) { bestD = dist; bestX = x; }
+  }
+  if (bestX === null) return;
+  // чем ближе стена, тем сильнее тянет
+  const toWall = (rowNow + 1) * ROW - zFront;
+  const k = 1 - Math.min(1, toWall / look);
+  pl.targetX += (bestX - pl.targetX) * Math.min(1, P.assistRate * (0.35 + k) * dt);
+}
+
 function physicsStep(dt) {
   const r = P.radius;
   const h = bodyH();
@@ -235,6 +280,8 @@ function physicsStep(dt) {
     }
   }
   pl.z = nz;
+
+  if (useAssist) steerAssist(dt, v, h);
 
   // вбок: пружина к цели пальца, без резких рывков
   const w = P.springW * Math.pow(v / P.speedStart, 0.8);
@@ -377,7 +424,8 @@ function autopilotStep() {
   let goal = best;
   let tx = goal * CELL + CELL / 2;
   if (tx - pl.x > W / 2) tx -= W; else if (pl.x - tx > W / 2) tx += W;
-  pl.targetX = tx;
+  // как человек: ставим цель один раз, когда решение меняется (в тестах — с промахом pl.__err)
+  if (goal !== pl.__goal) { pl.__goal = goal; pl.targetX = tx + (pl.__err || 0); }
   const into = (ri + 1) * ROW - pl.z;
   const h1 = lvl(ri + 1, best), h2 = lvl(ri + 2, best);
   if (code(ri + 1, best) === BRIDGE && into < 2.5 && !sliding() && pl.grounded) slide();
@@ -399,15 +447,8 @@ canvas.addEventListener('pointerdown', (e) => {
 });
 canvas.addEventListener('pointermove', (e) => {
   if (!touch || e.pointerId !== touch.id) return;
-  // «ускорение» как у мыши: быстрый свайп уводит дальше, медленное ведение — точное
-  const dxPx = e.clientX - touch.x;
-  const dtMs = Math.max(1, e.timeStamp - (touch.lt || e.timeStamp - 16));
-  const screensPerSec = Math.abs(dxPx) / window.innerWidth / (dtMs / 1000);
-  touch.vel = (touch.vel || 0) * 0.5 + screensPerSec * 0.5;
-  const gain = 1 + P.dragAccel * Math.min(1, Math.max(0, (touch.vel - 1.2) / 2.5));
-  pl.targetX += dxPx * (P.dragSens / window.innerWidth) * gain;
+  pl.targetX += (e.clientX - touch.x) * (P.dragSens / window.innerWidth);
   touch.x = e.clientX;
-  touch.lt = e.timeStamp;
   // свайпы срабатывают сразу, не дожидаясь отпускания пальца
   const dy = e.clientY - touch.sy, dxs = e.clientX - touch.sx;
   const now = performance.now();

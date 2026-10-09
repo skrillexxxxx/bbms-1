@@ -97,7 +97,7 @@ const frag = /* glsl */ `
       // освещение по плоской нормали — стабильно, не зависит от поворота мира
       if (n.y > 0.5) col = 0.98;
       else if (n.y < -0.5) col = 0.55;   // низ моста
-      else if (n.z < -0.5) col = 0.90;
+      else if (n.z < -0.5) col = vStyle > 3.5 && vStyle < 4.5 ? 0.74 : 0.90; // у низких зданий фасад темнее крыши — ступенька читается
       else if (n.x > 0.5) col = 0.76;
       else if (n.x < -0.5) col = 0.68;
       else col = 0.66;
@@ -131,6 +131,24 @@ const frag = /* glsl */ `
         // свет из прохода ложится на стены проёма, сильнее внизу
         col *= 1.0 + vLight * 0.55 * (1.0 - smoothstep(0.0, 18.0, y));
       }
+    }
+
+    // светлые рёбра: края крыш, углы, верх барьеров — чтобы читалась форма и край для прыжка
+    if (vStyle > 0.5) {
+      float y = vWY / vS;
+      float ex = min(vPos.x - vBox.x, vBox.z - vPos.x);
+      float ez = min(vPos.z - vBox.y, vBox.w - vPos.z);
+      float et = vTop - y;
+      float e;
+      if (n.y > 0.5) e = min(ex, ez);          // крыша: все четыре края
+      else if (n.y < -0.5) e = min(ex, ez);
+      else if (abs(n.x) > 0.5) e = min(ez, et); // боковая грань: вертикальные углы и верхний край
+      else e = min(ex, et);                     // передняя/задняя грань
+      float fw = max(fwidth(e), 1e-4);
+      float width = max(0.07, fw * 1.6);        // не тоньше ~1.5 пикселя вдали
+      float rim = 1.0 - smoothstep(width, width + fw * 1.2, e);
+      bool low = vStyle > 3.5 && vStyle < 5.5;  // низкие здания и мосты — ярче
+      col = mix(col, low ? 1.08 : 1.0, rim * (low ? 0.95 : 0.6));
     }
 
     // туман: по глубине пути и по реальной дальности (гасит «изнанку» за центром)
