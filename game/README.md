@@ -23,12 +23,13 @@ npx http-server game -p 8080
 node game/tools/check-patterns.mjs   # проверка паттернов
 ```
 
-## Деплой на Cloudflare Pages
+## Деплой на Cloudflare
 
-Workers & Pages → Create → Pages → Connect to Git → этот репозиторий.
-- Production branch: ветка с игрой
-- Build command: пусто
-- Build output directory: `game`
+**Workers** (настройки в `wrangler.jsonc` в корне репозитория): Create → Import a repository → этот репозиторий,
+Build command — пусто, Deploy command — `npx wrangler deploy`, ветка — та, где лежит игра.
+
+**Pages**: Create → Pages → Connect to Git → этот репозиторий, Build command — пусто,
+Build output directory — `game`.
 
 ## Иконка
 
