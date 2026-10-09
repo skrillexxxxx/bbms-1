@@ -33,4 +33,4 @@ Build output directory — `game`.
 
 ## Иконка
 
-Положить квадратную картинку 512×512 PNG в `game/icon.png`.
+`game/icon.png` (512), `game/icon-192.png`, `game/apple-touch-icon.png` (180, для iPhone).
