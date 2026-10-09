@@ -214,12 +214,11 @@ const starFrag = /* glsl */ `
   void main() {
     vec2 p = vUv;
     float r = length(p);
-    float core = exp(-r * r * 60.0) * 1.4;
-    float rays = exp(-abs(p.x) * 45.0) * exp(-abs(p.y) * 3.2) + exp(-abs(p.y) * 45.0) * exp(-abs(p.x) * 3.2);
-    float halo = exp(-r * 7.0) * 0.3;
-    float i = (core + rays * 0.8 + halo) * vFade;
-    vec3 c = vec3(1.0, 0.95, 0.86) * i;
-    if (uLinearOut > 0.5) c *= 1.6; // в HDR-цепочке блум подхватывает ярче единицы
+    float core = exp(-r * r * 70.0);
+    float rays = exp(-abs(p.x) * 60.0) * exp(-abs(p.y) * 3.5) + exp(-abs(p.y) * 60.0) * exp(-abs(p.x) * 3.5);
+    float halo = exp(-r * 8.0) * 0.12;
+    float i = (core + rays * 0.45 + halo) * vFade;
+    vec3 c = vec3(1.0, 0.95, 0.86) * i * 0.75;
     gl_FragColor = vec4(c, 1.0);
   }
 `;
@@ -258,16 +257,16 @@ function computeLight(world, inst) {
   };
   for (let r = 0; r < rows.length; r++) for (let c = 0; c < COLS; c++) if (alive[r][c]) bump(r, c, 0.1);
   for (let r = 1; r < rows.length; r++) {
-    const ev = new Uint8Array(COLS);
+    const ev = new Uint8Array(COLS);   // настоящий поворот в узком месте — тут и звезда
     for (let c = 0; c < COLS; c++) {
       if (!alive[r][c]) continue;
-      const turn = !alive[r - 1][c] && cnt[r] <= 5;
+      const turn = !alive[r - 1][c] && cnt[r] <= 3;
       const mouth = cnt[r] <= cnt[r - 1] - 2;
-      if (turn || mouth) ev[c] = 1;
-    }
-    for (let c = 0; c < COLS; c++) {
-      if (!ev[c]) continue;
-      bump(r, c, 1); bump(r + 1, c, 0.7); bump(r - 1, c, 0.55); bump(r - 2, c, 0.35);
+      if (turn) ev[c] = 1;
+      if (turn || mouth) {
+        const k = turn ? 1 : 0.6;
+        bump(r, c, k); bump(r + 1, c, 0.7 * k); bump(r - 1, c, 0.55 * k); bump(r - 2, c, 0.35 * k);
+      }
     }
     // одна звезда на непрерывный кусок событий в ряду
     for (let c = 0; c < COLS; c++) {
@@ -442,16 +441,16 @@ export function buildInstanceMesh(inst, materials, world) {
   mesh.frustumCulled = false; // реальная форма после изгиба не совпадает с плоскими границами
   group.add(mesh);
 
-  // звёзды только в своих рядах, не чаще чем раз в 3 ряда
+  // звёзды только в своих рядах и редко: не чаще чем раз в 8 рядов на весь мир
   const pos = [], corner = [], size = [], idx = [];
-  let lastRow = -99;
   for (const e of events) {
-    if (e.row < inst.rowStart || e.row >= inst.rowStart + nRows || e.row - lastRow < 3) continue;
-    lastRow = e.row;
+    if (e.row < inst.rowStart || e.row >= inst.rowStart + nRows) continue;
+    if (e.row - (world.lastStarRow ?? -99) < 8) continue;
+    world.lastStarRow = e.row;
     const x = (e.col + 0.5) * CELL, y = e.lvl * LEVEL + 3.2, z = (e.row - inst.rowStart + 0.5) * ROW;
     const base = pos.length / 3;
     for (const [cx, cy] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) {
-      pos.push(x, y, z); corner.push(cx, cy); size.push(4.5);
+      pos.push(x, y, z); corner.push(cx, cy); size.push(2.8);
     }
     idx.push(base, base + 1, base + 2, base, base + 2, base + 3);
   }

@@ -243,15 +243,19 @@ export class World {
     const last = this.instances[this.instances.length - 1];
     const winRows = [...this.rows.slice(last.rowStart), ...rows];
     const winReach = [...this.reach.slice(last.rowStart), ...reach];
-    if (findUnfair(winRows, winReach, aliveBackward(winRows, winReach))) return null;
-    return reach;
+    const alive = aliveBackward(winRows, winReach);
+    if (findUnfair(winRows, winReach, alive)) return null;
+    // сколько тупиковых ответвлений создаёт стык: меньше — путь читается как одна линия
+    let doomed = 0;
+    for (let r = 0; r < winRows.length; r++) for (let c = 0; c < COLS; c++) if (winReach[r][c] && !alive[r][c]) doomed++;
+    return { reach, doomed };
   }
 
   appendNext() {
     const distance = this.rows.length * ROW;
     const last = this.instances[this.instances.length - 1];
 
-    for (let attempt = 0; attempt < 8; attempt++) {
+    for (let attempt = 0; attempt < 16; attempt++) {
       const p = this._pickPattern(distance);
       if (p.name === last.name && attempt < 4) continue; // без повторов подряд
       const combos = [];
@@ -260,11 +264,16 @@ export class World {
         const j = Math.floor(this.rng() * (i + 1));
         [combos[i], combos[j]] = [combos[j], combos[i]];
       }
+      // из всех подходящих поворотов берём тот, где меньше тупиков (с долей случайности)
+      let best = null;
       for (const [shift, mirror] of combos) {
         const rows = transformRows(p.parsed, shift, mirror);
-        const reach = this._tryRows(rows);
-        if (reach) return this._push(p, rows, reach, shift, mirror);
+        const res = this._tryRows(rows);
+        if (!res) continue;
+        const score = res.doomed + this.rng() * 2;
+        if (!best || score < best.score) best = { score, rows, res, shift, mirror };
       }
+      if (best) return this._push(p, best.rows, best.res.reach, best.shift, best.mirror);
     }
     // запасной вариант: открытая площадь подходит всегда
     this.fallbacks++;

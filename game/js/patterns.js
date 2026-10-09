@@ -58,7 +58,7 @@ export const PATTERNS = [
   },
   {
     name: 'plaza',
-    diff: 1, weight: 1,
+    diff: 1, weight: 0.5,
     rows: [
       '##...##...##',
       '#.........##',
@@ -96,7 +96,7 @@ export const PATTERNS = [
   },
   {
     name: 'fork',
-    diff: 2, weight: 2,
+    diff: 2, weight: 0.5,
     rows: [
       '##..#####..#',
       '##..#####..#',
@@ -148,7 +148,7 @@ export const PATTERNS = [
   },
   {
     name: 'slalom',
-    diff: 2, weight: 2,
+    diff: 2, weight: 1,
     rows: [
       '###......###',
       '###.#..#.###',
@@ -161,7 +161,7 @@ export const PATTERNS = [
   },
   {
     name: 'ring-run',
-    diff: 3, weight: 1,
+    diff: 3, weight: 0.4,
     rows: [
       '..######....',
       '..######....',

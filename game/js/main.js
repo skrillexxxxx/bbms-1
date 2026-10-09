@@ -14,16 +14,10 @@ const P = {
   speedStart: 11,      // ед/с
   speedMax: 22,
   speedRamp: 1800,     // за сколько единиц пути разгон до максимума
-  // вбок: пружина с инерцией — плавно, но быстро
-  // отклик растёт со скоростью бега: на разгоне пружина жёстче, потолок выше
-  lateralMax: 30,      // предел скорости вбок на старте, ед/с (дальше — 1.6 × скорость бега)
-  springW: 16,         // «частота» пружины на старте (жёсткость = W²)
-  dragSens: 14,        // сколько единиц вбок за ширину экрана (линейно, без ускорения)
-  // «магнит» к проёму: если впереди стена, а рядом проход — мягко подтягиваем
-  assistTime: 0.35,    // за сколько секунд до стены начинает помогать
-  assistCols: 2,       // ищем проход не дальше стольких колонок
-  assistRate: 14,      // как быстро подтягивает цель
-  keySpeed: 18,        // скорость «ведения» с клавиатуры
+  // вбок: полосы-«рельсы» по колонкам; свайп = ровно одна полоса
+  laneTime: 0.17,      // за сколько секунд переезжаем на соседнюю полосу на старте
+  laneTimeFast: 0.12,  // …и на максимальной скорости
+  laneBuffer: 0.25,    // свайп чуть раньше времени ждёт, пока проём откроется
   radius: 0.45,
   step: 0.35,          // на сколько можно «перешагнуть» без прыжка
   mantle: 1.3,         // в прыжке край до стольких единиц выше ног — забираемся
@@ -48,7 +42,6 @@ const useBloom = params.get('bloom') !== '0';
 const useBlur = params.get('blur') !== '0';
 const showDebug = params.has('debug');
 const autopilot = params.has('auto');
-const useAssist = params.get('assist') !== '0';
 
 // ---------- рендер ----------
 const canvas = document.getElementById('game');
@@ -141,7 +134,8 @@ try { best = Number(localStorage.getItem('city-best')) || 0; } catch { /* при
 // ---------- состояние игры ----------
 let world, meshes, built, seed;
 const pl = {
-  x: 0, z: 0, y: 0, vx: 0, vy: 0, targetX: 0, grounded: true,
+  x: 0, z: 0, y: 0, vx: 0, vy: 0, grounded: true,
+  lane: 6, laneFromX: 0, laneT: 1, pending: 0, pendT: 0,
   coyote: 0, jumpBuf: 0, slideT: 0, slideQueued: false, boost: 0, hopKeep: false,
 };
 const cam = { roll: 0, yaw: 0, pitch: 0, dip: 0, slide: 0, bob: 0, fov: 82, slideSide: 1, lookY: 1.2 };
@@ -160,7 +154,7 @@ function reset(s) {
     x: 6 * CELL + CELL / 2, z: ROW * 0.5, y: 0, vx: 0, vy: 0, grounded: true,
     coyote: 0, jumpBuf: 0, slideT: 0, slideQueued: false, boost: 0, hopKeep: false,
   });
-  pl.targetX = pl.x;
+  Object.assign(pl, { lane: 6, laneFromX: pl.x, laneT: 1, pending: 0, pendT: 0 });
   Object.assign(cam, { roll: 0, yaw: 0, pitch: 0, dip: 0, slide: 0, bob: 0, lookY: 1.2 });
   shake = 0;
   ensureWorld();
@@ -218,45 +212,48 @@ function supportAt(x, z, y) {
   return s && s.hi <= y + P.step ? s.hi : 0;
 }
 
-// Помощь при повороте: если через assistTime секунд упрёмся в стену,
-// а в пределах assistCols колонок есть проход (и до него можно дойти вбок
-// по текущему ряду), цель пальца мягко подтягивается в этот проход.
-function steerAssist(dt, v, h) {
+const laneX = (lane) => lane * CELL + CELL / 2;
+
+// Свайп вбок: копим запрос, выполняем, как только соседняя полоса свободна.
+function laneShift(d) {
+  if (state !== 'run') return;
+  pl.pending = Math.max(-2, Math.min(2, pl.pending + d));
+  pl.pendT = P.laneBuffer;
+}
+
+function lanePhysics(dt, v, h) {
   const r = P.radius;
-  const look = Math.max(ROW * 0.5, v * P.assistTime);
-  const zFront = pl.z + r;
-  const rowNow = Math.floor(zFront / ROW);
-  const rowAhead = Math.floor((zFront + look) / ROW);
-  if (rowAhead === rowNow) return;
-  const zA = (rowNow + 1) * ROW + ROW * 0.5; // середина следующего ряда
-  const zN = pl.z;
-  const freeAhead = (x) => !blocksBody(solidAt(x, zA), pl.y, h);
-  const freeNow = (x) => !blocksBody(solidAt(x, zN), pl.y, h);
-  // текущий курс (куда ведёт палец) упирается в стену?
-  const aim = pl.targetX;
-  const margin = r + 0.5; // цель должна быть внутри проёма с запасом, а не на кромке угла
-  if (freeAhead(aim - margin) && freeAhead(aim + margin)) return;
-  const col = Math.floor(aim / CELL);
-  let bestX = null, bestD = Infinity;
-  for (let d = -P.assistCols; d <= P.assistCols; d++) {
-    const c = col + d;
-    const cx = c * CELL + CELL / 2;
-    if (!freeAhead(cx)) continue;
-    // дойти вбок по текущему ряду: все клетки между нами и проходом свободны
-    let ok = true;
-    const from = Math.floor(pl.x / CELL);
-    for (let k = Math.min(from, c); k <= Math.max(from, c); k++) if (!freeNow(k * CELL + CELL / 2)) { ok = false; break; }
-    if (!ok) continue;
-    // ближайшая точка внутри колонки с запасом от углов
-    const x = Math.max(c * CELL + margin, Math.min((c + 1) * CELL - margin, aim));
-    const dist = Math.abs(x - aim);
-    if (dist < bestD) { bestD = dist; bestX = x; }
+  const sideFree = (lane) => !blocksBody(solidAt(laneX(lane), pl.z - r * 0.7), pl.y, h)
+    && !blocksBody(solidAt(laneX(lane), pl.z + r * 0.7), pl.y, h);
+  if (pl.pending !== 0) {
+    const d = Math.sign(pl.pending);
+    if (sideFree(pl.lane + d)) {
+      pl.laneFromX = pl.x; pl.lane += d; pl.laneT = 0; pl.pending -= d;
+    } else {
+      pl.pendT -= dt;
+      if (pl.pendT <= 0) pl.pending = 0;
+    }
   }
-  if (bestX === null) return;
-  // чем ближе стена, тем сильнее тянет
-  const toWall = (rowNow + 1) * ROW - zFront;
-  const k = 1 - Math.min(1, toWall / look);
-  pl.targetX += (bestX - pl.targetX) * Math.min(1, P.assistRate * (0.35 + k) * dt);
+  const prevX = pl.x;
+  if (pl.laneT < 1) {
+    const speedK = Math.min(1, Math.max(0, (v - P.speedStart) / (P.speedMax - P.speedStart)));
+    const dur = P.laneTime + (P.laneTimeFast - P.laneTime) * speedK;
+    pl.laneT = Math.min(1, pl.laneT + dt / dur);
+    const e = 1 - Math.pow(1 - pl.laneT, 3); // easeOutCubic: резкий старт, мягкая доводка
+    const nx = pl.laneFromX + (laneX(pl.lane) - pl.laneFromX) * e;
+    const dir = Math.sign(nx - pl.x);
+    const side = nx + dir * r;
+    if (dir !== 0 && (blocksBody(solidAt(side, pl.z - r * 0.7), pl.y, h) || blocksBody(solidAt(side, pl.z + r * 0.7), pl.y, h))) {
+      // упёрлись — отскок обратно на свою полосу
+      pl.lane -= dir; pl.laneFromX = pl.x; pl.laneT = 0; pl.pending = 0;
+      shake = Math.max(shake, 0.12);
+    } else {
+      pl.x = nx;
+    }
+  } else {
+    pl.x = laneX(pl.lane);
+  }
+  pl.vx = (pl.x - prevX) / dt;
 }
 
 function physicsStep(dt) {
@@ -281,23 +278,7 @@ function physicsStep(dt) {
   }
   pl.z = nz;
 
-  if (useAssist) steerAssist(dt, v, h);
-
-  // вбок: пружина к цели пальца, без резких рывков
-  const w = P.springW * Math.pow(v / P.speedStart, 0.8);
-  const vmax = Math.max(P.lateralMax, 1.6 * v);
-  pl.vx += (w * w * (pl.targetX - pl.x) - 2 * w * pl.vx) * dt;
-  pl.vx = Math.max(-vmax, Math.min(vmax, pl.vx));
-  const dx = pl.vx * dt;
-  if (dx !== 0) {
-    const side = pl.x + dx + Math.sign(dx) * r;
-    if (blocksBody(solidAt(side, pl.z - r * 0.7), pl.y, h) || blocksBody(solidAt(side, pl.z + r * 0.7), pl.y, h)) {
-      pl.vx = 0;
-      pl.targetX = pl.x; // упёрлись — не «прилипаем» к стене
-    } else {
-      pl.x += dx;
-    }
-  }
+  lanePhysics(dt, v, h);
 
   // по вертикали
   let ground = 0;
@@ -406,7 +387,7 @@ function autopilotStep() {
     }
     aliveRows[r] = a;
   }
-  const cur = Math.floor(pl.x / CELL);
+  const cur = cm(pl.lane);
   const cdist = (a, b) => Math.min(cm(a - b), cm(b - a));
   const code = (r, c) => (rows[r] ? rows[r][cm(c)] : 0);
   const lvl = (r, c) => { const v = code(r, c); return v === BRIDGE ? 0 : v; };
@@ -421,11 +402,9 @@ function autopilotStep() {
     const score = nd * 10 + Math.abs(d);
     if (score < bscore) { bscore = score; best = c; }
   }
-  let goal = best;
-  let tx = goal * CELL + CELL / 2;
-  if (tx - pl.x > W / 2) tx -= W; else if (pl.x - tx > W / 2) tx += W;
-  // как человек: ставим цель один раз, когда решение меняется (в тестах — с промахом pl.__err)
-  if (goal !== pl.__goal) { pl.__goal = goal; pl.targetX = tx + (pl.__err || 0); }
+  // как человек: один свайп, когда решение меняется
+  const laneNow = cm(pl.lane + pl.pending);
+  if (best !== laneNow && pl.pending === 0) laneShift(cm(best - laneNow) === 1 ? 1 : -1);
   const into = (ri + 1) * ROW - pl.z;
   const h1 = lvl(ri + 1, best), h2 = lvl(ri + 2, best);
   if (code(ri + 1, best) === BRIDGE && into < 2.5 && !sliding() && pl.grounded) slide();
@@ -447,12 +426,16 @@ canvas.addEventListener('pointerdown', (e) => {
 });
 canvas.addEventListener('pointermove', (e) => {
   if (!touch || e.pointerId !== touch.id) return;
-  pl.targetX += (e.clientX - touch.x) * (P.dragSens / window.innerWidth);
-  touch.x = e.clientX;
-  // свайпы срабатывают сразу, не дожидаясь отпускания пальца
+  // свайпы срабатывают сразу, не дожидаясь отпускания пальца; сила свайпа не важна
   const dy = e.clientY - touch.sy, dxs = e.clientX - touch.sx;
   const now = performance.now();
-  if (Math.abs(dy) > SWIPE && Math.abs(dy) > Math.abs(dxs) * 1.1 && now - touch.st < 300) {
+  if (Math.abs(dxs) > SWIPE && Math.abs(dxs) > Math.abs(dy) * 1.1 && now - touch.st < 300) {
+    // один жест = одна полоса, как бы далеко ни ушёл палец; развернуть палец обратно — можно
+    const dir = dxs > 0 ? 1 : -1;
+    if (dir !== touch.hDir) { laneShift(dir); touch.hDir = dir; }
+    touch.swiped = true;
+    touch.sx = e.clientX; touch.sy = e.clientY; touch.st = now;
+  } else if (Math.abs(dy) > SWIPE && Math.abs(dy) > Math.abs(dxs) * 1.1 && now - touch.st < 300) {
     if (dy < 0) jump(); else slide();
     touch.swiped = true;
     touch.sx = e.clientX; touch.sy = e.clientY; touch.st = now; // можно свайпнуть ещё раз, не отпуская
@@ -469,7 +452,6 @@ const endTouch = (e) => {
 canvas.addEventListener('pointerup', endTouch);
 canvas.addEventListener('pointercancel', endTouch);
 
-const keys = new Set();
 window.addEventListener('keydown', (e) => {
   if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'KeyA', 'KeyD', 'KeyW', 'KeyS', 'Space'].includes(e.code)) e.preventDefault();
   if (state === 'ready' && (e.code === 'Space' || e.code === 'Enter')) { start(); return; }
@@ -477,9 +459,9 @@ window.addEventListener('keydown', (e) => {
   if (e.repeat) return;
   if (e.code === 'Space' || e.code === 'ArrowUp' || e.code === 'KeyW') jump();
   if (e.code === 'ArrowDown' || e.code === 'KeyS' || e.code === 'ShiftLeft') slide();
-  keys.add(e.code);
+  if (e.code === 'ArrowLeft' || e.code === 'KeyA') laneShift(-1);
+  if (e.code === 'ArrowRight' || e.code === 'KeyD') laneShift(1);
 });
-window.addEventListener('keyup', (e) => keys.delete(e.code));
 
 // iOS: не даём странице зумиться и скроллиться
 document.addEventListener('gesturestart', (e) => e.preventDefault());
@@ -549,8 +531,6 @@ function frame(now) {
   last = now;
 
   if (state === 'run') {
-    const k = (keys.has('ArrowLeft') || keys.has('KeyA') ? -1 : 0) + (keys.has('ArrowRight') || keys.has('KeyD') ? 1 : 0);
-    if (k) pl.targetX += k * P.keySpeed * dt;
     // мелкие шаги — чтобы на высокой скорости не проскакивать сквозь стены
     const n = Math.ceil(dt / (1 / 120));
     for (let i = 0; i < n && state === 'run'; i++) { if (autopilot) autopilotStep(); physicsStep(dt / n); }
@@ -564,8 +544,13 @@ function frame(now) {
 
   // держим координаты маленькими: x по модулю окружности
   const wrapped = wrapX(pl.x);
-  pl.targetX += wrapped - pl.x;
-  pl.x = wrapped;
+  if (wrapped !== pl.x) {
+    // сдвиг на целый круг: полосы и анимацию переезда сдвигаем вместе
+    const shift = wrapped - pl.x;
+    pl.lane += Math.round(shift / CELL);
+    pl.laneFromX += shift;
+    pl.x = wrapped;
+  }
 
   for (const m of meshes) m.position.set(-pl.x, 0, m.userData.zStart - pl.z);
   updateCamera(dt, state === 'run');
