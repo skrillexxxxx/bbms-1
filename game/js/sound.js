@@ -10,7 +10,7 @@ const STEP_GAIN = 0.55;
 // подкат по полу: вход → луп, пока скользим → выход (audio/slide/*.mp3), глухо — только низ
 const SLIDE_URLS = { start: 'audio/slide/start.mp3', loop: 'audio/slide/loop.mp3', end: 'audio/slide/end.mp3' };
 const SLIDE_GAIN = 1.8;
-const SLIDE_LP = 380; // Гц: от скольжения остаётся глухой низ (ниже ~300 Гц динамик телефона почти не играет)
+const SLIDE_LP = 600; // Гц: скольжение глухое, но слышно и на динамике телефона (ниже ~300 Гц он почти не играет)
 const SLIDE_TO_LOOP = 0.45; // через сколько секунд вход перетекает в луп (дальше у входа ровный «шорох»)
 // смерть: музыка уходит «под воду» — срез высоких до MUFFLE_HZ и на 3 дБ тише
 const OPEN_HZ = 20000, MUFFLE_HZ = 350, MUFFLE_GAIN = 0.708; // −3 дБ
