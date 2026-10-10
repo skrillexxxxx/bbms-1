@@ -62,6 +62,7 @@ const P = {
 const params = new URLSearchParams(location.search);
 const useBloom = params.get('bloom') !== '0';
 const useBlur = params.get('blur') !== '0';
+const useFx = params.get('fx') !== '0'; // шум и хроматика
 const showDebug = params.has('debug');
 let autopilot = params.has('auto');
 const sound = createSound(params.get('sound') !== '0' && !autopilot);
@@ -90,6 +91,9 @@ function createBlurPass() {
       uAspect: { value: 1 },
       uLines: { value: 0 },
       uTime: { value: 0 },
+      uGrain: { value: useFx ? 0.045 : 0 },  // цифровой шум
+      uCA: { value: useFx ? 0.006 : 0 },     // хроматическая аберрация у краёв (доля экрана в углу)
+      uPx: { value: 1 },                     // размер «зерна» шума в пикселях экрана
     },
     vertexShader: /* glsl */ `
       varying vec2 vUv;
@@ -103,6 +107,9 @@ function createBlurPass() {
       uniform float uAspect;
       uniform float uLines;
       uniform float uTime;
+      uniform float uGrain;
+      uniform float uCA;
+      uniform float uPx;
       float hash(float n) { return fract(sin(n) * 43758.5453); }
       varying vec2 vUv;
       void main() {
@@ -143,6 +150,32 @@ function createBlurPass() {
           vec3 ink = hash(id * 5.3 + frame * 1.9) > 0.5 ? vec3(0.04) : vec3(1.0);
           col.rgb = mix(col.rgb, ink, k * 0.7);
         }
+
+        // хроматическая аберрация: красный и синий расходятся от центра экрана, в центре — ноль.
+        // Берём не 12 выборок на канал, а только сдвиг цветовой «бахромы» поверх готового кадра:
+        // +3 выборки на пиксель
+        if (uCA > 0.0) {
+          vec2 c = vUv - 0.5;
+          vec2 o = c * dot(c, c) * 4.0 * uCA;   // растёт квадратично к краям
+          vec3 base = texture2D(tDiffuse, vUv).rgb;
+          col.r += texture2D(tDiffuse, vUv + o).r - base.r;
+          col.b += texture2D(tDiffuse, vUv - o).b - base.b;
+        }
+
+        // цифровой шум: меняется ~24 раза в секунду, почти монохромный, с лёгким цветом.
+        // Кадр тут ещё в линейном цвете — шум кладём в гамме, чтобы в тенях не было «снега»
+        if (uGrain > 0.0) {
+          vec2 p = floor(gl_FragCoord.xy / uPx);
+          float f = floor(uTime * 24.0);
+          float n = fract(sin(dot(p + f * 17.0, vec2(12.9898, 78.233))) * 43758.5453) - 0.5;
+          vec3 nc = vec3(
+            fract(sin(dot(p + f * 3.0, vec2(39.35, 11.13))) * 24634.63),
+            fract(sin(dot(p + f * 5.0, vec2(73.15, 52.37))) * 31337.17),
+            fract(sin(dot(p + f * 7.0, vec2(27.61, 91.89))) * 17171.71)) - 0.5;
+          vec3 g = pow(clamp(col.rgb, 0.0, 1.0), vec3(1.0 / 2.2));
+          g += uGrain * (n * 0.8 + nc * 0.35);
+          col.rgb = pow(clamp(g, 0.0, 1.0), vec3(2.2));
+        }
         gl_FragColor = col;
       }
     `,
@@ -172,6 +205,7 @@ function resize() {
     composer.setPixelRatio(renderer.getPixelRatio());
     composer.setSize(w, h);
     bloom.resolution.set(w / 2, h / 2);
+    if (blurPass) blurPass.uniforms.uPx.value = Math.max(1, renderer.getPixelRatio() * 0.75);
   }
 }
 window.addEventListener('resize', resize);
