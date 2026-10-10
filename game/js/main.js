@@ -15,8 +15,10 @@ const P = {
   speedMax: 22,
   speedRamp: 1800,     // за сколько единиц пути разгон до максимума
   // вбок: полосы-«рельсы» по колонкам; свайп = ровно одна полоса
-  laneTime: 0.17,      // за сколько секунд переезжаем на соседнюю полосу на старте
-  laneTimeFast: 0.12,  // …и на максимальной скорости
+  // переезд — мягкая пружина без раскачки: скорость плавно растёт и плавно гаснет,
+  // второй свайп посреди переезда тоже без рывка (~90% пути за 0.23 с, на максимуме за 0.18 с)
+  laneW: 17,
+  laneWFast: 22,
   laneBuffer: 0.25,    // свайп чуть раньше времени ждёт, пока проём откроется
   radius: 0.45,
   step: 0.35,          // на сколько можно «перешагнуть» без прыжка
@@ -135,10 +137,10 @@ try { best = Number(localStorage.getItem('city-best')) || 0; } catch { /* при
 let world, meshes, built, seed;
 const pl = {
   x: 0, z: 0, y: 0, vx: 0, vy: 0, grounded: true,
-  lane: 6, laneFromX: 0, laneT: 1, pending: 0, pendT: 0,
+  lane: 6, pending: 0, pendT: 0,
   coyote: 0, jumpBuf: 0, slideT: 0, slideQueued: false, boost: 0, hopKeep: false,
 };
-const cam = { roll: 0, yaw: 0, pitch: 0, dip: 0, slide: 0, bob: 0, fov: 82, slideSide: 1, lookY: 1.2 };
+const cam = { roll: 0, yaw: 0, pitch: 0, dip: 0, slide: 0, bob: 0, fov: 82, slideSide: 1, lookY: 1.2, vx: 0 };
 let state = 'ready';
 let shake = 0;
 
@@ -154,8 +156,8 @@ function reset(s) {
     x: 6 * CELL + CELL / 2, z: ROW * 0.5, y: 0, vx: 0, vy: 0, grounded: true,
     coyote: 0, jumpBuf: 0, slideT: 0, slideQueued: false, boost: 0, hopKeep: false,
   });
-  Object.assign(pl, { lane: 6, laneFromX: pl.x, laneT: 1, pending: 0, pendT: 0 });
-  Object.assign(cam, { roll: 0, yaw: 0, pitch: 0, dip: 0, slide: 0, bob: 0, lookY: 1.2 });
+  Object.assign(pl, { lane: 6, pending: 0, pendT: 0 });
+  Object.assign(cam, { roll: 0, yaw: 0, pitch: 0, dip: 0, slide: 0, bob: 0, lookY: 1.2, vx: 0 });
   shake = 0;
   ensureWorld();
   const u = new URL(location.href);
@@ -228,32 +230,25 @@ function lanePhysics(dt, v, h) {
   if (pl.pending !== 0) {
     const d = Math.sign(pl.pending);
     if (sideFree(pl.lane + d)) {
-      pl.laneFromX = pl.x; pl.lane += d; pl.laneT = 0; pl.pending -= d;
+      pl.lane += d; pl.pending -= d;
     } else {
       pl.pendT -= dt;
       if (pl.pendT <= 0) pl.pending = 0;
     }
   }
-  const prevX = pl.x;
-  if (pl.laneT < 1) {
-    const speedK = Math.min(1, Math.max(0, (v - P.speedStart) / (P.speedMax - P.speedStart)));
-    const dur = P.laneTime + (P.laneTimeFast - P.laneTime) * speedK;
-    pl.laneT = Math.min(1, pl.laneT + dt / dur);
-    const e = 1 - Math.pow(1 - pl.laneT, 3); // easeOutCubic: резкий старт, мягкая доводка
-    const nx = pl.laneFromX + (laneX(pl.lane) - pl.laneFromX) * e;
-    const dir = Math.sign(nx - pl.x);
-    const side = nx + dir * r;
-    if (dir !== 0 && (blocksBody(solidAt(side, pl.z - r * 0.7), pl.y, h) || blocksBody(solidAt(side, pl.z + r * 0.7), pl.y, h))) {
-      // упёрлись — отскок обратно на свою полосу
-      pl.lane -= dir; pl.laneFromX = pl.x; pl.laneT = 0; pl.pending = 0;
-      shake = Math.max(shake, 0.12);
-    } else {
-      pl.x = nx;
-    }
+  const speedK = Math.min(1, Math.max(0, (v - P.speedStart) / (P.speedMax - P.speedStart)));
+  const w = P.laneW + (P.laneWFast - P.laneW) * speedK;
+  pl.vx += (w * w * (laneX(pl.lane) - pl.x) - 2 * w * pl.vx) * dt;
+  const nx = pl.x + pl.vx * dt;
+  const dir = Math.sign(pl.vx);
+  const side = nx + dir * r;
+  if (dir !== 0 && (blocksBody(solidAt(side, pl.z - r * 0.7), pl.y, h) || blocksBody(solidAt(side, pl.z + r * 0.7), pl.y, h))) {
+    // упёрлись — мягко возвращаемся на свою полосу
+    if (Math.sign(laneX(pl.lane) - pl.x) === dir) { pl.lane -= dir; pl.pending = 0; shake = Math.max(shake, 0.1); }
+    pl.vx = 0;
   } else {
-    pl.x = laneX(pl.lane);
+    pl.x = nx;
   }
-  pl.vx = (pl.x - prevX) / dt;
 }
 
 function physicsStep(dt) {
@@ -499,8 +494,10 @@ function updateCamera(dt, running) {
   camera.lookAt(0, cam.lookY, 0);
 
   // наклоны: в сторону движения, в подкате — завал вбок
-  cam.roll = damp(cam.roll, -pl.vx * 0.0055 + cam.slide * 0.16 * cam.slideSide, 10, dt);
-  cam.yaw = damp(cam.yaw, -pl.vx * 0.0035, 8, dt);
+  // наклоны идут от сглаженной скорости вбок — камера не дёргается при смене полосы
+  cam.vx = damp(cam.vx, pl.vx, 7, dt);
+  cam.roll = damp(cam.roll, -cam.vx * 0.0045 + cam.slide * 0.16 * cam.slideSide, 6, dt);
+  cam.yaw = damp(cam.yaw, -cam.vx * 0.0025, 5, dt);
   cam.pitch = damp(cam.pitch, pl.grounded ? 0 : Math.max(-0.06, Math.min(0.05, pl.vy * 0.004)), 8, dt);
   let roll = cam.roll;
   if (shake > 0) {
@@ -548,7 +545,6 @@ function frame(now) {
     // сдвиг на целый круг: полосы и анимацию переезда сдвигаем вместе
     const shift = wrapped - pl.x;
     pl.lane += Math.round(shift / CELL);
-    pl.laneFromX += shift;
     pl.x = wrapped;
   }
 
@@ -563,7 +559,7 @@ function frame(now) {
     const run = state === 'run' ? 1 : 0;
     const sp = Math.min(1, Math.max(0, (speedNow() - 12) / 14));
     blurPass.uniforms.uStrength.value = run * (0.015 + sp * 0.05 + cam.slide * 0.025);
-    blurPass.uniforms.uLateral.value.set(run * -pl.vx * 0.0009, 0);
+    blurPass.uniforms.uLateral.value.set(run * -cam.vx * 0.0007, 0);
   }
   if (composer) composer.render(); else renderer.render(scene, camera);
 
