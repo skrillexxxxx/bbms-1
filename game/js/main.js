@@ -945,6 +945,7 @@ function start() {
   ui.hud.classList.add('show');
   state = 'run';
   runStartT = gameTime;
+  resetWeather();
   sound.muffle(false);
   runMonkeys = 0;
   updateMonkeyHud();
@@ -1088,6 +1089,32 @@ window.addEventListener('keydown', (e) => {
 document.addEventListener('gesturestart', (e) => e.preventDefault());
 document.addEventListener('touchmove', (e) => { if (!e.target.closest?.('#seed-list')) e.preventDefault(); }, { passive: false });
 
+// ---------- погода ----------
+// Виды погоды по очереди и случайно: сейчас «ясно» и «туман», дальше добавятся другие.
+// Каждая держится 45–90 с, смена плавная (~8 с). Забег начинается с ясной погоды.
+// ?weather=fog — сразу туман (для проверки).
+const WEATHERS = ['clear', 'fog'];
+const forceWeather = params.get('weather');
+const weather = { kind: 'clear', w: 0, until: 0 };
+function resetWeather() {
+  weather.kind = forceWeather && WEATHERS.includes(forceWeather) ? forceWeather : 'clear';
+  weather.w = weather.kind === 'fog' ? 1 : 0;
+  weather.until = gameTime + 45 + Math.random() * 45;
+}
+// возвращает силу тумана 0…1
+function updateWeather(dt) {
+  if (!forceWeather && state === 'run' && gameTime > weather.until) {
+    const others = WEATHERS.filter((k) => k !== weather.kind);
+    weather.kind = Math.random() < 0.6 ? others[Math.floor(Math.random() * others.length)] : weather.kind;
+    weather.until = gameTime + 45 + Math.random() * 45;
+    rec.event('weather', { kind: weather.kind, z: pl.z });
+  }
+  const target = weather.kind === 'fog' ? 1 : 0;
+  weather.w += Math.sign(target - weather.w) * Math.min(Math.abs(target - weather.w), dt / 8);
+  return weather.w * weather.w * (3 - 2 * weather.w);
+}
+resetWeather();
+
 // ---------- фонарь: луч трясётся на бегу ----------
 // Фонарь «в руке»: качается в такт шагам (cam.bob), вздрагивает при приземлении и толчках (cam.dip),
 // в полёте плывёт, на стене уходит в сторону стены. Пятно крупнее на широком экране.
@@ -1195,7 +1222,7 @@ const sunDepth = createSunDepthMaterial();
 const _sc = new THREE.Vector3();
 function renderSunShadow(deep) {
   const u = materials.main.uniforms;
-  const k = sunOn ? (1 - nightAmount()) * Math.max(0, 1 - deep * 1.5) : 0;
+  const k = sunOn ? (1 - nightAmount()) * Math.max(0, 1 - deep * 1.5) * (1 - 0.8 * weather.w) : 0;
   u.uSun.value = k;
   if (k <= 0.01) return;
   const d = u.uSunDir.value;
@@ -1509,14 +1536,21 @@ function frame(now) {
   materials.main.uniforms.uTime.value = gameTime;
   // в подземке дымка ближе — пустые коридоры тонут в молочном свете
   const deep = Math.min(1, Math.max(0, -cam.base / 5));
-  materials.main.uniforms.uFogNear.value = LZ * (2.2 - 1.0 * deep);
-  materials.main.uniforms.uFogFar.value = LZ * (6.0 - 2.6 * deep);
+  // погода: туман на улице — видимость втрое ближе (в подземке своя дымка, туман туда не заходит)
+  const fogW = updateWeather(dt) * (1 - deep);
+  materials.main.uniforms.uFogNear.value = LZ * (2.2 - 1.0 * deep) * (1 - 0.68 * fogW);
+  materials.main.uniforms.uFogFar.value = LZ * (6.0 - 2.6 * deep) * (1 - 0.62 * fogW);
   // день и ночь: в подземке ночь почти не чувствуется — там свои лампы
   const night = nightAmount() * (1 - 0.6 * deep);
   const nf = [0.17, 0.135, 0.11]; // ночной туман и небо: тёплая дымка от света города, светлее башен
   const df = [1 - 0.05 * deep, 1 - 0.01 * deep, 1 - 0.02 * deep];
+  // в тумане днём — белёсо-серая дымка, ночью — плотная тёплая, подсвеченная городом
+  const fd = [0.84, 0.855, 0.87], fn = [0.24, 0.2, 0.17];
+  for (let i = 0; i < 3; i++) { df[i] += (fd[i] - df[i]) * fogW; nf[i] += (fn[i] - nf[i]) * fogW; }
   materials.main.uniforms.uFogColor.value.setRGB(
     df[0] + (nf[0] - df[0]) * night, df[1] + (nf[1] - df[1]) * night, df[2] + (nf[2] - df[2]) * night);
+  materials.star.uniforms.uFogNear.value = materials.main.uniforms.uFogNear.value;
+  materials.star.uniforms.uFogFar.value = materials.main.uniforms.uFogFar.value;
   materials.main.uniforms.uNight.value = night;
   // ночью блум слабее и с порогом повыше: светятся только окна и красное, без пересвета
   if (bloom) { bloom.strength = 0.27 - 0.06 * night; bloom.threshold = 0.9 + 0.05 * night; }
