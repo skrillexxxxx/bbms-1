@@ -111,6 +111,12 @@ function createBlurPass() {
       uniform float uCA;
       uniform float uPx;
       float hash(float n) { return fract(sin(n) * 43758.5453); }
+      // хеш Дейва Хоскинса: равномерный и без sin
+      float hash13(vec3 p3) {
+        p3 = fract(p3 * 0.1031);
+        p3 += dot(p3, p3.zyx + 31.32);
+        return fract((p3.x + p3.y) * p3.z);
+      }
       varying vec2 vUv;
       void main() {
         vec2 d = vUv - uCenter;
@@ -162,16 +168,14 @@ function createBlurPass() {
           col.b += texture2D(tDiffuse, vUv - o).b - base.b;
         }
 
-        // цифровой шум: меняется ~24 раза в секунду, почти монохромный, с лёгким цветом.
-        // Кадр тут ещё в линейном цвете — шум кладём в гамме, чтобы в тенях не было «снега»
+        // цифровой шум: каждый кадр — новый, независимый (кадр — третья координата хеша, а не сдвиг
+        // картинки: сдвиг глаз видит как бегущую рябь). Хеш без sin — на мобильных GPU sin больших чисел
+        // теряет точность и складывается в полосы. Кадр тут ещё в линейном цвете — шум кладём в гамме
         if (uGrain > 0.0) {
           vec2 p = floor(gl_FragCoord.xy / uPx);
-          float f = floor(uTime * 24.0);
-          float n = fract(sin(dot(p + f * 17.0, vec2(12.9898, 78.233))) * 43758.5453) - 0.5;
-          vec3 nc = vec3(
-            fract(sin(dot(p + f * 3.0, vec2(39.35, 11.13))) * 24634.63),
-            fract(sin(dot(p + f * 5.0, vec2(73.15, 52.37))) * 31337.17),
-            fract(sin(dot(p + f * 7.0, vec2(27.61, 91.89))) * 17171.71)) - 0.5;
+          float f = mod(floor(uTime * 24.0), 97.0);
+          float n = hash13(vec3(p, f)) - 0.5;
+          vec3 nc = vec3(hash13(vec3(p, f + 101.0)), hash13(vec3(p, f + 211.0)), hash13(vec3(p, f + 307.0))) - 0.5;
           vec3 g = pow(clamp(col.rgb, 0.0, 1.0), vec3(1.0 / 2.2));
           g += uGrain * (n * 0.8 + nc * 0.35);
           col.rgb = pow(clamp(g, 0.0, 1.0), vec3(2.2));
@@ -205,7 +209,8 @@ function resize() {
     composer.setPixelRatio(renderer.getPixelRatio());
     composer.setSize(w, h);
     bloom.resolution.set(w / 2, h / 2);
-    if (blurPass) blurPass.uniforms.uPx.value = Math.max(1, renderer.getPixelRatio() * 0.75);
+    // зерно — целое число пикселей (иначе сетка 1-2-1-2 и муар): на iPhone 2×2 пикселя = точка экрана
+    if (blurPass) blurPass.uniforms.uPx.value = Math.max(1, Math.round(renderer.getPixelRatio()));
   }
 }
 window.addEventListener('resize', resize);
