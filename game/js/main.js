@@ -388,9 +388,11 @@ function solidsAt(x, z) {
   if (!row) return [[-INF, 0]];
   const v = row[Math.floor(wrapX(x) / CELL) % COLS];
   if (v === WALL || v === RUNWALL) return SOLID_WALL;
-  if (v === VOID || v === POOL) return SOLID_NONE;
   const lz = z - ri * ROW;
   const base = row.b0 + (row.b1 - row.b0) * (lz / ROW);
+  // над провалом в тоннеле потолок тоже есть (он и нарисован): иначе бег по стене и толчок
+  // выносили выше потолка, и на следующем ряду игрок влетал в него сбоку
+  if (v === VOID || v === POOL) return row.cover ? [[base + CEIL_H, INF]] : SOLID_NONE;
   const out = [[-INF, base + lv(v) * LEVEL]];
   if (v === BRIDGE && lz > 0.6 && lz < ROW - 0.6) {
     out.push(row.cover ? [base + BRIDGE_BOTTOM, INF] : [base + BRIDGE_BOTTOM, base + BRIDGE_TOP]);
@@ -541,7 +543,7 @@ function canWallRun(d) {
   const x = laneX(pl.lane + d);
   for (const dz of [0, 2]) if (!isRunwallAt(x, pl.z + dz)) return false;
   // в тоннеле под потолком не разбежишься
-  if (ceilingAt(pl.x, pl.z, pl.y) < pl.y + 4) return false;
+  if (ceilingAt(pl.x, pl.z, pl.y) < pl.y + P.bodyStand + 0.4) return false;
   return true;
 }
 
@@ -661,7 +663,7 @@ function physicsStep(dt) {
       cam.dip = Math.max(cam.dip, 0.55);
       cam.pitch -= 0.08;
       shake = Math.max(shake, 0.15);
-    } else if (hi === INF && lo !== -INF && lo > pl.y + h * 0.5
+    } else if (hi === INF && lo !== -INF && lo > pl.y + 0.6
       && lo - h >= supportAt(pl.x + ox, nz + r, lo - h) - 0.01) {
       // потолок тоннеля над головой — пригибаемся, а не разбиваемся
       pl.y = lo - h - 0.01; pl.vy = Math.min(pl.vy, -1); pl.grounded = false;
