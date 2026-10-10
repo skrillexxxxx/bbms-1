@@ -893,6 +893,15 @@ $('close-seeds').addEventListener('click', () => ui.seeds.classList.remove('show
 $('same').addEventListener('click', () => { sound.unlock(); restart(true); });
 
 // ---------- камера ----------
+function tierFloor() {
+  if (pl.launch) {
+    const L0 = pl.launch;
+    const t = Math.min(1, Math.max(0, (pl.z - L0.z0) / (L0.z1 - L0.z0)));
+    return L0.y0 + (L0.y1 - L0.y0) * t * t * (3 - 2 * t);
+  }
+  return world.baseAt(pl.z + speedNow() * 0.25);
+}
+
 // Высота земли впереди по своей полосе (через ~0.6 с бега): пол яруса плюс высота предмета.
 // Перед трамплином — сразу крыша небоскрёба. Над пропастью — пол яруса.
 function groundAhead() {
@@ -936,8 +945,10 @@ function updateCamera(dt, running) {
   const rel = eyeY - B;
   const hk = Math.min(1, Math.max(0, (pl.y - B) / (3 * LEVEL)));
   const pull = 0.7 * hk * hk * (3 - 2 * hk);
-  const lookTarget = B + rel * 0.75 * (1 - pull) + 0.4 * pull;
-  const w1 = 5.5;
+  // впереди выше (уступы, трамплин на небоскрёб) — взгляд заранее чуть приподнят
+  const up = pl.launch ? 0 : Math.min(2.5, Math.max(0, (groundAhead() - pl.y) * 0.3));
+  const lookTarget = B + rel * 0.75 * (1 - pull) + 0.4 * pull + up;
+  const w1 = pl.grounded ? 5.5 : 8;
   cam.lookV += (w1 * w1 * (lookTarget - cam.lookY) - 2 * w1 * cam.lookV) * dt;
   cam.lookY += cam.lookV * dt;
   camera.lookAt(0, cam.lookY, 0);
@@ -1004,13 +1015,16 @@ function frame(now) {
   for (const m of meshes) m.position.set(-pl.x, 0, m.userData.zStart - pl.z);
   // уровень пола яруса — сюда сходится весь мир; на рампах и при спрыгивании плавно
   // в полёте (трамплин, прыжок с крыши, подъём) целимся туда, куда приземлимся, а не откуда летим
-  // Точка схода (и взгляд) идут за землёй ВПЕРЕДИ, а не под ногами: на подъёме смотрим вверх,
-  // на уступ, перед трамплином — на крышу небоскрёба, перед прыжком вниз — на место приземления.
-  // Плавная пружина без рывков.
-  const baseTarget = groundAhead();
-  const w0 = 4.5;
-  cam.baseV += (w0 * w0 * (baseTarget - cam.base) - 2 * w0 * cam.baseV) * dt;
-  cam.base += cam.baseV * dt;
+  // Точка схода (куда сходится весь мир) — пол яруса чуть впереди, без предметов.
+  // На трамплине едет вместе с дугой; в полёте догоняет быстрее, чтобы оказаться на месте
+  // приземления раньше нас. Плавная пружина без рывков.
+  const baseTarget = tierFloor();
+  const w0 = pl.grounded ? 4.5 : 7;
+  if (pl.launch) { cam.base = baseTarget; cam.baseV = 0; } // дуга и так плавная — точно по ней
+  else {
+    cam.baseV += (w0 * w0 * (baseTarget - cam.base) - 2 * w0 * cam.baseV) * dt;
+    cam.base += cam.baseV * dt;
+  }
   materials.main.uniforms.uB.value = cam.base;
   materials.main.uniforms.uTime.value = gameTime;
   // в подземке дымка ближе — пустые коридоры тонут в молочном свете
