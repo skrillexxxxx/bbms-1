@@ -322,6 +322,7 @@ function longJumpTarget(v) {
   // где после неё есть пол (а не с наружной стороны над пропастью)
   const floorAt = (lane, z) => walk(world.cellAt(wrapX(laneX(lane)), z));
   let best = null;
+  const side = [null, null, null]; // лучшая стена слева (d = −1) и справа (d = +1)
   for (let k = -3; k <= 3; k++) {
     const wl = pl.lane + k;
     const x = laneX(wl);
@@ -335,8 +336,13 @@ function longJumpTarget(v) {
       if (!floorAt(lane, pl.z + dz1 + 3) && !floorAt(lane, pl.z + dz1 + 6)) continue;
       const cost = Math.abs(lane - pl.lane) * 10 + dz0;
       if (!best || cost < best.cost) best = { cost, lane, d, dz: dz0 };
+      if (!side[d + 1] || cost < side[d + 1].cost) side[d + 1] = { cost, lane, d, dz: dz0 };
     }
   }
+  // красные стены с обеих сторон (коридор над пропастью) — сторону выбирает игрок свайпом,
+  // а не «ближайшая стена»: иначе из левой полосы всегда тянуло на левую стену.
+  // Прыжок всё равно длинный — долетаем до стен и висим, пока не свайпнут.
+  if (side[0] && side[2]) return { cost: best.cost, lane: pl.lane, d: 0, dz: Math.min(side[0].dz, side[2].dz) };
   return best;
 }
 
@@ -421,6 +427,7 @@ function canWallRun(d) {
 function startWallRun(d) {
   pl.wall = d;
   pl.fromLong = false;
+  pl.jumpBuf = 0; // прыжок, нажатый до прилипания, — не толчок от стены сразу же
   pl.wallT = 0;
   // подброс — только на первой стене; на второй (после толчка) не набираем высоту, а держим её
   pl.vy = pl.wallLast ? Math.max(0.5, Math.min(pl.vy, 2)) : P.wallLift;
