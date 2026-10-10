@@ -303,7 +303,7 @@ const frag = /* glsl */ `
       if (uLamp > 0.0) {
         // пятно шире по горизонтали — как у настоящего фонаря, и не теряется на широком экране
         vec2 sp = vView.xy / max(-vView.z, 0.05) - uLampP.xy;
-        sp.x *= 0.78;
+        if (uCookieOn < 0.5) sp.x *= 0.78; // нарисованное пятно — овал; маска — ровный круг
         float R = uLampP.z;
         float r = length(sp);
         float spot = 1.0 - smoothstep(R * 0.8, R * 1.1, r);
@@ -314,7 +314,7 @@ const frag = /* glsl */ `
           vec2 cuv = sp / (R * 2.4) * 0.5 + 0.5;
           float ck = texture2D(uCookie, clamp(cuv, 0.0, 1.0)).r;
           ck *= step(abs(cuv.x - 0.5), 0.5) * step(abs(cuv.y - 0.5), 0.5);
-          spot = ck * ck * 1.1; ring = 0.0; halo = ck * 0.35;
+          spot = ck * ck * 1.7; ring = 0.0; halo = ck * 0.55;
         }
         float dist = length(vView);
         float att = 1.0 / (1.0 + dist * dist / 220.0);
@@ -335,7 +335,7 @@ const frag = /* glsl */ `
           }
         }
         // свет фонаря не выше порога блума — то, куда бежим, не выжигается в белое
-        dark = min(dark + lampL, vec3(0.8));
+        dark = min(dark + lampL, vec3(0.93));
       }
       c3 = mix(c3, dark + emit, uNight);
     }

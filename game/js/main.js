@@ -1082,7 +1082,19 @@ document.addEventListener('touchmove', (e) => { if (!e.target.closest?.('#seed-l
 // ---------- фонарь: луч трясётся на бегу ----------
 // Фонарь «в руке»: качается в такт шагам (cam.bob), вздрагивает при приземлении и толчках (cam.dip),
 // в полёте плывёт, на стене уходит в сторону стены. Пятно крупнее на широком экране.
-const lamp = { x: 0, y: -0.1, vx: 0, vy: 0, jit: 0 };
+const lamp = { x: 0, y: -0.1, vx: 0, vy: 0, jit: 0, on: false, t: 0 };
+// фонарь щёлкает резко, а не плавно: включился — короткое моргание и сразу полная яркость;
+// выключился (в подземке, на рассвете) — сразу темно
+function lampSwitch(want) {
+  if (want !== lamp.on) { lamp.on = want; lamp.t = gameTime; }
+  if (!lamp.on) return 0;
+  const t = gameTime - lamp.t;
+  if (t < 0.05) return 1;
+  if (t < 0.11) return 0.15;
+  if (t < 0.16) return 1;
+  if (t < 0.2) return 0.4;
+  return 1;
+}
 function updateLamp(dt) {
   const run = state === 'run';
   const ground = run && pl.grounded && !sliding();
@@ -1447,7 +1459,7 @@ function frame(now) {
     df[0] + (nf[0] - df[0]) * night, df[1] + (nf[1] - df[1]) * night, df[2] + (nf[2] - df[2]) * night);
   materials.main.uniforms.uNight.value = night;
   // фонарь: ночью на улице; в подземке плавно гаснет (deep меняется плавно вместе с камерой)
-  materials.main.uniforms.uLamp.value = nightAmount() * Math.max(0, 1 - deep * 1.5);
+  materials.main.uniforms.uLamp.value = lampSwitch(nightAmount() > 0.55 && deep < 0.35);
   updateLamp(dt);
   materials.monkey.uniforms.uNight.value = night;
   _sky.copy(materials.main.uniforms.uFogColor.value);
