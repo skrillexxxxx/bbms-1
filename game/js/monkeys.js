@@ -80,6 +80,72 @@ const frag = /* glsl */ `
   }
 `;
 
+// Ореол вокруг обезьянки: квадрат, всегда повёрнутый к камере, с мягким красным свечением.
+// Свой, а не от блума — блум ослаблен, а обезьянку должно быть видно издалека.
+const glowVert = /* glsl */ `
+  attribute vec2 aCorner;
+  uniform float uL;
+  uniform float uLz;
+  uniform float uB;
+  uniform float uFogNear;
+  uniform float uFogFar;
+  uniform float uSize;
+  varying vec2 vUv;
+  varying float vFade;
+  void main() {
+    vec4 f = modelMatrix * vec4(0.0, 0.0, 0.0, 1.0);
+    float s = exp(-f.z / uLz);
+    float r = uL * s;
+    float phi = f.x / uL;
+    vec3 w = vec3(r * sin(phi), uB + (f.y - uB) * s, r * cos(phi));
+    vec4 mv = viewMatrix * vec4(w, 1.0);
+    mv.xy += aCorner * uSize * s;
+    gl_Position = projectionMatrix * mv;
+    vUv = aCorner;
+    vFade = 1.0 - smoothstep(uFogNear, uFogFar, f.z);
+  }
+`;
+const glowFrag = /* glsl */ `
+  precision highp float;
+  uniform float uLinearOut;
+  uniform float uPulse;
+  varying vec2 vUv;
+  varying float vFade;
+  void main() {
+    float r = length(vUv);
+    float g = exp(-r * r * 7.0) * 0.9 + exp(-r * 3.5) * 0.4;
+    g *= (1.0 - smoothstep(0.8, 1.0, r)) * vFade * uPulse;
+    vec3 c = vec3(1.0, 0.1, 0.09) * g;
+    if (uLinearOut > 0.5) c = pow(c, vec3(2.2)) * 1.6;
+    gl_FragColor = vec4(c, 1.0);
+  }
+`;
+let glowGeo = null;
+function glowGeometry() {
+  if (glowGeo) return glowGeo;
+  glowGeo = new THREE.BufferGeometry();
+  glowGeo.setAttribute('position', new THREE.Float32BufferAttribute(new Array(12).fill(0), 3));
+  glowGeo.setAttribute('aCorner', new THREE.Float32BufferAttribute([-1, -1, 1, -1, 1, 1, -1, 1], 2));
+  glowGeo.setIndex([0, 1, 2, 0, 2, 3]);
+  return glowGeo;
+}
+export function createGlowMaterial({ linearOut }) {
+  return new THREE.ShaderMaterial({
+    vertexShader: glowVert,
+    fragmentShader: glowFrag,
+    transparent: true,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+    uniforms: {
+      uL: { value: L }, uLz: { value: LZ }, uB: { value: 0 },
+      uFogNear: { value: LZ * 2.2 }, uFogFar: { value: LZ * 6.0 },
+      uLinearOut: { value: linearOut ? 1 : 0 },
+      uSize: { value: 3.2 },
+      uPulse: { value: 1 },
+    },
+  });
+}
+
 export function createMonkeyMaterial({ linearOut }) {
   return new THREE.ShaderMaterial({
     vertexShader: vert,
@@ -98,7 +164,7 @@ export function createMonkeyMaterial({ linearOut }) {
 
 // Обезьянки для паттерна inst: добавляет меши в group (в локальных координатах паттерна),
 // возвращает список { mesh, x, y, z } в мировых координатах для сбора.
-export function placeMonkeys(world, inst, group, material) {
+export function placeMonkeys(world, inst, group, material, glowMat) {
   if (!geometry) return [];
   const r0 = inst.rowStart, n = inst.rows ? inst.rows.length : 0;
   const end = Math.min(world.rows.length, r0 + n);
@@ -135,6 +201,12 @@ export function placeMonkeys(world, inst, group, material) {
     mesh.position.set(x, y, zl);
     mesh.rotation.y = k * 0.6;
     group.add(mesh);
+    if (glowMat) {
+      const glow = new THREE.Mesh(glowGeometry(), glowMat);
+      glow.frustumCulled = false;
+      glow.renderOrder = 2;
+      mesh.add(glow); // летит вместе с обезьянкой (крутится — квадрату всё равно, он смотрит на камеру)
+    }
     out.push({ mesh, x, y, z: (r0 + r + k + 0.5) * ROW, phase: k * 0.6 });
   }
   return out;

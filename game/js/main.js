@@ -11,7 +11,7 @@ import {
 import { createMaterial, createStarMaterial, createDepthMaterial, createSunDepthMaterial, buildInstanceMesh } from './render.js';
 import { createSound } from './sound.js';
 import { createRecorder, shareFile } from './recorder.js';
-import { loadMonkey, createMonkeyMaterial, placeMonkeys, monkeyGeometry } from './monkeys.js';
+import { loadMonkey, createMonkeyMaterial, createGlowMaterial, placeMonkeys, monkeyGeometry } from './monkeys.js';
 
 // ---------- параметры игрока (их же учитывает проверка паттернов) ----------
 const P = {
@@ -80,6 +80,7 @@ const camera = new THREE.PerspectiveCamera(75, 1, 0.05, 200);
 const materials = {
   main: createMaterial({ linearOut: useBloom }), star: createStarMaterial({ linearOut: useBloom }),
   monkey: createMonkeyMaterial({ linearOut: useBloom }),
+  glow: createGlowMaterial({ linearOut: useBloom }),
 };
 const monkeyReady = loadMonkey();
 // маска фонаря (снимок пятна реального фонаря); пока не загрузилась — пятно рисуется формулой
@@ -340,7 +341,7 @@ function reset(s) {
   history.replaceState(null, '', u);
 }
 
-function disposeGroup(g) { g.traverse((o) => o.geometry && o.material !== materials.monkey && o.geometry.dispose()); }
+function disposeGroup(g) { g.traverse((o) => o.geometry && o.material !== materials.monkey && o.material !== materials.glow && o.geometry.dispose()); }
 
 function ensureWorld() {
   const need = Math.ceil((pl.z + LZ * 6.5) / ROW) + 4;
@@ -349,7 +350,7 @@ function ensureWorld() {
   while (built < world.instances.length - 1) {
     const inst = world.instances[built++];
     const m = buildInstanceMesh(inst, materials, world);
-    monkeys.push(...placeMonkeys(world, inst, m, materials.monkey));
+    monkeys.push(...placeMonkeys(world, inst, m, materials.monkey, materials.glow));
     meshes.push(m);
     scene.add(m);
   }
@@ -1524,6 +1525,11 @@ function frame(now) {
   updateLamp(dt);
   materials.monkey.uniforms.uNight.value = night;
   materials.monkey.uniforms.uFlashT.value = gameTime;
+  {
+    const gu = materials.glow.uniforms, mu = materials.monkey.uniforms;
+    gu.uB.value = mu.uB.value; gu.uFogNear.value = mu.uFogNear.value; gu.uFogFar.value = mu.uFogFar.value;
+    gu.uPulse.value = 0.85 + 0.15 * Math.sin(gameTime * 4); // в такт пульсу самой обезьянки
+  }
   _sky.copy(materials.main.uniforms.uFogColor.value);
   renderer.setClearColor(useBloom ? _sky.clone().convertSRGBToLinear() : _sky, 1);
   document.body.classList.toggle('night', night > 0.45);
