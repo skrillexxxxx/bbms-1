@@ -7,9 +7,10 @@ const MUSIC_GAIN = 0.8;
 // шаги: 10 вариантов, нарезаны из записи бега (audio/steps/stepN.mp3)
 const STEP_URLS = Array.from({ length: 10 }, (_, i) => `audio/steps/step${i}.mp3`);
 const STEP_GAIN = 0.55;
-// подкат и бег по стене: вход → луп, пока скользим → выход (audio/slide/*.mp3)
+// подкат по полу: вход → луп, пока скользим → выход (audio/slide/*.mp3), глухо — только низ
 const SLIDE_URLS = { start: 'audio/slide/start.mp3', loop: 'audio/slide/loop.mp3', end: 'audio/slide/end.mp3' };
-const SLIDE_GAIN = 0.8;
+const SLIDE_GAIN = 0.45;
+const SLIDE_LP = 300; // Гц: от скольжения остаётся только глухой низ
 const SLIDE_TO_LOOP = 0.45; // через сколько секунд вход перетекает в луп (дальше у входа ровный «шорох»)
 // смерть: музыка уходит «под воду» — срез высоких до MUFFLE_HZ и на 3 дБ тише
 const OPEN_HZ = 20000, MUFFLE_HZ = 350, MUFFLE_GAIN = 0.708; // −3 дБ
@@ -38,7 +39,7 @@ export function createSound(enabled) {
   const raw = enabled ? get(MUSIC_URL) : null;
   const stepRaw = enabled ? STEP_URLS.map(get) : [];
   const slideRaw = enabled ? Object.fromEntries(Object.entries(SLIDE_URLS).map(([k, u]) => [k, get(u)])) : {};
-  let slideBuf = {}, slideNow = null; // slideNow: { srcs, gains } — звучащий подкат
+  let slideBuf = {}, slideNow = null, slideBus = null; // slideNow: { srcs, gains } — звучащий подкат
   let steps = [], sfx = null, lastStep = -1; // steps: [{ buf, a }] — a: где начинается звук (без тишины mp3)
 
   function decode(data) {
@@ -78,12 +79,13 @@ export function createSound(enabled) {
     }
   }
 
-  function oneShot(st, gain, when = 0) {
+  function oneShot(st, gain, when = 0, bus = sfx, rate = 1) {
     const src = ctx.createBufferSource();
     src.buffer = st.buf;
+    src.playbackRate.value = rate;
     const g = ctx.createGain();
     g.gain.value = gain;
-    src.connect(g); g.connect(sfx);
+    src.connect(g); g.connect(bus);
     src.start(when, st.a);
     return [src, g];
   }
@@ -91,19 +93,28 @@ export function createSound(enabled) {
   function slideStart() {
     if (!ctx || ctx.state !== 'running' || slideNow || !slideBuf.start) return;
     const t = ctx.currentTime;
-    const [s1, g1] = oneShot(slideBuf.start, SLIDE_GAIN);
+    // каждый подкат чуть другой: своя высота, громкость и место в лупе
+    const rate = 0.86 + Math.random() * 0.22;
+    const [s1, g1] = oneShot(slideBuf.start, SLIDE_GAIN * (0.85 + Math.random() * 0.15), 0, slideBus, rate);
     const srcs = [s1], gains = [g1];
     if (slideBuf.loop) {
       // луп вступает, пока вход ещё звучит, и мягко забирает громкость
       const lb = slideBuf.loop;
       const s2 = ctx.createBufferSource();
       s2.buffer = lb.buf; s2.loop = true; s2.loopStart = lb.a; s2.loopEnd = lb.b;
+      s2.playbackRate.value = rate;
+      // медленно «плывёт» высота — повтор лупа не так слышен
+      const lfo = ctx.createOscillator(), depth = ctx.createGain();
+      lfo.frequency.value = 0.35 + Math.random() * 0.4;
+      depth.gain.value = rate * 0.045;
+      lfo.connect(depth); depth.connect(s2.playbackRate);
+      lfo.start(t); srcs.push(lfo);
       const g2 = ctx.createGain();
       g2.gain.value = 0;
       g2.gain.setTargetAtTime(SLIDE_GAIN, t + SLIDE_TO_LOOP, 0.06);
       g1.gain.setTargetAtTime(0, t + SLIDE_TO_LOOP + 0.05, 0.08);
-      s2.connect(g2); g2.connect(sfx);
-      s2.start(t + SLIDE_TO_LOOP - 0.05, lb.a);
+      s2.connect(g2); g2.connect(slideBus);
+      s2.start(t + SLIDE_TO_LOOP - 0.05, lb.a + Math.random() * (lb.b - lb.a) * 0.8);
       srcs.push(s2); gains.push(g2);
     }
     slideNow = { srcs, gains };
@@ -115,7 +126,7 @@ export function createSound(enabled) {
     for (const g of slideNow.gains) { g.gain.cancelScheduledValues(t); g.gain.setTargetAtTime(0, t, 0.025); }
     for (const s of slideNow.srcs) { try { s.stop(t + 0.2); } catch { /* уже остановлен */ } }
     slideNow = null;
-    if (!quiet && slideBuf.end && ctx.state === 'running') oneShot(slideBuf.end, SLIDE_GAIN);
+    if (!quiet && slideBuf.end && ctx.state === 'running') oneShot(slideBuf.end, SLIDE_GAIN, 0, slideBus, 0.9 + Math.random() * 0.2);
   }
 
   // один шаг: случайный вариант (не тот же, что прошлый), чуть разная высота и громкость
@@ -146,6 +157,14 @@ export function createSound(enabled) {
     // звуки действий — мимо фильтра музыки
     sfx = ctx.createGain(); sfx.gain.value = STEP_GAIN;
     sfx.connect(ctx.destination);
+    // скольжение — через жёсткий срез высоких (два фильтра подряд — крутой спад)
+    slideBus = ctx.createGain();
+    let node = slideBus;
+    for (let i = 0; i < 2; i++) {
+      const f = ctx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = SLIDE_LP; f.Q.value = 0.6;
+      node.connect(f); node = f;
+    }
+    node.connect(sfx);
     // свернули Safari — музыка замолкает, вернулись — продолжает
     document.addEventListener('visibilitychange', () => {
       if (document.hidden) ctx.suspend(); else ctx.resume();
@@ -162,7 +181,7 @@ export function createSound(enabled) {
     },
     // true — плавно глушим (смерть), false — плавно возвращаем как было (снова играем)
     muffle(on) { muffled = on; },
-    // скольжение (подкат по полу или бег по стене): true — началось, false — закончилось;
+    // скольжение (подкат по полу): true — началось, false — закончилось;
     // quiet — без звука выхода (смерть, рестарт)
     slide(on, quiet = false) { if (on) slideStart(); else slideStop(quiet); },
     // шаг; k — громкость (1 — обычный бег)

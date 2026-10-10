@@ -1175,7 +1175,7 @@ function updateCamera(dt, running) {
     cam.bob += dt * v * 0.85;
     if (Math.floor(cam.bob / Math.PI) !== before) sound.step();
   } else if (running && pl.wall) {
-    // по стене бежим — шаги поверх шороха скольжения, чуть тише и чаще
+    // по стене бежим — шаги, чуть тише и чаще
     const before = Math.floor(cam.wallStep / Math.PI);
     cam.wallStep += dt * v * 1.0;
     if (Math.floor(cam.wallStep / Math.PI) !== before) sound.step(0.75);
@@ -1257,9 +1257,9 @@ function frame(now) {
     if (pl.grounded && !wasGroundedSnd) sound.land(Math.min(1, Math.max(0, (-airVy - 4) / 16)));
     if (!pl.grounded) airVy = pl.vy;
     wasGroundedSnd = pl.grounded;
-    // звук скольжения: подкат по полу или бег по стене. Короткий разрыв (подкат сразу за подкатом,
-    // толчок со стены на стену) не обрывает звук — выход звучит, только если не скользим ~0.12 с
-    if (sliding() || pl.wall) { slideOffT = 0; if (!slideSnd) { slideSnd = true; sound.slide(true); } }
+    // звук скольжения — только подкат по полу (на стене — шаги). Подкат сразу за подкатом
+    // не обрывает звук: выход звучит, только если не скользим ~0.12 с
+    if (sliding()) { slideOffT = 0; if (!slideSnd) { slideSnd = true; sound.slide(true); } }
     else if (slideSnd && (slideOffT += dt) > 0.12) { slideSnd = false; sound.slide(false); }
   } else if (state === 'ready') {
     // медленный «облёт» на стартовом экране
