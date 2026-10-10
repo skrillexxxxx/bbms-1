@@ -56,6 +56,12 @@
     /* город стал темнее внизу — HUD белый с тенью, читается и днём, и ночью */
     #hud { color: #f4f4f4; text-shadow: 0 1px 3px rgba(0,0,0,0.45); }
     #flag { border-color: #f4f4f4; color: #f4f4f4; }
+    #fps {
+      position: fixed; right: calc(env(safe-area-inset-right) + 16px);
+      top: calc(var(--app-h, 100dvh) - env(safe-area-inset-bottom) - 10px); transform: translateY(-100%);
+      font: 11px ui-monospace, Menlo, monospace; color: #f4f4f4; opacity: 0.6; pointer-events: none;
+      text-shadow: 0 1px 2px rgba(0,0,0,0.5);
+    }
     #debug { color: #f4f4f4; text-shadow: 0 1px 2px rgba(0,0,0,0.5); }
     #hud-left, #dist { font-size: 28px; font-weight: 800; }
     #monk { display: none; margin-left: 14px; color: #e5262b; }
@@ -108,6 +114,7 @@
 
   <div id="hud"><div id="hud-left"><span id="dist">0 м</span><span id="monk"></span></div><button id="flag" class="ghost small" aria-label="Метка: тут что-то не так">⚑</button></div>
   <div id="debug"></div>
+  <div id="fps"></div>
 
   <div id="start" class="screen">
     <h1>SDWG GAME</h1>
