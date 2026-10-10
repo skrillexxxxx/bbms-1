@@ -113,9 +113,9 @@ const glowFrag = /* glsl */ `
   varying float vFade;
   void main() {
     float r = length(vUv);
-    float g = exp(-r * r * 7.0) * 0.9 + exp(-r * 3.5) * 0.4;
+    float g = exp(-r * r * 5.0) * 0.55 + exp(-r * 3.2) * 0.25;
     g *= (1.0 - smoothstep(0.8, 1.0, r)) * vFade * uPulse;
-    vec3 c = vec3(1.0, 0.1, 0.09) * g;
+    vec3 c = vec3(1.0, 0.13, 0.12) * g;
     if (uLinearOut > 0.5) c = pow(c, vec3(2.2)) * 1.6;
     gl_FragColor = vec4(c, 1.0);
   }
@@ -140,7 +140,7 @@ export function createGlowMaterial({ linearOut }) {
       uL: { value: L }, uLz: { value: LZ }, uB: { value: 0 },
       uFogNear: { value: LZ * 2.2 }, uFogFar: { value: LZ * 6.0 },
       uLinearOut: { value: linearOut ? 1 : 0 },
-      uSize: { value: 3.2 },
+      uSize: { value: 1.9 },
       uPulse: { value: 1 },
     },
   });
