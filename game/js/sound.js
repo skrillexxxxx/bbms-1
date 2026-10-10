@@ -7,6 +7,10 @@ const MUSIC_GAIN = 0.8;
 // шаги: 10 вариантов, нарезаны из записи бега (audio/steps/stepN.mp3)
 const STEP_URLS = Array.from({ length: 10 }, (_, i) => `audio/steps/step${i}.mp3`);
 const STEP_GAIN = 0.55;
+// подкат и бег по стене: вход → луп, пока скользим → выход (audio/slide/*.mp3)
+const SLIDE_URLS = { start: 'audio/slide/start.mp3', loop: 'audio/slide/loop.mp3', end: 'audio/slide/end.mp3' };
+const SLIDE_GAIN = 0.8;
+const SLIDE_TO_LOOP = 0.45; // через сколько секунд вход перетекает в луп (дальше у входа ровный «шорох»)
 // смерть: музыка уходит «под воду» — срез высоких до MUFFLE_HZ и на 3 дБ тише
 const OPEN_HZ = 20000, MUFFLE_HZ = 350, MUFFLE_GAIN = 0.708; // −3 дБ
 const MUFFLE_IN = 2.2, MUFFLE_OUT = 1.2; // секунды
@@ -33,6 +37,8 @@ export function createSound(enabled) {
   const get = (url) => fetch(url).then((r) => r.arrayBuffer()).catch(() => null);
   const raw = enabled ? get(MUSIC_URL) : null;
   const stepRaw = enabled ? STEP_URLS.map(get) : [];
+  const slideRaw = enabled ? Object.fromEntries(Object.entries(SLIDE_URLS).map(([k, u]) => [k, get(u)])) : {};
+  let slideBuf = {}, slideNow = null; // slideNow: { srcs, gains } — звучащий подкат
   let steps = [], sfx = null, lastStep = -1; // steps: [{ buf, a }] — a: где начинается звук (без тишины mp3)
 
   function decode(data) {
@@ -62,6 +68,54 @@ export function createSound(enabled) {
       try { const buf = await decode(data); out.push({ buf, a: audibleRange(buf)[0] }); } catch { /* пропускаем */ }
     }
     steps = out;
+  }
+
+  async function loadSlide() {
+    for (const [k, pr] of Object.entries(slideRaw)) {
+      const data = await pr;
+      if (!data) continue;
+      try { const buf = await decode(data); const [a, b] = audibleRange(buf); slideBuf[k] = { buf, a, b }; } catch { /* пропускаем */ }
+    }
+  }
+
+  function oneShot(st, gain, when = 0) {
+    const src = ctx.createBufferSource();
+    src.buffer = st.buf;
+    const g = ctx.createGain();
+    g.gain.value = gain;
+    src.connect(g); g.connect(sfx);
+    src.start(when, st.a);
+    return [src, g];
+  }
+
+  function slideStart() {
+    if (!ctx || ctx.state !== 'running' || slideNow || !slideBuf.start) return;
+    const t = ctx.currentTime;
+    const [s1, g1] = oneShot(slideBuf.start, SLIDE_GAIN);
+    const srcs = [s1], gains = [g1];
+    if (slideBuf.loop) {
+      // луп вступает, пока вход ещё звучит, и мягко забирает громкость
+      const lb = slideBuf.loop;
+      const s2 = ctx.createBufferSource();
+      s2.buffer = lb.buf; s2.loop = true; s2.loopStart = lb.a; s2.loopEnd = lb.b;
+      const g2 = ctx.createGain();
+      g2.gain.value = 0;
+      g2.gain.setTargetAtTime(SLIDE_GAIN, t + SLIDE_TO_LOOP, 0.06);
+      g1.gain.setTargetAtTime(0, t + SLIDE_TO_LOOP + 0.05, 0.08);
+      s2.connect(g2); g2.connect(sfx);
+      s2.start(t + SLIDE_TO_LOOP - 0.05, lb.a);
+      srcs.push(s2); gains.push(g2);
+    }
+    slideNow = { srcs, gains };
+  }
+
+  function slideStop(quiet) {
+    if (!ctx || !slideNow) return;
+    const t = ctx.currentTime;
+    for (const g of slideNow.gains) { g.gain.cancelScheduledValues(t); g.gain.setTargetAtTime(0, t, 0.025); }
+    for (const s of slideNow.srcs) { try { s.stop(t + 0.2); } catch { /* уже остановлен */ } }
+    slideNow = null;
+    if (!quiet && slideBuf.end && ctx.state === 'running') oneShot(slideBuf.end, SLIDE_GAIN);
   }
 
   // один шаг: случайный вариант (не тот же, что прошлый), чуть разная высота и громкость
@@ -104,10 +158,13 @@ export function createSound(enabled) {
       if (!ctx) build();
       if (!ctx) return;
       if (ctx.state === 'suspended') ctx.resume();
-      if (!started) { started = true; startMusic().catch(() => { started = false; }); loadSteps(); }
+      if (!started) { started = true; startMusic().catch(() => { started = false; }); loadSteps(); loadSlide(); }
     },
     // true — плавно глушим (смерть), false — плавно возвращаем как было (снова играем)
     muffle(on) { muffled = on; },
+    // скольжение (подкат по полу или бег по стене): true — началось, false — закончилось;
+    // quiet — без звука выхода (смерть, рестарт)
+    slide(on, quiet = false) { if (on) slideStart(); else slideStop(quiet); },
     // шаг; k — громкость (1 — обычный бег)
     step(k = 1) { playStep(k); },
     // приземление: два шага почти разом, громче — чем сильнее удар, тем громче

@@ -874,6 +874,7 @@ function renderSeeds() {
 function die(cause = '?') {
   if (state !== 'run') return;
   rec.event('die', { cause, z: pl.z, x: pl.x, y: pl.y, lane: pl.lane });
+  if (slideSnd) { slideSnd = false; sound.slide(false, true); }
   state = 'dead';
   shake = 0.6;
   sound.muffle(true);
@@ -1083,6 +1084,7 @@ function animateMonkeys() {
 // ---------- запись забега (для отладки) ----------
 let wasGrounded = true;
 let wasGroundedSnd = true, airVy = 0; // для звука приземления: скорость падения перед касанием
+let slideSnd = false, slideOffT = 0;  // звучит ли скольжение и сколько мы уже не скользим
 function recordFrame() {
   if (pl.grounded !== wasGrounded) { rec.event(pl.grounded ? 'land' : 'air', { z: pl.z, y: pl.y, vy: pl.vy }); wasGrounded = pl.grounded; }
   rec.frame(gameTime, {
@@ -1173,10 +1175,10 @@ function updateCamera(dt, running) {
     cam.bob += dt * v * 0.85;
     if (Math.floor(cam.bob / Math.PI) !== before) sound.step();
   } else if (running && pl.wall) {
-    // по стене — те же шаги, чуть тише и чаще
+    // по стене бежим — шаги поверх шороха скольжения, чуть тише и чаще
     const before = Math.floor(cam.wallStep / Math.PI);
     cam.wallStep += dt * v * 1.0;
-    if (Math.floor(cam.wallStep / Math.PI) !== before) sound.step(0.8);
+    if (Math.floor(cam.wallStep / Math.PI) !== before) sound.step(0.75);
   }
   const bobY = running && pl.grounded && !sliding() ? Math.abs(Math.sin(cam.bob)) * 0.06 : 0;
   const bobX = running && pl.grounded && !sliding() ? Math.sin(cam.bob) * 0.03 : 0;
@@ -1255,6 +1257,10 @@ function frame(now) {
     if (pl.grounded && !wasGroundedSnd) sound.land(Math.min(1, Math.max(0, (-airVy - 4) / 16)));
     if (!pl.grounded) airVy = pl.vy;
     wasGroundedSnd = pl.grounded;
+    // звук скольжения: подкат по полу или бег по стене. Короткий разрыв (подкат сразу за подкатом,
+    // толчок со стены на стену) не обрывает звук — выход звучит, только если не скользим ~0.12 с
+    if (sliding() || pl.wall) { slideOffT = 0; if (!slideSnd) { slideSnd = true; sound.slide(true); } }
+    else if (slideSnd && (slideOffT += dt) > 0.12) { slideSnd = false; sound.slide(false); }
   } else if (state === 'ready') {
     // медленный «облёт» на стартовом экране
     pl.z = Math.min(pl.z + dt * 2, ROW * 4);
