@@ -40,7 +40,8 @@ export function createSound(enabled) {
   const stepRaw = enabled ? STEP_URLS.map(get) : [];
   const slideRaw = enabled ? Object.fromEntries(Object.entries(SLIDE_URLS).map(([k, u]) => [k, get(u)])) : {};
   let slideBuf = {}, slideNow = null, slideBus = null; // slideNow: { srcs, gains } — звучащий подкат
-  let steps = [], sfx = null, lastStep = -1; // steps: [{ buf, a }] — a: где начинается звук (без тишины mp3)
+  let steps = [], sfx = null, lastStep = -1;
+  let revWet = null; // сколько шагов уходит в реверб (в подземке — эхо тоннеля) // steps: [{ buf, a }] — a: где начинается звук (без тишины mp3)
 
   function decode(data) {
     // старый Safari знает только колбэчный вариант decodeAudioData
@@ -145,6 +146,23 @@ export function createSound(enabled) {
     src.start(0, st.a);
   }
 
+  // импульсная характеристика «зала»: стерео-шум с экспоненциальным спадом, верха гаснут быстрее низов
+  function impulse(sec, decay) {
+    const sr = ctx.sampleRate, n = Math.floor(sr * sec);
+    const buf = ctx.createBuffer(2, n, sr);
+    for (let ch = 0; ch < 2; ch++) {
+      const d = buf.getChannelData(ch);
+      let lp = 0;
+      for (let i = 0; i < n; i++) {
+        const t = i / n;
+        const k = 0.25 + 0.6 * t; // со временем фильтр закрывается сильнее
+        lp += (Math.random() * 2 - 1 - lp) * (1 - k);
+        d[i] = lp * Math.pow(1 - t, decay) * (i < sr * 0.012 ? i / (sr * 0.012) : 1);
+      }
+    }
+    return buf;
+  }
+
   function build() {
     const AC = window.AudioContext || window.webkitAudioContext;
     if (!AC) return;
@@ -157,6 +175,12 @@ export function createSound(enabled) {
     // звуки действий — мимо фильтра музыки
     sfx = ctx.createGain(); sfx.gain.value = STEP_GAIN;
     sfx.connect(ctx.destination);
+    // реверб для подземки: один свёрточный ревербератор на все звуки действий.
+    // Импульс — затухающий шум ~2 с, сразу мягкий по верхам (бетон и плитка)
+    const conv = ctx.createConvolver();
+    conv.buffer = impulse(2.2, 2.6);
+    revWet = ctx.createGain(); revWet.gain.value = 0;
+    sfx.connect(conv); conv.connect(revWet); revWet.connect(ctx.destination);
     // скольжение — через жёсткий срез высоких (два фильтра подряд — крутой спад)
     slideBus = ctx.createGain();
     let node = slideBus;
@@ -205,6 +229,8 @@ export function createSound(enabled) {
       const f = MUFFLE_HZ * Math.pow(OPEN_HZ / MUFFLE_HZ, Math.pow(1 - e, 2.2));
       const t = ctx.currentTime;
       lp.frequency.setTargetAtTime(f, t, 0.03);
+      // эхо: в подземке громкое, на улице его нет
+      if (revWet) revWet.gain.setTargetAtTime(0.55 * deep, t, 0.4);
       duck.gain.setTargetAtTime(1 + (MUFFLE_GAIN - 1) * e, t, 0.03);
     },
   };

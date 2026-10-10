@@ -61,6 +61,7 @@ const frag = /* glsl */ `
   uniform float uLinearOut;
   uniform vec3 uFogColor;
   uniform float uFlash;
+  uniform float uNight;
   varying vec3 vN;
   varying float vFog;
   void main() {
@@ -69,6 +70,7 @@ const frag = /* glsl */ `
     float rim = pow(1.0 - abs(n.z), 2.0) * 0.25;
     vec3 red = vec3(0.9, 0.12, 0.13);
     vec3 c = red * (0.55 + 0.55 * d) + rim;
+    c = mix(c, c * vec3(0.75, 0.55, 0.55), uNight); // ночью чуть темнее, но красный светится
     c = mix(c, vec3(1.0), uFlash);
     c = mix(c, uFogColor, vFog);
     if (uLinearOut > 0.5) c = pow(c, vec3(2.2));
@@ -86,6 +88,7 @@ export function createMonkeyMaterial({ linearOut }) {
       uFogColor: { value: new THREE.Color(1, 1, 1) },
       uLinearOut: { value: linearOut ? 1 : 0 },
       uFlash: { value: 0 },
+      uNight: { value: 0 },
     },
   });
 }

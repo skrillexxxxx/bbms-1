@@ -73,6 +73,7 @@ const frag = /* glsl */ `
   uniform float uRow;
   uniform float uTime;
   uniform float uHigh;
+  uniform float uNight;   // 0 — день, 1 — ночь
   varying float vTint;
   varying vec3 vPos;
   varying vec3 vN;
@@ -92,9 +93,14 @@ const frag = /* glsl */ `
     return 1.0 - smoothstep(width, width + fw * 1.5, d);
   }
 
+  float h21(vec2 p) { vec3 p3 = fract(vec3(p.xyx) * 0.1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
+  const vec3 WARM = vec3(1.0, 0.78, 0.48);
+
   void main() {
     vec3 n = normalize(vN);
     float col;
+    vec3 emit = vec3(0.0);  // ночной свет: окна, фонари, лампы — не темнеет ночью
+    float rimK = 0.0;
     int st = int(vStyle + 0.5);
     float y = vWY / vS;
 
@@ -106,6 +112,16 @@ const frag = /* glsl */ `
       col *= vAO; // контактные тени у основания стен
       // свет с неба падает туда, куда нужно бежать: светлое пятно = путь
       col = col * (1.0 + vLight * 0.6) + vLight * 0.12;
+      if (uNight > 0.0) {
+        // фонари: тёплые пятна на полу через ряд, у края каждой полосы — по очереди слева и справа
+        float pz = (fract(vPos.z / (uRow * 2.0)) - 0.5) * uRow * 2.0;
+        float side = mod(floor(vPos.z / (uRow * 2.0)), 2.0) < 1.0 ? 0.25 : 0.75;
+        float px = (fract(vPos.x / uCell) - side) * uCell;
+        float d2 = px * px * 1.3 + pz * pz;
+        emit += WARM * (0.42 * exp(-d2 / 4.5) + 0.06 * exp(-d2 / 30.0)) * uNight;
+        // путь всё равно подсвечен — холодным светом сверху
+        emit += vec3(0.75, 0.85, 1.0) * vLight * 0.22 * uNight;
+      }
     } else if (st == 6) {
       // листва: отдельные треугольники, у каждого свой оттенок
       col = (0.8 + 0.17 * vTop) * (0.92 + 0.08 * abs(n.y));
@@ -144,6 +160,7 @@ const frag = /* glsl */ `
       float lamp = (1.0 - smoothstep(0.1, 0.1 + fwidth(vPos.x) * 1.5 + 0.02, lx)) * seg;
       col = mix(col, 1.35, lamp);
       col *= 1.0 + vLight * 0.4;
+      emit += vec3(1.25) * lamp * uNight;
     } else {
       // освещение по плоской нормали — стабильно, не зависит от поворота мира
       // крыши: у высоток светлые (их почти не видно), у низких зданий и мостов —
@@ -167,13 +184,25 @@ const frag = /* glsl */ `
         float fy = fract(y / floorH);
         bool inBody = y > 3.0 && y < vTop - 2.0 && edge > 0.8;
 
+        // ночью окна загораются: каждое — своё, по хешу дома, этажа и номера окна
+        vec2 bid = vec2(vBox.x * 1.7 + vBox.w * 0.37, vBox.y * 0.91 + vBox.z * 1.3);
         if (st == 2 && inBody) {
           // ленточные окна — чёрные полосы, как на скринах
-          if (fy > 0.3 && fy < 0.78) col = 0.06;
+          if (fy > 0.3 && fy < 0.78) {
+            col = 0.06;
+            float h = h21(vec2(floor((u - uMin) / 3.4), floor(y / floorH)) + bid);
+            if (h > 0.45) emit += WARM * (0.8 + 0.6 * h) * uNight;
+          }
         } else if (st == 3 && inBody) {
           // сетка окон
           float fu = fract((u - uMin) / 2.6);
-          if (fy > 0.28 && fy < 0.8 && fu > 0.18 && fu < 0.82) col = 0.07;
+          if (fy > 0.28 && fy < 0.8 && fu > 0.18 && fu < 0.82) {
+            col = 0.07;
+            float h = h21(vec2(floor((u - uMin) / 2.6), floor(y / floorH)) + bid);
+            // большинство тёплые, некоторые — холодный свет экранов
+            vec3 wc = h > 0.9 ? vec3(0.7, 0.85, 1.1) : WARM;
+            if (h > 0.5) emit += wc * (0.8 + 0.7 * h) * uNight;
+          }
         }
         float dt = vTop - y; // расстояние от верха предмета
         if (st == 11) {
@@ -214,6 +243,7 @@ const frag = /* glsl */ `
       float rim = 1.0 - smoothstep(width, width + fw * 1.2, e);
       bool low = st >= 4;                       // низкие здания, предметы, мосты — кромка заметнее
       col = mix(col, low ? 0.93 : 0.97, rim * (low ? 0.9 : 0.6)); // ниже порога блума
+      rimK = rim * (low ? 0.9 : 0.5);
     }
 
     // под землёй темнее — чем глубже, тем сильнее; светильники не трогаем
@@ -242,9 +272,17 @@ const frag = /* glsl */ `
     else if (vTint > 1.5 && vTint < 2.5) c3 = col * vec3(0.8, 0.97, 1.04);     // бирюзовая плитка
     else if (vTint > 2.5 && vTint < 3.5) c3 = col * vec3(0.62, 0.9, 1.0);      // вода
     else if (vTint > 5.5 && vTint < 6.5) c3 = col < 0.9 ? col * red * 1.2 : vec3(col); // трамплин
-    // высота: всё, что далеко внизу под ярусом, тонет в белой дымке
+    // ночь: всё темнеет и синеет; кромки чуть светятся (видно, куда прыгать), красное горит
+    if (uNight > 0.0) {
+      bool redLit = vTint > 0.5 && vTint < 1.5 || vTint > 3.5 && vTint < 6.5;
+      vec3 dark = c3 * vec3(0.13, 0.15, 0.21);
+      if (redLit) dark = mix(dark, c3 * vec3(0.75, 0.6, 0.6), near);
+      dark += vec3(0.32, 0.36, 0.45) * rimK;
+      c3 = mix(c3, dark + emit, uNight);
+    }
+    // высота: всё, что далеко внизу под ярусом, тонет в дымке (днём белой, ночью — цвета тумана)
     float below = uB - y;
-    c3 = mix(c3, vec3(1.0), smoothstep(2.0, 30.0, below) * (0.35 + 0.25 * uHigh));
+    c3 = mix(c3, mix(vec3(1.0), uFogColor * 1.4, uNight), smoothstep(2.0, 30.0, below) * (0.35 + 0.25 * uHigh));
     vec3 c = mix(c3, uFogColor, fog);
     if (uLinearOut > 0.5) c = pow(c, vec3(2.2));
     gl_FragColor = vec4(c, 1.0);
@@ -269,6 +307,7 @@ export function createMaterial({ linearOut }) {
       uRow: { value: ROW },
       uTime: { value: 0 },
       uHigh: { value: 0 },
+      uNight: { value: 0 },
     },
   });
 }

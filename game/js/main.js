@@ -283,6 +283,22 @@ const pl = {
 };
 const cam = { roll: 0, yaw: 0, pitch: 0, dip: 0, slide: 0, bob: 0, fov: 82, wallStep: 0, slideSide: 1, lookY: 1.2, vx: 0, lines: 0, base: 0, wall: 0, fly: 0, baseV: 0, lookV: 0 };
 let gameTime = 0;
+let runStartT = 0; // gameTime в начале забега — от него считаем день и ночь
+const _sky = new THREE.Color();
+// День → сумерки → ночь → рассвет → день… Забег всегда начинается днём.
+const DAY = 70, DUSK = 18, NIGHT = 80; // секунды
+const forceNight = params.has('night') ? Number(params.get('night') || 1) : null; // для проверки: ?night=1
+function nightAmount() {
+  if (forceNight !== null) return forceNight;
+  if (state === 'ready') return 0;
+  const cyc = DAY + DUSK + NIGHT + DUSK;
+  const t = (gameTime - runStartT) % cyc;
+  const ss = (x) => x * x * (3 - 2 * x);
+  if (t < DAY) return 0;
+  if (t < DAY + DUSK) return ss((t - DAY) / DUSK);
+  if (t < DAY + DUSK + NIGHT) return 1;
+  return 1 - ss((t - DAY - DUSK - NIGHT) / DUSK);
+}
 let state = 'ready';
 let shake = 0;
 
@@ -912,6 +928,7 @@ function start() {
   ui.over.classList.remove('show');
   ui.hud.classList.add('show');
   state = 'run';
+  runStartT = gameTime;
   sound.muffle(false);
   runMonkeys = 0;
   updateMonkeyHud();
@@ -1311,7 +1328,17 @@ function frame(now) {
   const deep = Math.min(1, Math.max(0, -cam.base / 5));
   materials.main.uniforms.uFogNear.value = LZ * (2.2 - 1.0 * deep);
   materials.main.uniforms.uFogFar.value = LZ * (6.0 - 2.6 * deep);
-  materials.main.uniforms.uFogColor.value.setRGB(1 - 0.05 * deep, 1 - 0.01 * deep, 1 - 0.02 * deep);
+  // день и ночь: в подземке ночь почти не чувствуется — там свои лампы
+  const night = nightAmount() * (1 - 0.6 * deep);
+  const nf = [0.045, 0.055, 0.09]; // ночной туман и небо
+  const df = [1 - 0.05 * deep, 1 - 0.01 * deep, 1 - 0.02 * deep];
+  materials.main.uniforms.uFogColor.value.setRGB(
+    df[0] + (nf[0] - df[0]) * night, df[1] + (nf[1] - df[1]) * night, df[2] + (nf[2] - df[2]) * night);
+  materials.main.uniforms.uNight.value = night;
+  materials.monkey.uniforms.uNight.value = night;
+  _sky.copy(materials.main.uniforms.uFogColor.value);
+  renderer.setClearColor(useBloom ? _sky.clone().convertSRGBToLinear() : _sky, 1);
+  document.body.classList.toggle('night', night > 0.45);
   const high = Math.min(1, Math.max(0, (cam.base - 10) / 25));
   materials.main.uniforms.uHigh.value = high;
   sound.update(deep, state === 'run' ? speedNow() : 0, high);
