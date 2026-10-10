@@ -9,8 +9,8 @@ const STEP_URLS = Array.from({ length: 10 }, (_, i) => `audio/steps/step${i}.mp3
 const STEP_GAIN = 0.55;
 // подкат по полу: вход → луп, пока скользим → выход (audio/slide/*.mp3), глухо — только низ
 const SLIDE_URLS = { start: 'audio/slide/start.mp3', loop: 'audio/slide/loop.mp3', end: 'audio/slide/end.mp3' };
-const SLIDE_GAIN = 0.45;
-const SLIDE_LP = 300; // Гц: от скольжения остаётся только глухой низ
+const SLIDE_GAIN = 1.8;
+const SLIDE_LP = 380; // Гц: от скольжения остаётся глухой низ (ниже ~300 Гц динамик телефона почти не играет)
 const SLIDE_TO_LOOP = 0.45; // через сколько секунд вход перетекает в луп (дальше у входа ровный «шорох»)
 // смерть: музыка уходит «под воду» — срез высоких до MUFFLE_HZ и на 3 дБ тише
 const OPEN_HZ = 20000, MUFFLE_HZ = 350, MUFFLE_GAIN = 0.708; // −3 дБ
@@ -181,14 +181,11 @@ export function createSound(enabled) {
     conv.buffer = impulse(2.2, 2.6);
     revWet = ctx.createGain(); revWet.gain.value = 0;
     sfx.connect(conv); conv.connect(revWet); revWet.connect(ctx.destination);
-    // скольжение — через жёсткий срез высоких (два фильтра подряд — крутой спад)
+    // скольжение — через срез высоких. Один фильтр, а не два подряд: с крутым срезом
+    // на динамике телефона не оставалось почти ничего
     slideBus = ctx.createGain();
-    let node = slideBus;
-    for (let i = 0; i < 2; i++) {
-      const f = ctx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = SLIDE_LP; f.Q.value = 0.6;
-      node.connect(f); node = f;
-    }
-    node.connect(sfx);
+    const slf = ctx.createBiquadFilter(); slf.type = 'lowpass'; slf.frequency.value = SLIDE_LP; slf.Q.value = 0.7;
+    slideBus.connect(slf); slf.connect(sfx);
     // свернули Safari — музыка замолкает, вернулись — продолжает
     document.addEventListener('visibilitychange', () => {
       if (document.hidden) ctx.suspend(); else ctx.resume();
@@ -230,7 +227,7 @@ export function createSound(enabled) {
       const t = ctx.currentTime;
       lp.frequency.setTargetAtTime(f, t, 0.03);
       // эхо: в подземке громкое, на улице его нет
-      if (revWet) revWet.gain.setTargetAtTime(0.55 * deep, t, 0.4);
+      if (revWet) revWet.gain.setTargetAtTime(1.2 * deep, t, 0.4);
       duck.gain.setTargetAtTime(1 + (MUFFLE_GAIN - 1) * e, t, 0.03);
     },
   };
