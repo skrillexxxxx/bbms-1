@@ -298,6 +298,11 @@ export class World {
       rows,
       seed: Math.floor(this.rng() * 1e9),
     };
+    // подземка: первый спуск — обычный переход, в следующих — случайный набор особенностей
+    const under = p.tier === 'under';
+    if (under && !this._inUnder) this.underIdx = (this.underIdx ?? -1) + 1;
+    this._inUnder = under;
+    inst.feat = under ? (this.featOverride || underFeatures(this.seed, this.underIdx)) : null;
     rows.forEach((r, i) => {
       this.rows.push(r);
       this.reach.push(reach[i]);
@@ -429,6 +434,12 @@ export class World {
     return row.b0 + (row.b1 - row.b0) * t;
   }
 
+  // особенности подземки там, где z (null — на улице или в обычном переходе)
+  featAt(z) {
+    const info = this.infoAt(z);
+    return info ? this.instances[info.inst]?.feat || null : null;
+  }
+
   infoAt(z) {
     const ri = Math.max(0, Math.min(this.rows.length - 1, Math.floor(z / ROW)));
     return this.rowInfo[ri];
@@ -452,4 +463,20 @@ export function hash2(a, b) {
   let h = Math.imul(a ^ 0x9e3779b9, 0x85ebca6b) ^ Math.imul(b + 0x632be59b, 0xc2b2ae35);
   h ^= h >>> 13; h = Math.imul(h, 0x27d4eb2d); h ^= h >>> 15;
   return (h >>> 0) / 4294967296;
+}
+
+// Особенности подземного перехода: каждая выпадает сама по себе (могут совпасть).
+// Не трогает основной генератор случайных чисел — карта мира остаётся прежней.
+export function underFeatures(seed, idx) {
+  if (idx <= 0) return null;
+  const roll = (k) => hash2(seed + 977, idx * 31 + k);
+  const f = {
+    dark: roll(1) < 0.35,      // свет не работает — включается фонарик
+    balloons: roll(2) < 0.4,   // гелиевые шарики под потолком
+    balls: roll(3) < 0.45,     // в бассейнах вместо воды — разноцветные шарики
+    sparks: roll(4) < 0.35,    // лампа мигает и сыплет искрами
+    carts: roll(5) < 0.45,     // тележки из супермаркета у стен
+  };
+  if (!Object.values(f).some(Boolean)) f[['dark', 'balloons', 'balls', 'sparks', 'carts'][Math.floor(roll(6) * 5)]] = true;
+  return f;
 }

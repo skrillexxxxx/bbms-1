@@ -18,6 +18,8 @@ const vert = /* glsl */ `
   attribute float aAO;
   attribute float aLight;
   attribute float aTint;
+  attribute float aDark;
+  varying float vDark;
   varying float vTint;
   uniform float uL;
   uniform float uLz;
@@ -68,6 +70,7 @@ const vert = /* glsl */ `
     vAO = aAO;
     vLight = aLight;
     vTint = aTint;
+    vDark = aDark;
   }
 `;
 
@@ -84,6 +87,7 @@ const frag = /* glsl */ `
   uniform float uTime;
   uniform float uHigh;
   uniform float uNight;   // 0 — день, 1 — ночь
+  varying float vDark;    // тёмный переход: свет не работает
   uniform float uLamp;    // фонарь бегуна: ночью на улице 1, в подземке гаснет
   uniform vec3 uLampP;    // смещение луча (тряска на бегу) xy и радиус пятна z
   uniform sampler2D uCookie; // маска фонаря — снимок пятна реального фонаря
@@ -119,9 +123,19 @@ const frag = /* glsl */ `
   float h21(vec2 p) { vec3 p3 = fract(vec3(p.xyx) * 0.1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
   const vec3 WARM = vec3(1.0, 0.78, 0.48);
 
+  // палитра шариков: насыщенные, как в детском бассейне
+  vec3 PALETTE(float h) {
+    if (h < 0.2) return vec3(0.95, 0.2, 0.2);
+    if (h < 0.4) return vec3(0.2, 0.55, 0.95);
+    if (h < 0.6) return vec3(0.98, 0.82, 0.15);
+    if (h < 0.8) return vec3(0.25, 0.8, 0.35);
+    return vec3(0.9, 0.35, 0.8);
+  }
+
   void main() {
     vec3 n = normalize(vN);
     float col;
+    vec3 ballCol = vec3(-1.0); float ballShade = 1.0; // цветные шарики (бассейн, гелиевые)
     vec3 emit = vec3(0.0);  // ночной свет: окна, фонари, лампы — не темнеет ночью
     float rimK = 0.0;
     int st = int(vStyle + 0.5);
@@ -170,6 +184,27 @@ const frag = /* glsl */ `
       float w1 = sin(vPos.x * 2.3 + uTime * 1.6 + sin(vPos.z * 1.7 + uTime));
       float w2 = sin(vPos.z * 2.9 - uTime * 1.3 + sin(vPos.x * 1.3 - uTime * 0.7));
       col = 0.5 + 0.35 * smoothstep(0.75, 1.0, w1 * w2 * 0.5 + 0.5);
+    } else if (st == 19) {
+      // бассейн с шариками: плотно уложенные разноцветные шарики, у каждого свой цвет и блик
+      vec2 q = vPos.xz * 3.2;
+      vec2 id = floor(q + vec2(0.0, mod(floor(q.x), 2.0) * 0.5));
+      vec2 fq = fract(q + vec2(0.0, mod(floor(q.x), 2.0) * 0.5)) - 0.5;
+      float d = length(fq);
+      col = 1.0;
+      ballCol = PALETTE(h21(id + 3.7));
+      ballShade = (1.0 - smoothstep(0.38, 0.5, d)) * (0.75 + 0.35 * (0.5 - fq.y - fq.x * 0.3)) + 0.15;
+    } else if (st == 20) {
+      // гелиевый шарик: гладкий глянцевый, цвет — по номеру
+      col = 1.0;
+      ballCol = PALETTE(fract(vTop * 0.618));
+      ballShade = 0.55 + 0.45 * max(dot(n, normalize(vec3(-0.3, 0.6, -0.7))), 0.0) + 0.35 * pow(max(dot(n, normalize(vec3(-0.4, 0.5, -0.75))), 0.0), 18.0);
+    } else if (st == 22) {
+      col = 0.62 + 0.15 * abs(n.y); // хромированная проволока тележки
+    } else if (st == 23) {
+      // неисправная лампа: то гаснет, то вспыхивает
+      float f1 = step(0.55, fract(sin(floor(uTime * 23.0) * 12.9898) * 43758.5453));
+      float f2 = step(0.8, fract(sin(floor(uTime * 7.0) * 78.233) * 43758.5453));
+      col = 0.15 + 1.4 * max(f1 * 0.6, f2);
     } else if (st == 17) {
       // трамплин: белые шевроны «вперёд» на красном
       float ax = abs(fract(vPos.x / uCell) - 0.5) * uCell;
@@ -335,6 +370,7 @@ const frag = /* glsl */ `
     float fog = max(f1, f2);
     // цвет: в белом мире — редкие акценты, как в Mirror's Edge
     vec3 c3 = vec3(col);
+    if (ballCol.x >= 0.0) c3 = ballCol * ballShade;
     vec3 red = vec3(1.0, 0.2, 0.15);
     // Runner Vision: издалека предметы белые, краснеют по мере приближения
     float near = 1.0 - smoothstep(16.0, 34.0, vDz);
@@ -362,6 +398,7 @@ const frag = /* glsl */ `
     else if (vTint > 1.5 && vTint < 2.5) c3 = col * vec3(0.8, 0.97, 1.04);     // бирюзовая плитка
     else if (vTint > 2.5 && vTint < 3.5) c3 = col * vec3(0.62, 0.9, 1.0);      // вода
     else if (vTint > 5.5 && vTint < 6.5) c3 = col < 0.9 ? col * red * 1.2 : vec3(col); // трамплин
+    vec3 alb = c3; // цвет поверхности до ночи и темноты — от него считается свет фонаря
     // ночь: всё темнеет и синеет; кромки чуть светятся (видно, куда прыгать), красное горит
     if (uNight > 0.0) {
       bool redLit = vTint > 0.5 && vTint < 1.5 || vTint > 3.5 && vTint < 6.5;
@@ -383,46 +420,52 @@ const frag = /* glsl */ `
         // будка ночью светится изнутри: её тёмное стекло — тёплое окошко
         if (st == 13 && col < 0.15 && n.y < 0.5 && n.y > -0.5) dark += WARM * 0.55;
       }
-      // фонарь бегуна, как в хоррорах: круглое пятно по центру взгляда (чуть ниже), мягкий ореол
-      // и светлое кольцо по краю. Считаем по направлению от камеры, вблизи ярко, вдаль слабеет
-      if (uLamp > 0.0) {
-        // пятно шире по горизонтали — как у настоящего фонаря, и не теряется на широком экране
-        vec2 sp = vView.xy / max(-vView.z, 0.05) - uLampP.xy;
-        if (uCookieOn < 0.5) sp.x *= 0.78; // нарисованное пятно — овал; маска — ровный круг
-        float R = uLampP.z;
-        float r = length(sp);
-        float spot = 1.0 - smoothstep(R * 0.8, R * 1.1, r);
-        float ring = exp(-pow((r - R * 0.95) / (R * 0.1), 2.0)) * 0.3;
-        float halo = (1.0 - smoothstep(R * 1.1, R * 2.6, r)) * 0.3;
-        if (uCookieOn > 0.5) {
-          // маска: вся картинка — пятно с ореолом, её край — R·2.4 от центра
-          vec2 cuv = sp / (R * 2.4) * 0.5 + 0.5;
-          float ck = texture2D(uCookie, clamp(cuv, 0.0, 1.0)).r;
-          ck *= step(abs(cuv.x - 0.5), 0.5) * step(abs(cuv.y - 0.5), 0.5);
-          spot = ck * ck * 1.15; ring = 0.0; halo = ck * 0.45;
-        }
-        float dist = length(vView);
-        float att = 1.0 / (1.0 + dist * dist / 220.0);
-        float face = n.y > 0.5 ? 0.75 : (n.y < -0.5 ? 0.3 : 0.45 + 0.55 * max(-n.z, 0.0) + 0.3 * abs(n.x));
-        float fl = 0.94 + 0.06 * step(0.97, fract(sin(floor(uTime * 9.0) * 12.9898) * 43758.5453));
-        vec3 lampL = c3 * vec3(1.0, 0.97, 0.9) * (spot + ring + halo) * att * face * fl * uLamp
-                   + vec3(0.05) * spot * att * uLamp;
-        if (uShadowOn > 0.5) {
-          // тень: 4 выборки вокруг — мягкий край
-          vec3 lp = vLampPos.xyz / vLampPos.w * 0.5 + 0.5;
-          if (vLampPos.w > 0.0 && lp.x > 0.0 && lp.x < 1.0 && lp.y > 0.0 && lp.y < 1.0 && lp.z < 1.0) {
-            float lit = 0.0, o = 1.5 / 1024.0, bias = 0.0006 + 0.002 * (1.0 - abs(n.y));
-            lit += step(lp.z - bias, texture2D(uShadow, lp.xy + vec2(-o, -o)).r);
-            lit += step(lp.z - bias, texture2D(uShadow, lp.xy + vec2(o, -o)).r);
-            lit += step(lp.z - bias, texture2D(uShadow, lp.xy + vec2(-o, o)).r);
-            lit += step(lp.z - bias, texture2D(uShadow, lp.xy + vec2(o, o)).r);
-            lampL *= mix(0.12, 1.0, lit * 0.25);
-          }
-        }
-        // свет фонаря не выше порога блума — то, куда бежим, не выжигается в белое
-        dark = min(dark + lampL, vec3(0.8));
-      }
+
       c3 = mix(c3, dark + emit, uNight);
+    }
+    // тёмный переход: свет не работает — почти темнота, только красное чуть видно и неисправная лампа
+    if (vDark > 0.5 && st != 23) {
+      float redness = clamp((alb.r - max(alb.g, alb.b)) * 2.2, 0.0, 1.0);
+      c3 = alb * vec3(0.045, 0.045, 0.055) + vec3(0.35, 0.05, 0.04) * redness * near;
+    }
+    // фонарь бегуна, как в хоррорах: круглое пятно по центру взгляда (чуть ниже), мягкий ореол
+    // и светлое кольцо по краю. Считаем по направлению от камеры, вблизи ярко, вдаль слабеет
+    if (uLamp > 0.0) {
+      // пятно шире по горизонтали — как у настоящего фонаря, и не теряется на широком экране
+      vec2 sp = vView.xy / max(-vView.z, 0.05) - uLampP.xy;
+      if (uCookieOn < 0.5) sp.x *= 0.78; // нарисованное пятно — овал; маска — ровный круг
+      float R = uLampP.z;
+      float r = length(sp);
+      float spot = 1.0 - smoothstep(R * 0.8, R * 1.1, r);
+      float ring = exp(-pow((r - R * 0.95) / (R * 0.1), 2.0)) * 0.3;
+      float halo = (1.0 - smoothstep(R * 1.1, R * 2.6, r)) * 0.3;
+      if (uCookieOn > 0.5) {
+        // маска: вся картинка — пятно с ореолом, её край — R·2.4 от центра
+        vec2 cuv = sp / (R * 2.4) * 0.5 + 0.5;
+        float ck = texture2D(uCookie, clamp(cuv, 0.0, 1.0)).r;
+        ck *= step(abs(cuv.x - 0.5), 0.5) * step(abs(cuv.y - 0.5), 0.5);
+        spot = ck * ck * 1.15; ring = 0.0; halo = ck * 0.45;
+      }
+      float dist = length(vView);
+      float att = 1.0 / (1.0 + dist * dist / 220.0);
+      float face = n.y > 0.5 ? 0.75 : (n.y < -0.5 ? 0.3 : 0.45 + 0.55 * max(-n.z, 0.0) + 0.3 * abs(n.x));
+      float fl = 0.94 + 0.06 * step(0.97, fract(sin(floor(uTime * 9.0) * 12.9898) * 43758.5453));
+      vec3 lampL = alb * vec3(1.0, 0.97, 0.9) * (spot + ring + halo) * att * face * fl * uLamp
+                 + vec3(0.05) * spot * att * uLamp;
+      if (uShadowOn > 0.5) {
+        // тень: 4 выборки вокруг — мягкий край
+        vec3 lp = vLampPos.xyz / vLampPos.w * 0.5 + 0.5;
+        if (vLampPos.w > 0.0 && lp.x > 0.0 && lp.x < 1.0 && lp.y > 0.0 && lp.y < 1.0 && lp.z < 1.0) {
+          float lit = 0.0, o = 1.5 / 1024.0, bias = 0.0006 + 0.002 * (1.0 - abs(n.y));
+          lit += step(lp.z - bias, texture2D(uShadow, lp.xy + vec2(-o, -o)).r);
+          lit += step(lp.z - bias, texture2D(uShadow, lp.xy + vec2(o, -o)).r);
+          lit += step(lp.z - bias, texture2D(uShadow, lp.xy + vec2(-o, o)).r);
+          lit += step(lp.z - bias, texture2D(uShadow, lp.xy + vec2(o, o)).r);
+          lampL *= mix(0.12, 1.0, lit * 0.25);
+        }
+      }
+      // свет фонаря не выше порога блума — то, куда бежим, не выжигается в белое
+      c3 = min(c3 + lampL, max(c3, vec3(0.8)));
     }
     // высота: всё, что далеко внизу под ярусом, тонет в дымке (днём белой, ночью — цвета тумана)
     float below = uB - y;
@@ -465,6 +508,60 @@ export function createMaterial({ linearOut }) {
       uSunDir: { value: new THREE.Vector3(0.75, 1.45, 0.5).normalize() }, // спереди-сбоку: тени отбрасывает то, что впереди и всегда есть
     },
   });
+}
+
+// Искры из неисправной лампы: точки летят вниз по дуге, циклично; движение целиком в шейдере
+const SPARKS = 46;
+export function createSparkMaterial({ linearOut }) {
+  return new THREE.ShaderMaterial({
+    transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+    vertexShader: /* glsl */ `
+      attribute vec3 aSeed;
+      uniform float uL; uniform float uLz; uniform float uB; uniform float uTime; uniform float uPx;
+      varying float vA;
+      void main() {
+        // своя фаза у каждой искры; вспышки идут пачками
+        float per = 1.1 + aSeed.z * 0.6;
+        float t = fract(uTime / per + aSeed.x);
+        float burst = step(0.45, fract(sin(floor(uTime / per + aSeed.x) * 12.9898 + aSeed.y * 7.0) * 43758.5453));
+        vec3 p = position + vec3((aSeed.y - 0.5) * 2.2 * t, -t * 1.2 - 4.9 * t * t, (aSeed.z - 0.5) * 2.2 * t);
+        vec4 f = modelMatrix * vec4(p, 1.0);
+        float s = exp(-f.z / uLz);
+        float r = uL * s;
+        float phi = f.x / uL;
+        vec3 w = vec3(r * sin(phi), uB + (f.y - uB) * s, r * cos(phi));
+        vec4 mv = viewMatrix * vec4(w, 1.0);
+        gl_Position = projectionMatrix * mv;
+        gl_PointSize = max(1.5, 7.0 * uPx / max(-mv.z, 0.5)) * (1.0 - t * 0.6);
+        vA = (1.0 - t) * burst;
+      }
+    `,
+    fragmentShader: /* glsl */ `
+      precision highp float;
+      uniform float uLinearOut;
+      varying float vA;
+      void main() {
+        vec2 q = gl_PointCoord - 0.5;
+        float a = (1.0 - smoothstep(0.2, 0.5, length(q))) * vA;
+        vec3 c = vec3(1.0, 0.72, 0.3) * a * 1.4;
+        if (uLinearOut > 0.5) c = pow(c, vec3(2.2)) * 1.5;
+        gl_FragColor = vec4(c, 1.0);
+      }
+    `,
+    uniforms: { uL: { value: L }, uLz: { value: LZ }, uB: { value: 0 }, uTime: { value: 0 }, uPx: { value: 1 }, uLinearOut: { value: linearOut ? 1 : 0 } },
+  });
+}
+function sparkPoints(p, mat) {
+  if (!mat) return null;
+  const pos = [], seed = [];
+  for (let i = 0; i < SPARKS; i++) { pos.push(p[0], p[1], p[2]); seed.push(Math.random(), Math.random(), Math.random()); }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('aSeed', new THREE.Float32BufferAttribute(seed, 3));
+  const pts = new THREE.Points(g, mat);
+  pts.frustumCulled = false;
+  pts.renderOrder = 2;
+  return pts;
 }
 
 // Глубина для теней фонаря: тот же изгиб мира, цвет не нужен — только буфер глубины.
@@ -624,6 +721,7 @@ class Builder {
     this.pos = []; this.nor = []; this.sty = []; this.top = []; this.box = []; this.ao = []; this.lit = []; this.idx = [];
     this.aoFn = null; this.lightFn = null;
     this.tint = 0; this.tnt = [];
+    this.dark = 0; this.dk = []; // 1 — тёмный переход: свет не работает
   }
 
   _vert(p, normal, style, top, box) {
@@ -633,6 +731,7 @@ class Builder {
     this.ao.push(style === 0 && this.aoFn ? this.aoFn(p[0], p[2]) : 1);
     this.lit.push(this.lightFn && style !== 6 && style !== 7 ? this.lightFn(p[0], p[2]) : 0);
     this.tnt.push(this.tint);
+    this.dk.push(this.dark);
   }
 
   // четырёхугольник по углам (билинейно), разбитый на сетку na × nb
@@ -773,6 +872,61 @@ class Builder {
     }
   }
 
+  // гелиевый шарик под потолком: гранёный шар чуть вытянутый, хвостик и ниточка вниз.
+  // Цвет — по номеру (top), шейдер берёт его из палитры
+  balloon(x, y, z, r, color, rng) {
+    const sx = 10, sy = 6, pt = (i, j) => {
+      const a = (i / sx) * Math.PI * 2, t = (j / sy) * Math.PI;
+      const rr = Math.sin(t) * r * (j > sy / 2 ? 1 - 0.25 * (j / sy - 0.5) : 1);
+      return [x + Math.cos(a) * rr, y + Math.cos(t) * r * 1.15, z + Math.sin(a) * rr];
+    };
+    for (let j = 0; j < sy; j++) {
+      for (let i = 0; i < sx; i++) {
+        const a = pt(i, j), b = pt(i + 1, j), c = pt(i, j + 1), d = pt(i + 1, j + 1);
+        if (j > 0) this.tri(a, c, b, 20, color);
+        if (j < sy - 1) this.tri(b, c, d, 20, color);
+      }
+    }
+    const tail = y - r * 1.15;
+    this.prism([x, tail, z], [x, tail - 0.08, z], 0.04, 0.07, 4, 20);
+    // ниточка свисает и чуть уходит в сторону
+    const len = 0.9 + rng() * 0.8, dx = (rng() - 0.5) * 0.3, dz = (rng() - 0.5) * 0.3;
+    this.prism([x, tail - 0.08, z], [x + dx, tail - 0.08 - len, z + dz], 0.008, 0.008, 3, 7);
+  }
+
+  // брошенная тележка из супермаркета: корзина-решётка на рамке, ручка, четыре колёсика.
+  // Поставлена боком у стены, может стоять криво (rot)
+  cart(x, y, z, rot, rng) {
+    const R = (dx, dz) => [x + dx * Math.cos(rot) - dz * Math.sin(rot), z + dx * Math.sin(rot) + dz * Math.cos(rot)];
+    const P = (dx, dy, dz) => { const [px, pz] = R(dx, dz); return [px, y + dy, pz]; };
+    const w = 0.28, l = 0.45, h0 = 0.45, h1 = 0.95;
+    const bar = (a, b, r = 0.018) => this.prism(a, b, r, r, 4, 22);
+    // корзина: рёбра каркаса
+    for (const [ax, az] of [[-w, -l], [w, -l], [w, l], [-w, l]]) bar(P(ax, h0, az), P(ax * 1.05, h1, az * 1.08));
+    const ring = (h, k) => [[-w * k, -l * k], [w * k, -l * k], [w * k, l * k], [-w * k, l * k]].map(([a, c]) => P(a, h, c));
+    for (const [h, k] of [[h0, 1], [(h0 + h1) / 2, 1.03], [h1, 1.06]]) {
+      const q = ring(h, k);
+      for (let i = 0; i < 4; i++) bar(q[i], q[(i + 1) % 4]);
+    }
+    // прутья решётки по бокам
+    for (let i = 1; i < 6; i++) {
+      const t = i / 6;
+      bar(P(-w + 2 * w * t, h0, -l), P((-w + 2 * w * t) * 1.05, h1, -l * 1.08), 0.008);
+      bar(P(-w + 2 * w * t, h0, l), P((-w + 2 * w * t) * 1.05, h1, l * 1.08), 0.008);
+      bar(P(-w, h0, -l + 2 * l * t), P(-w * 1.05, h1, (-l + 2 * l * t) * 1.08), 0.008);
+      bar(P(w, h0, -l + 2 * l * t), P(w * 1.05, h1, (-l + 2 * l * t) * 1.08), 0.008);
+    }
+    // ручка
+    bar(P(-w * 1.06, h1, l * 1.08), P(-w * 1.06, h1 + 0.12, l * 1.25));
+    bar(P(w * 1.06, h1, l * 1.08), P(w * 1.06, h1 + 0.12, l * 1.25));
+    bar(P(-w * 1.06, h1 + 0.12, l * 1.25), P(w * 1.06, h1 + 0.12, l * 1.25), 0.025);
+    // нижняя рама и колёсики
+    for (const [ax, az] of [[-w, -l], [w, -l], [w, l], [-w, l]]) {
+      bar(P(ax * 0.9, 0.1, az * 0.9), P(ax, h0, az));
+      this.prism(P(ax * 0.9, 0.0, az * 0.9 - 0.04), P(ax * 0.9, 0.0, az * 0.9 + 0.04), 0.06, 0.06, 6, 12);
+    }
+  }
+
   geometry() {
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.Float32BufferAttribute(this.pos, 3));
@@ -783,6 +937,7 @@ class Builder {
     g.setAttribute('aAO', new THREE.Float32BufferAttribute(this.ao, 1));
     g.setAttribute('aLight', new THREE.Float32BufferAttribute(this.lit, 1));
     g.setAttribute('aTint', new THREE.Float32BufferAttribute(this.tnt, 1));
+    g.setAttribute('aDark', new THREE.Float32BufferAttribute(this.dk, 1));
     g.setIndex(this.idx);
     return g;
   }
@@ -863,6 +1018,8 @@ export function buildInstanceMesh(inst, materials, world) {
   const z0 = inst.rowStart * ROW;
   const rng = mulberry32(inst.seed ^ 0x5bd1e995);
   const flatStreet = (row) => row.b0 === 0 && row.b1 === 0;
+  const feat = inst.feat || {};
+  b.dark = feat.dark ? 1 : 0;
 
   // затенение пола: чем ближе к стене/препятствию, тем темнее (смотрим и соседние паттерны)
   b.aoFn = (x, zl) => {
@@ -1143,8 +1300,10 @@ export function buildInstanceMesh(inst, materials, world) {
       if (!same(r - 1, c)) b.quad([x1, yb, zA + e], [-CELL, 0, 0], [0, depth, 0], 4, Math.ceil(depth / 3), [0, 0, 1], style, base, [x0, zA, x1, zB]);
       if (!same(r + 1, c)) b.quad([x0, yb, zB - e], [CELL, 0, 0], [0, depth, 0], 4, Math.ceil(depth / 3), [0, 0, -1], style, base, [x0, zA, x1, zB]);
       if (water !== null) {
-        b.tint = 3;
-        b.quad([x0, water, zA], [0, 0, ROW], [CELL, 0, 0], 4, 4, [0, 1, 0], 14, 0, [x0, zA, x1, zB]);
+        // в некоторых переходах бассейн — с разноцветными шариками вместо воды
+        const balls = v === POOL && feat.balls;
+        b.tint = balls ? 0 : 3;
+        b.quad([x0, balls ? water + 0.15 : water, zA], [0, 0, ROW], [CELL, 0, 0], 4, 4, [0, 1, 0], balls ? 19 : 14, 0, [x0, zA, x1, zB]);
       }
       b.tint = 0;
     }
@@ -1186,6 +1345,51 @@ export function buildInstanceMesh(inst, materials, world) {
     }
   }
 
+  // 7д. особенности подземного перехода: шарики под потолком, тележки у стен, искрящая лампа
+  const sparkAt = [];
+  if (inst.feat) {
+    const frng = mulberry32(inst.seed ^ 0x2c1b3c6d);
+    const open = (row, c) => walk(row[((c % COLS) + COLS) % COLS]);
+    for (let r = 0; r < nRows; r++) {
+      const row = rows[r];
+      if (!row.cover) continue;
+      const base = Math.min(row.b0, row.b1);
+      const zA = r * ROW;
+      for (let c = 0; c < COLS; c++) {
+        const v = row[c];
+        if (v === WALL || v === RUNWALL) continue;
+        const x0 = c * CELL;
+        if (feat.balloons && frng() < 0.22) {
+          // упёрлись в потолок, кучкой по 1–3
+          const k = 1 + Math.floor(frng() * 3);
+          for (let i = 0; i < k; i++) {
+            const rr = 0.3 + frng() * 0.08;
+            b.balloon(x0 + 0.8 + frng() * 2.4, base + CEIL_H - rr * 1.2 - 0.02, zA + 0.5 + frng() * 3, rr, Math.floor(frng() * 5) + 1, frng);
+          }
+        }
+        if (feat.carts && walk(v) && v !== BRIDGE && frng() < 0.14) {
+          // только вплотную к стене — не мешает бегу по полосе
+          const wl = !open(row, c - 1), wr = !open(row, c + 1);
+          if (wl || wr) {
+            const x = wl ? x0 + 0.55 : x0 + CELL - 0.55;
+            b.cart(x, base, zA + 0.8 + frng() * 2.4, (frng() - 0.5) * 0.9 + (frng() < 0.5 ? 0 : Math.PI), frng);
+          }
+        }
+      }
+      // неисправная лампа с искрами — одна на паттерн
+      if (feat.sparks && !sparkAt.length && r >= 1 && frng() < 0.35) {
+        const cols = [];
+        for (let c = 0; c < COLS; c++) if (walk(row[c])) cols.push(c);
+        if (cols.length) {
+          const c = cols[Math.floor(frng() * cols.length)];
+          const x = c * CELL + CELL / 2, z = zA + ROW / 2, y = base + CEIL_H;
+          b.boxGeo(x - 0.1, x + 0.1, z - 0.7, z + 0.7, y, 23, y - 0.08, { bottom: true });
+          sparkAt.push([x, y - 0.1, z]);
+        }
+      }
+    }
+  }
+
   // 8. деревья и кусты
   for (const [x, y, z, kind] of plants) {
     if (kind === 'tree') b.tree(x, y, z, rng, 0.9 + rng() * 0.5);
@@ -1220,6 +1424,10 @@ export function buildInstanceMesh(inst, materials, world) {
     stars.frustumCulled = false;
     stars.renderOrder = 1;
     group.add(stars);
+  }
+  for (const p of sparkAt) {
+    const sp = sparkPoints(p, materials.spark);
+    if (sp) group.add(sp);
   }
   group.userData.zStart = inst.rowStart * ROW;
   group.userData.zEnd = (inst.rowStart + nRows) * ROW;

@@ -8,7 +8,7 @@ import {
   World, CELL, ROW, W, L, LZ, COLS, WALL, BRIDGE, VOID, RUNWALL, POOL, LAUNCH, LAUNCH_ROWS, LEVEL, BRIDGE_BOTTOM, BRIDGE_TOP, CEIL_H,
   canStep, canJumpOver, aliveBackward, walk, lv,
 } from './world.js';
-import { createMaterial, createStarMaterial, createDepthMaterial, createSunDepthMaterial, buildInstanceMesh } from './render.js';
+import { createMaterial, createStarMaterial, createDepthMaterial, createSunDepthMaterial, createSparkMaterial, buildInstanceMesh } from './render.js';
 import { createSound } from './sound.js';
 import { createRecorder, shareFile } from './recorder.js';
 import { loadMonkey, createMonkeyMaterial, createGlowMaterial, placeMonkeys, monkeyGeometry } from './monkeys.js';
@@ -81,6 +81,7 @@ const materials = {
   main: createMaterial({ linearOut: useBloom }), star: createStarMaterial({ linearOut: useBloom }),
   monkey: createMonkeyMaterial({ linearOut: useBloom }),
   glow: createGlowMaterial({ linearOut: useBloom }),
+  spark: createSparkMaterial({ linearOut: useBloom }),
 };
 const monkeyReady = loadMonkey();
 // маска фонаря (снимок пятна реального фонаря); пока не загрузилась — пятно рисуется формулой
@@ -327,6 +328,8 @@ function reset(s) {
   monkeys = [];
   built = 0;
   world = new World(seed);
+  // для проверки: ?under=dark,balls,balloons,sparks,carts — эти особенности во всех переходах
+  if (params.get('under')) world.featOverride = Object.fromEntries(params.get('under').split(',').map((k) => [k, true]));
   Object.assign(pl, {
     x: 6 * CELL + CELL / 2, z: ROW * 0.5, y: 0, vx: 0, vy: 0, grounded: true,
     coyote: 0, jumpBuf: 0, slideT: 0, slideQueued: false, boost: 0, hopKeep: false,
@@ -342,6 +345,7 @@ function reset(s) {
 }
 
 function disposeGroup(g) { g.traverse((o) => o.geometry && o.material !== materials.monkey && o.material !== materials.glow && o.geometry.dispose()); }
+let darkAmt = 0; // 0…1 — бежим по тёмному переходу (свет не работает)
 
 function ensureWorld() {
   const need = Math.ceil((pl.z + LZ * 6.5) / ROW) + 4;
@@ -1444,8 +1448,12 @@ function updateCamera(dt, running) {
   const bigDrop = !pl.grounded && !pl.launch && !pl.wall && pl.y - landing > 3;
   const lookTarget = bigDrop ? landing + 1.2 : B + rel * 0.75 * (1 - pull) + 0.4 * pull + up;
   const w1 = pl.grounded ? 5.5 : 8;
-  cam.lookV += (w1 * w1 * (lookTarget - cam.lookY) - 2 * w1 * cam.lookV) * dt;
-  cam.lookY += cam.lookV * dt;
+  // мелкими шагами: на длинном кадре (подвисание) жёсткая пружина иначе разлетается
+  for (let i = 0, n = Math.ceil(dt / (1 / 120)); i < n; i++) {
+    const h = dt / n;
+    cam.lookV += (w1 * w1 * (lookTarget - cam.lookY) - 2 * w1 * cam.lookV) * h;
+    cam.lookY += cam.lookV * h;
+  }
   camera.lookAt(0, cam.lookY, 0);
 
   // наклоны: в сторону движения, в подкате — завал вбок
@@ -1538,8 +1546,11 @@ function frame(now) {
   const w0 = pl.grounded ? 4.5 : 7;
   if (pl.launch) { cam.base = baseTarget; cam.baseV = 0; } // дуга и так плавная — точно по ней
   else {
-    cam.baseV += (w0 * w0 * (baseTarget - cam.base) - 2 * w0 * cam.baseV) * dt;
-    cam.base += cam.baseV * dt;
+    for (let i = 0, n = Math.ceil(dt / (1 / 120)); i < n; i++) {
+      const h = dt / n;
+      cam.baseV += (w0 * w0 * (baseTarget - cam.base) - 2 * w0 * cam.baseV) * h;
+      cam.base += cam.baseV * h;
+    }
   }
   materials.main.uniforms.uB.value = cam.base;
   materials.main.uniforms.uTime.value = gameTime;
@@ -1556,6 +1567,10 @@ function frame(now) {
   // в тумане днём — белёсо-серая дымка, ночью — плотная тёплая, подсвеченная городом
   const fd = [0.84, 0.855, 0.87], fn = [0.24, 0.2, 0.17];
   for (let i = 0; i < 3; i++) { df[i] += (fd[i] - df[i]) * fogW; nf[i] += (fn[i] - nf[i]) * fogW; }
+  // тёмный переход: дымка почти чёрная (свет не работает)
+  const feat = state === 'ready' ? null : world.featAt(pl.z + 4);
+  darkAmt = damp(darkAmt, feat && feat.dark && deep > 0.3 ? 1 : 0, 3, dt);
+  for (let i = 0; i < 3; i++) { df[i] += (0.03 - df[i]) * darkAmt; nf[i] += (0.02 - nf[i]) * darkAmt; }
   materials.main.uniforms.uFogColor.value.setRGB(
     df[0] + (nf[0] - df[0]) * night, df[1] + (nf[1] - df[1]) * night, df[2] + (nf[2] - df[2]) * night);
   materials.star.uniforms.uFogNear.value = materials.main.uniforms.uFogNear.value;
@@ -1564,7 +1579,8 @@ function frame(now) {
   // ночью блум слабее и с порогом повыше: светятся только окна и красное, без пересвета
   if (bloom) { bloom.strength = 0.27 - 0.06 * night; bloom.threshold = 0.9 + 0.05 * night; }
   // фонарь: ночью на улице; в подземке плавно гаснет (deep меняется плавно вместе с камерой)
-  materials.main.uniforms.uLamp.value = lampSwitch(nightAmount() > 0.55 && deep < 0.35);
+  // фонарь: ночью на улице, а в тёмном переходе — и днём
+  materials.main.uniforms.uLamp.value = lampSwitch((nightAmount() > 0.55 && deep < 0.35) || (darkAmt > 0.5 && deep > 0.3));
   updateLamp(dt);
   materials.monkey.uniforms.uNight.value = night;
   materials.monkey.uniforms.uFlashT.value = gameTime;
@@ -1581,6 +1597,9 @@ function frame(now) {
   sound.update(deep, state === 'run' ? speedNow() : 0, high);
   updateSpace(dt, deep);
   materials.star.uniforms.uB.value = cam.base;
+  materials.spark.uniforms.uB.value = cam.base;
+  materials.spark.uniforms.uTime.value = gameTime;
+  materials.spark.uniforms.uPx.value = renderer.getPixelRatio() * innerHeight / 800;
   {
     const mu = materials.monkey.uniforms, mm = materials.main.uniforms;
     mu.uB.value = cam.base; mu.uFogNear.value = mm.uFogNear.value; mu.uFogFar.value = mm.uFogFar.value;
