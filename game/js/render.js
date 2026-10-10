@@ -339,7 +339,17 @@ const frag = /* glsl */ `
     if (vTint > 0.5 && vTint < 1.5) c3 = mix(c3, col * red * 0.95, near);      // красные трубы
     else if (vTint > 3.5 && vTint < 4.5) {
       // Runner Vision: красный только верх и кромка — «хватайся здесь»
-      float k = n.y > 0.5 ? 1.0 : 1.0 - smoothstep(0.2, 0.26, vTop - y);
+      // кромка — сплошная красная; верх — шевроны-стрелки вперёд (как ограждения трассы),
+      // а не сплошная заливка: большие ступени не горят ровным красным пятном
+      float k;
+      if (n.y > 0.5) {
+        float ax = abs(fract(vPos.x / uCell) - 0.5) * uCell;
+        float ch = fract((vPos.z + ax * 0.9) / 1.6);       // остриё стрелки — вперёд, по ходу бега
+        float fw = fwidth(ch) + 1e-3;
+        k = smoothstep(0.0, fw, ch) * (1.0 - smoothstep(0.42 - fw, 0.42, ch));
+        float ex = min(min(vPos.x - vBox.x, vBox.z - vPos.x), min(vPos.z - vBox.y, vBox.w - vPos.z));
+        k = max(k, 1.0 - smoothstep(0.12, 0.16, ex));     // красная окантовка по краю верха
+      } else k = 1.0 - smoothstep(0.2, 0.26, vTop - y);
       c3 = mix(c3, col * red * 1.1, k * near);
     } else if (vTint > 4.5 && vTint < 5.5) {
       // красная стена: белая панель с красными полосами на высоте бега
@@ -358,6 +368,9 @@ const frag = /* glsl */ `
       // ночной свет тёплый — от тысяч жёлтых окон
       vec3 dark = c3 * vec3(0.19, 0.155, 0.12) * mix(0.38, 1.0, nearPath);
       if (redLit) dark = mix(dark, c3 * vec3(0.75, 0.6, 0.6), near);
+      // красные акценты ночью светятся: умеренно, ниже порога пересвета, но заметно в темноте
+      float redness = clamp((c3.r - max(c3.g, c3.b)) * 2.2, 0.0, 1.0);
+      if (redLit) dark += vec3(1.0, 0.14, 0.1) * redness * 0.62;
       dark += vec3(0.3, 0.33, 0.4) * rimK;
       // препятствия у земли (то, через что прыгаем и под чем катимся) ночью не проваливаются в черноту:
       // тёплый свет с улицы, ярче на гранях к нам и сверху — видно издалека, ещё до фонаря
