@@ -37,6 +37,8 @@ const vert = /* glsl */ `
   varying float vLight;
   uniform mat4 uLampMat;
   varying vec4 vLampPos;
+  uniform mat4 uSunMat;
+  varying vec4 vSunPos;
   void main() {
     vec4 f = modelMatrix * vec4(position, 1.0);   // плоские координаты относительно игрока
     float s = exp(-f.z / uLz);
@@ -47,6 +49,7 @@ const vert = /* glsl */ `
     vec4 mv = viewMatrix * vec4(w, 1.0);
     gl_Position = projectionMatrix * mv;
     vLampPos = uLampMat * vec4(w, 1.0);
+    vSunPos = uSunMat * vec4(f.xyz, 1.0); // солнце светит в плоском мире, до изгиба
     vPos = position;
     vN = normal;
     vStyle = aStyle;
@@ -87,6 +90,10 @@ const frag = /* glsl */ `
   uniform sampler2D uShadow;  // глубина с точки зрения фонаря
   uniform float uShadowOn;
   varying vec4 vLampPos;
+  uniform sampler2D uSunShadow; // глубина с точки зрения солнца
+  uniform float uSun;           // 0 — без солнечных теней (выкл, ночь, подземка)
+  uniform vec3 uSunDir;         // направление на солнце
+  varying vec4 vSunPos;
   uniform float uCookieOn;
   varying float vTint;
   varying vec3 vPos;
@@ -154,10 +161,11 @@ const frag = /* glsl */ `
       }
     } else if (st == 6) {
       // листва: отдельные треугольники, у каждого свой оттенок
-      col = (0.8 + 0.17 * vTop) * (0.92 + 0.08 * abs(n.y));
-      col *= mix(0.62, 1.0, smoothstep(0.0, 25.0, y - uB)); // у земли деревья тоже в тени
+      // листва серая, не белая (белая уходила за порог блума и «светилась»); у земли — в тени, как дома
+      col = (0.6 + 0.14 * vTop) * (0.9 + 0.1 * abs(n.y));
+      col *= mix(0.45, 1.0, smoothstep(0.0, 30.0, y - uB));
     } else if (st == 7) {
-      col = (0.58 + 0.06 * n.x) * mix(0.62, 1.0, smoothstep(0.0, 25.0, y - uB)); // ствол и ветки
+      col = (0.5 + 0.06 * n.x) * mix(0.45, 1.0, smoothstep(0.0, 30.0, y - uB)); // ствол и ветки
     } else if (st == 14) {
       // вода: светлая рябь, бегущая по поверхности
       float w1 = sin(vPos.x * 2.3 + uTime * 1.6 + sin(vPos.z * 1.7 + uTime));
@@ -282,8 +290,26 @@ const frag = /* glsl */ `
       float width = max(0.03, fw * 0.8);        // тонкая линия: вблизи 3 см, вдали ~1 пиксель
       float rim = 1.0 - smoothstep(width, width + fw * 1.0, e);
       bool low = st >= 4;                       // низкие здания, предметы, мосты — кромка заметнее
-      col = mix(col, low ? 0.93 : 0.97, rim * (low ? 0.9 : 0.6)); // ниже порога блума
-      rimK = rim * (low ? 0.9 : 0.5);
+      // не свечение, а потёртость: угол чуть светлее, будто краска стёрлась
+      col = mix(col, min(col * 1.18 + 0.03, 0.85), rim * (low ? 0.55 : 0.4));
+      rimK = rim * (low ? 0.3 : 0.15);
+    }
+
+    // солнце: резкие тени от домов друг на друга. Грань, повёрнутая от солнца, — тоже в тени
+    if (uSun > 0.0 && st != 8 && st != 9 && st != 16) {
+      float facing = dot(n, uSunDir);
+      float sl = 0.0;
+      vec3 sp3 = vSunPos.xyz / vSunPos.w * 0.5 + 0.5;
+      if (sp3.x > 0.0 && sp3.x < 1.0 && sp3.y > 0.0 && sp3.y < 1.0 && sp3.z < 1.0) {
+        float o = 1.0 / 2048.0, bias = 0.0004 + 0.0012 * (1.0 - abs(facing));
+        sl += step(sp3.z - bias, texture2D(uSunShadow, sp3.xy + vec2(-o, -o)).r);
+        sl += step(sp3.z - bias, texture2D(uSunShadow, sp3.xy + vec2(o, -o)).r);
+        sl += step(sp3.z - bias, texture2D(uSunShadow, sp3.xy + vec2(-o, o)).r);
+        sl += step(sp3.z - bias, texture2D(uSunShadow, sp3.xy + vec2(o, o)).r);
+        sl *= 0.25;
+      } else sl = 1.0;
+      sl *= smoothstep(-0.05, 0.15, facing);
+      col *= mix(1.0, mix(0.58, min(1.12, 0.9 / max(col, 0.01)), sl), uSun);
     }
 
     // под землёй темнее — чем глубже, тем сильнее; светильники не трогаем
@@ -319,7 +345,7 @@ const frag = /* glsl */ `
       float nearPath = smoothstep(0.02, 0.35, vLight);
       vec3 dark = c3 * vec3(0.13, 0.15, 0.21) * mix(0.38, 1.0, nearPath);
       if (redLit) dark = mix(dark, c3 * vec3(0.75, 0.6, 0.6), near);
-      dark += vec3(0.5, 0.56, 0.68) * rimK;
+      dark += vec3(0.3, 0.33, 0.4) * rimK;
       // фонарь бегуна, как в хоррорах: круглое пятно по центру взгляда (чуть ниже), мягкий ореол
       // и светлое кольцо по краю. Считаем по направлению от камеры, вблизи ярко, вдаль слабеет
       if (uLamp > 0.0) {
@@ -396,6 +422,10 @@ export function createMaterial({ linearOut }) {
       uShadow: { value: null },
       uShadowOn: { value: 0 },
       uLampMat: { value: new THREE.Matrix4() },
+      uSunMat: { value: new THREE.Matrix4() },
+      uSunShadow: { value: null },
+      uSun: { value: 0 },
+      uSunDir: { value: new THREE.Vector3(0.3, 1, -0.6).normalize() },
     },
   });
 }
@@ -420,6 +450,25 @@ export function createDepthMaterial() {
     `,
     fragmentShader: /* glsl */ `void main() { gl_FragColor = vec4(1.0); }`,
     uniforms: { uL: { value: L }, uLz: { value: LZ }, uB: { value: 0 } },
+  });
+}
+
+// Глубина для солнечных теней: в плоском мире, без изгиба. uShift — копия сдвинутая на круг мира,
+// чтобы дом у «шва» отбрасывал тень и на другую сторону.
+export function createSunDepthMaterial() {
+  return new THREE.ShaderMaterial({
+    side: THREE.DoubleSide,
+    colorWrite: false,
+    vertexShader: /* glsl */ `
+      uniform float uShift;
+      void main() {
+        vec4 f = modelMatrix * vec4(position, 1.0);
+        f.x += uShift;
+        gl_Position = projectionMatrix * viewMatrix * f;
+      }
+    `,
+    fragmentShader: /* glsl */ `void main() { gl_FragColor = vec4(1.0); }`,
+    uniforms: { uShift: { value: 0 } },
   });
 }
 

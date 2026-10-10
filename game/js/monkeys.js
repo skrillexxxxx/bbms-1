@@ -62,6 +62,7 @@ const frag = /* glsl */ `
   uniform vec3 uFogColor;
   uniform float uFlash;
   uniform float uNight;
+  uniform float uFlashT;
   varying vec3 vN;
   varying float vFog;
   void main() {
@@ -69,8 +70,9 @@ const frag = /* glsl */ `
     float d = max(dot(n, normalize(vec3(-0.4, 0.8, -0.45))), 0.0);
     float rim = pow(1.0 - abs(n.z), 2.0) * 0.25;
     vec3 red = vec3(0.9, 0.12, 0.13);
-    vec3 c = red * (0.55 + 0.55 * d) + rim;
-    c = mix(c, c * vec3(0.75, 0.55, 0.55), uNight); // ночью чуть темнее, но красный светится
+    // светится: ярче порога блума — вокруг красный ореол, видно издалека днём и ночью
+    vec3 c = red * (1.05 + 0.5 * d) + rim * 0.6;
+    c *= 1.0 + 0.12 * sin(uFlashT * 4.0); // мягко пульсирует
     c = mix(c, vec3(1.0), uFlash);
     c = mix(c, uFogColor, vFog);
     if (uLinearOut > 0.5) c = pow(c, vec3(2.2));
@@ -89,6 +91,7 @@ export function createMonkeyMaterial({ linearOut }) {
       uLinearOut: { value: linearOut ? 1 : 0 },
       uFlash: { value: 0 },
       uNight: { value: 0 },
+      uFlashT: { value: 0 },
     },
   });
 }

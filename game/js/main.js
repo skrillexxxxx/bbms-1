@@ -8,7 +8,7 @@ import {
   World, CELL, ROW, W, L, LZ, COLS, WALL, BRIDGE, VOID, RUNWALL, POOL, LAUNCH, LAUNCH_ROWS, LEVEL, BRIDGE_BOTTOM, BRIDGE_TOP, CEIL_H,
   canStep, canJumpOver, aliveBackward, walk, lv,
 } from './world.js';
-import { createMaterial, createStarMaterial, createDepthMaterial, buildInstanceMesh } from './render.js';
+import { createMaterial, createStarMaterial, createDepthMaterial, createSunDepthMaterial, buildInstanceMesh } from './render.js';
 import { createSound } from './sound.js';
 import { createRecorder, shareFile } from './recorder.js';
 import { loadMonkey, createMonkeyMaterial, placeMonkeys, monkeyGeometry } from './monkeys.js';
@@ -1179,6 +1179,57 @@ for (const id of ['shadows', 'shadows-over']) {
 }
 updateShadowButtons();
 
+// ---------- тени от солнца (экспериментально, кнопкой) ----------
+// Солнце сзади-сбоку и высоко: резкие тени домов ложатся вперёд по улице и на соседние фасады.
+// Карта глубины строится в плоском мире (до изгиба) ортогональной камерой вокруг игрока.
+// Мир — круг: рисуем ещё две копии, сдвинутые на круг, чтобы тень переходила через «шов».
+let sunOn = false;
+try { sunOn = localStorage.getItem('sdwg-sun') === '1'; } catch { /* приватный режим */ }
+const SUN_RES = 2048;
+const sunRT = new THREE.WebGLRenderTarget(SUN_RES, SUN_RES, { depthBuffer: true });
+sunRT.depthTexture = new THREE.DepthTexture(SUN_RES, SUN_RES);
+sunRT.depthTexture.type = THREE.UnsignedIntType;
+const sunCam = new THREE.OrthographicCamera(-70, 70, 90, -90, 1, 700);
+const sunDepth = createSunDepthMaterial();
+const _sc = new THREE.Vector3();
+function renderSunShadow(deep) {
+  const u = materials.main.uniforms;
+  const k = sunOn ? (1 - nightAmount()) * Math.max(0, 1 - deep * 1.5) : 0;
+  u.uSun.value = k;
+  if (k <= 0.01) return;
+  const d = u.uSunDir.value;
+  // центр карты — чуть впереди игрока: туда, что видно
+  _sc.set(0, cam.base + 10, 55);
+  sunCam.position.copy(_sc).addScaledVector(d, 300);
+  sunCam.up.set(0, 0, 1);
+  sunCam.lookAt(_sc);
+  sunCam.updateMatrixWorld();
+  sunCam.updateProjectionMatrix();
+  u.uSunMat.value.multiplyMatrices(sunCam.projectionMatrix, sunCam.matrixWorldInverse);
+  const prevOverride = scene.overrideMaterial, prevAuto = renderer.autoClear;
+  scene.overrideMaterial = sunDepth;
+  renderer.setRenderTarget(sunRT);
+  renderer.clear();
+  renderer.autoClear = false;
+  for (const sh of [0, -W, W]) { sunDepth.uniforms.uShift.value = sh; renderer.render(scene, sunCam); }
+  renderer.autoClear = prevAuto;
+  renderer.setRenderTarget(null);
+  scene.overrideMaterial = prevOverride;
+  u.uSunShadow.value = sunRT.depthTexture;
+}
+function updateSunButtons() {
+  for (const id of ['sun', 'sun-over']) $(id).textContent = `Тени солнца: ${sunOn ? 'вкл' : 'выкл'}`;
+}
+for (const id of ['sun', 'sun-over']) {
+  $(id).addEventListener('click', (e) => {
+    e.stopPropagation();
+    sunOn = !sunOn;
+    try { localStorage.setItem('sdwg-sun', sunOn ? '1' : '0'); } catch { /* приватный режим */ }
+    updateSunButtons();
+  });
+}
+updateSunButtons();
+
 // ---------- акустика улицы: стены рядом ----------
 // Короткое эхо со стороны стены (бежим вдоль башни или по красной стене) и отовсюду в узком месте.
 // В подземке своё длинное эхо, там это не нужно.
@@ -1472,6 +1523,7 @@ function frame(now) {
   materials.main.uniforms.uLamp.value = lampSwitch(nightAmount() > 0.55 && deep < 0.35);
   updateLamp(dt);
   materials.monkey.uniforms.uNight.value = night;
+  materials.monkey.uniforms.uFlashT.value = gameTime;
   _sky.copy(materials.main.uniforms.uFogColor.value);
   renderer.setClearColor(useBloom ? _sky.clone().convertSRGBToLinear() : _sky, 1);
   document.body.classList.toggle('night', night > 0.45);
@@ -1506,6 +1558,7 @@ function frame(now) {
     blurPass.uniforms.uVig.value = 0.6 * materials.main.uniforms.uNight.value;
   }
   renderLampShadow();
+  renderSunShadow(Math.min(1, Math.max(0, -cam.base / 5)));
   if (composer) composer.render(); else renderer.render(scene, camera);
 
   if (showDebug) {
