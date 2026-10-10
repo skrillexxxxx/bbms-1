@@ -2,7 +2,7 @@
 // проверка проходимости и честности, запросы к клеткам для физики.
 // Без three.js, чтобы можно было гонять проверки в node.
 
-import { PATTERNS, START, BREATHER } from './patterns.js';
+import { PATTERNS, START, BREATHERS } from './patterns.js';
 
 export const COLS = 12;          // колонок по кругу
 export const CELL = 4;           // ширина колонки (единиц)
@@ -17,10 +17,23 @@ export const LZ = L * DEPTH;
 
 export const WALL = 255;
 export const BRIDGE = 254;        // улица с низким мостом сверху: только подкатом
+export const VOID = 253;          // пропасть между крышами: только перепрыгнуть
 export const BRIDGE_BOTTOM = 1.1; // просвет под мостом
 export const BRIDGE_TOP = 2 * LEVEL; // верх моста на уровне крыши «2»
 
-const CHAR_CODE = { '.': 0, '1': 1, '2': 2, '3': 3, '#': WALL, b: BRIDGE };
+// Ярусы: улица, крыши, подземка. Высота пола яруса.
+export const TIERS = { street: 0, roof: 12, under: -6 };
+export const CEIL_H = 5;          // высота потолка в тоннеле
+
+const CHAR_CODE = { '.': 0, '1': 1, '2': 2, '3': 3, '#': WALL, b: BRIDGE, _: VOID };
+
+// у каждого ряда: b0/b1 — высота пола в начале и в конце ряда (рампа, если разные),
+// cover — ряд в тоннеле (есть потолок)
+function setRowBase(row, b0, b1) {
+  row.b0 = b0; row.b1 = b1;
+  row.cover = b0 <= TIERS.under + 0.01 && b1 <= TIERS.under + 0.01;
+  return row;
+}
 
 export function mulberry32(seed) {
   let a = seed >>> 0;
@@ -37,16 +50,24 @@ const mod = (a, n) => ((a % n) + n) % n;
 
 // Строки паттерна → массив рядов снизу вверх (ближний ряд первым).
 export function parsePattern(p) {
-  const rows = p.rows.slice().reverse().map((s) => {
+  const tier = p.tier || 'street';
+  const to = p.to || tier;
+  const bases = p.base ? p.base.slice().reverse() : null;
+  if (bases && bases.length !== p.rows.length) throw new Error(`pattern ${p.name}: base must list every row`);
+  const rows = p.rows.slice().reverse().map((s, i) => {
     const clean = s.replace(/\s/g, '');
     if (clean.length !== COLS) throw new Error(`pattern ${p.name}: row "${s}" must have ${COLS} cells`);
-    return Uint8Array.from(clean, (ch) => {
+    const row = Uint8Array.from(clean, (ch) => {
       const v = CHAR_CODE[ch];
       if (v === undefined) throw new Error(`pattern ${p.name}: unknown cell "${ch}"`);
       return v;
     });
+    const b = bases ? bases[i] : TIERS[tier];
+    return Array.isArray(b) ? setRowBase(row, b[0], b[1]) : setRowBase(row, b, b);
   });
-  return { ...p, parsed: rows };
+  if (rows[0].b0 !== TIERS[tier]) throw new Error(`pattern ${p.name}: must start at ${tier} height`);
+  if (rows[rows.length - 1].b1 !== TIERS[to]) throw new Error(`pattern ${p.name}: must end at ${to} height`);
+  return { ...p, tier, to, parsed: rows };
 }
 
 function transformRows(rows, shift, mirror) {
@@ -56,43 +77,52 @@ function transformRows(rows, shift, mirror) {
       const src = mirror ? COLS - 1 - c : c;
       out[mod(c + shift, COLS)] = r[src];
     }
-    return out;
+    return setRowBase(out, r.b0, r.b1);
   });
 }
 
 // ---- Проверка проходимости ----
 // Модель на уровне рядов: за один ряд игрок смещается максимум на 1 колонку,
 // забирается максимум на 1 уровень, спрыгивает с любой высоты,
-// может перепрыгнуть один ряд-провал (приземление не выше +1 уровня).
-// Под мост (b) можно только с уровня улицы — подкатом.
-const walk = (v) => v !== WALL;
-const lv = (v) => (v === BRIDGE ? 0 : v);
+// может перепрыгнуть один ряд (провал между крышами или улицу между домами).
+// Под мост (b) можно только с уровня пола — подкатом.
+// Высоты сравниваются абсолютные: у рядов разный пол (улица, крыши, тоннель, рампы).
+export const walk = (v) => v !== WALL && v !== VOID;
+export const lv = (v) => (v === BRIDGE || v === VOID || v === WALL ? 0 : v);
+const hAt = (row, v, atEnd) => (atEnd ? row.b1 : row.b0) + lv(v) * LEVEL;
 
-// Можно ли зайти в клетку v, если стоим на высоте from (уровни).
-function enterable(from, v) {
+// Можно ли зайти в клетку v ряда row (в начале или в конце ряда), если стоим на высоте from.
+function enterable(from, row, v, atEnd) {
   if (!walk(v)) return false;
-  if (v === BRIDGE) return from === 0;
-  return v <= from + 1;
+  const h = hAt(row, v, atEnd);
+  if (v === BRIDGE) return from <= h + 0.01;
+  return h <= from + LEVEL + 0.01;
 }
 
 // Можно ли перейти из клетки c ряда rPrev в соседнюю (|c2−c| ≤ 1) клетку ряда rCur.
 export function canStep(rPrev, rCur, c, c2) {
   const from = rPrev[c];
   if (!walk(from)) return false;
-  const f = lv(from);
-  if (!enterable(f, rCur[c2])) return false;
+  const f = hAt(rPrev, from, true);
+  if (!enterable(f, rCur, rCur[c2], false)) return false;
   if (c === c2) return true;
   // смещение вбок — только если клетка сбоку свободна уже в текущем ряду:
   // так у игрока есть целый ряд на манёвр, а не доля секунды за углом
-  return enterable(f, rPrev[c2]);
+  return enterable(f, rPrev, rPrev[c2], true);
 }
 
-// Прыжок из ряда r через ряд r+1 в ряд r+2 по одной колонке.
-function canJumpOver(start, mid, land) {
-  if (!walk(start) || !walk(mid) || !walk(land)) return false;
-  if (mid === BRIDGE || land === BRIDGE) return false;
-  const s = lv(start);
-  return s > 0 && mid <= s && land <= s + 1;
+// Прыжок из ряда rS через ряд rM в ряд rL по колонке c.
+export function canJumpOver(rS, rM, rL, c) {
+  const s = rS[c], m = rM[c], l = rL[c];
+  if (!walk(s) || !walk(l) || m === WALL) return false;
+  if (m === BRIDGE || l === BRIDGE) return false;
+  if (rS.cover || rM.cover || rL.cover) return false; // в тоннеле потолок
+  const hs = hAt(rS, s, true);
+  if (m !== VOID) {
+    // через улицу — только с крыши, и середина не выше старта
+    if (lv(s) === 0 || Math.max(rM.b0, rM.b1) + lv(m) * LEVEL > hs + 0.01) return false;
+  }
+  return hAt(rL, l, false) <= hs + LEVEL + 0.01;
 }
 
 function stepReach(Fprev, rPrev, rCur, Fprev2, rPrev2) {
@@ -103,7 +133,7 @@ function stepReach(Fprev, rPrev, rCur, Fprev2, rPrev2) {
       const c = mod(c2 + d, COLS);
       if (Fprev[c] && canStep(rPrev, rCur, c, c2)) F[c2] = 1;
     }
-    if (!F[c2] && Fprev2 && Fprev2[c2] && canJumpOver(rPrev2[c2], rPrev[c2], rCur[c2])) F[c2] = 1;
+    if (!F[c2] && Fprev2 && Fprev2[c2] && canJumpOver(rPrev2, rPrev, rCur, c2)) F[c2] = 1;
   }
   return F;
 }
@@ -115,7 +145,8 @@ export function reachThrough(F0, rowLast, F0prev, rowPrev, rows) {
   let Fp2 = F0prev, rp2 = rowPrev, Fp = F0, rp = rowLast;
   for (const r of rows) {
     const F = stepReach(Fp, rp, r, Fp2, rp2);
-    if (!F.some(Boolean)) return null;
+    // пустой ряд допустим (провал, который перепрыгивают), два подряд — нет
+    if (!F.some(Boolean) && !Fp.some(Boolean)) return null;
     out.push(F);
     Fp2 = Fp; rp2 = rp; Fp = F; rp = r;
   }
@@ -135,7 +166,7 @@ export function aliveBackward(rows, reach) {
         const c2 = mod(c + d, COLS);
         if (alive[r + 1][c2] && canStep(rows[r], rows[r + 1], c, c2)) a[c] = 1;
       }
-      if (!a[c] && r + 2 < n && alive[r + 2][c] && canJumpOver(rows[r][c], rows[r + 1][c], rows[r + 2][c])) a[c] = 1;
+      if (!a[c] && r + 2 < n && alive[r + 2][c] && canJumpOver(rows[r], rows[r + 1], rows[r + 2], c)) a[c] = 1;
     }
     alive[r] = a;
   }
@@ -151,12 +182,12 @@ export function findUnfair(rows, reach, alive) {
     for (let c = 0; c < COLS; c++) {
       if (!reach[r][c] || alive[r][c]) continue;
       // идём вбок по ряду только по клеткам, куда реально можно перейти с этой высоты
-      const f = lv(rows[r][c]);
+      const f = hAt(rows[r], rows[r][c], true);
       let ok = false;
       for (const dir of [-1, 1]) {
         for (let k = 1; k < COLS && !ok; k++) {
           const cc = mod(c + dir * k, COLS);
-          if (!enterable(f, rows[r][cc])) break;
+          if (!enterable(f, rows[r], rows[r][cc], true)) break;
           if (alive[r][cc]) ok = true;
         }
       }
@@ -174,6 +205,7 @@ export function validatePattern(p) {
   const rest = reachThrough(F0, rows[0], null, null, rows.slice(1));
   if (!rest) return { ok: false, reason: 'no path from entry to exit' };
   const reach = [F0, ...rest];
+  if (!reach[reach.length - 1].some(Boolean)) return { ok: false, reason: 'pattern must not end with a gap' };
   const bad = findUnfair(rows, reach, aliveBackward(rows, reach));
   if (bad) return { ok: false, reason: `hidden dead end at row ${bad.row + 1} (from bottom), col ${bad.col}` };
   return { ok: true };
@@ -181,7 +213,7 @@ export function validatePattern(p) {
 
 const PARSED = PATTERNS.map(parsePattern);
 const START_P = parsePattern(START);
-const BREATHER_P = parsePattern(BREATHER);
+const BREATHER_P = Object.fromEntries(Object.entries(BREATHERS).map(([k, p]) => [k, parsePattern({ ...p, tier: k })]));
 export const PATTERN_REPORT = [START_P, ...PARSED].map((p) => ({ name: p.name, ...validatePattern(p) }));
 const USABLE = PARSED.filter((p, i) => PATTERN_REPORT[i + 1].ok);
 
@@ -196,6 +228,8 @@ export class World {
     this.instances = []; // вставленные паттерны
     this.instCount = 0;
     this.fallbacks = 0;
+    this.tier = 'street';
+    this.tierAge = 0;    // сколько паттернов подряд на этом ярусе
     // старт: прямой проспект, игрок в колонке 6
     const rows = START_P.parsed;
     const F0 = new Uint8Array(COLS); F0[6] = 1;
@@ -218,16 +252,26 @@ export class World {
       this.rowInfo.push({ inst: inst.id, name: p.name, local: i, total: rows.length });
     });
     this.instances.push(inst);
+    const to = p.to || 'street';
+    this.tierAge = to === this.tier ? this.tierAge + 1 : 0;
+    this.tier = to;
     return inst;
   }
 
   // сложность растёт с расстоянием; первые ~150 м — только простое
+  // переходы между ярусами: с улицы — время от времени, с крыш и из тоннеля — через 2–4 паттерна
   _pickPattern(distance) {
     const level = distance < 150 ? 1 : Math.min(3, 1 + distance / 600);
-    const pool = USABLE.map((p) => {
-      const w = p.weight * (p.diff <= level ? 1 : Math.max(0, 1 - (p.diff - level)));
+    const age = this.tierAge;
+    const pool = USABLE.filter((p) => p.tier === this.tier).map((p) => {
+      let w = p.weight * (p.diff <= level ? 1 : Math.max(0, 1 - (p.diff - level)));
+      if (p.to !== p.tier) {
+        if (this.tier === 'street') w *= distance < 120 ? 0 : Math.min(1, Math.max(0, (age - 1) / 3));
+        else w *= age < 2 ? 0 : age < 4 ? 1 : 20;
+      }
       return { p, w };
     }).filter((e) => e.w > 0);
+    if (!pool.length) return null;
     let t = this.rng() * pool.reduce((s, e) => s + e.w, 0);
     for (const e of pool) { t -= e.w; if (t <= 0) return e.p; }
     return pool[pool.length - 1].p;
@@ -257,6 +301,7 @@ export class World {
 
     for (let attempt = 0; attempt < 16; attempt++) {
       const p = this._pickPattern(distance);
+      if (!p) break;
       if (p.name === last.name && attempt < 4) continue; // без повторов подряд
       const combos = [];
       for (let s = 0; s < COLS; s++) { combos.push([s, false]); combos.push([s, true]); }
@@ -278,8 +323,9 @@ export class World {
     // запасной вариант: открытая площадь подходит всегда
     this.fallbacks++;
     const n = this.rows.length;
-    const reach = reachThrough(this.reach[n - 1], this.rows[n - 1], this.reach[n - 2] || null, this.rows[n - 2] || null, BREATHER_P.parsed);
-    return this._push(BREATHER_P, BREATHER_P.parsed, reach, 0, false);
+    const bp = BREATHER_P[this.tier];
+    const reach = reachThrough(this.reach[n - 1], this.rows[n - 1], this.reach[n - 2] || null, this.rows[n - 2] || null, bp.parsed);
+    return this._push(bp, bp.parsed, reach, 0, false);
   }
 
   ensureRows(count) {
@@ -295,10 +341,35 @@ export class World {
     return this.rows[ri][mod(Math.floor(x / CELL), COLS)];
   }
 
+  rowAt(z) {
+    const ri = Math.floor(z / ROW);
+    return this.rows[Math.max(0, Math.min(this.rows.length - 1, ri))];
+  }
+
+  // высота пола яруса в точке z (на рампах — плавно)
+  baseAt(z) {
+    const ri = Math.floor(z / ROW);
+    const row = this.rows[Math.max(0, Math.min(this.rows.length - 1, ri))];
+    const t = Math.max(0, Math.min(1, z / ROW - ri));
+    return row.b0 + (row.b1 - row.b0) * t;
+  }
+
   infoAt(z) {
     const ri = Math.max(0, Math.min(this.rows.length - 1, Math.floor(z / ROW)));
     return this.rowInfo[ri];
   }
+}
+
+// Клумба с деревьями у подножия башни вдоль улицы (сторона side = −1/+1 — куда смотрит).
+// Нужна и отрисовке, и физике: по стене с клумбой не побежишь.
+export function planterAt(world, ri, c, side) {
+  const row = world.rows[ri];
+  if (!row || row.cover || row.b0 !== 0 || row.b1 !== 0) return false;
+  c = mod(c, COLS);
+  if (row[c] !== WALL) return false;
+  const v = row[mod(c + side, COLS)];
+  if (!walk(v) || v === BRIDGE || lv(v) !== 0) return false;
+  return hash2(world.seed + 13, ri * 24 + c * 2 + (side > 0 ? 1 : 0)) < 0.4;
 }
 
 // Высоты высоток — детерминированно от сида экземпляра и клетки.
