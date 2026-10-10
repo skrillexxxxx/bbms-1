@@ -309,7 +309,7 @@ const frag = /* glsl */ `
         sl *= 0.25;
       } else sl = 1.0;
       sl *= smoothstep(-0.05, 0.15, facing);
-      col *= mix(1.0, mix(0.58, min(1.12, 0.9 / max(col, 0.01)), sl), uSun);
+      col *= mix(1.0, mix(0.72, min(1.15, 0.9 / max(col, 0.01)), sl), uSun);
     }
 
     // под землёй темнее — чем глубже, тем сильнее; светильники не трогаем
@@ -425,7 +425,7 @@ export function createMaterial({ linearOut }) {
       uSunMat: { value: new THREE.Matrix4() },
       uSunShadow: { value: null },
       uSun: { value: 0 },
-      uSunDir: { value: new THREE.Vector3(0.3, 1, -0.6).normalize() },
+      uSunDir: { value: new THREE.Vector3(0.35, 1.7, -0.6).normalize() },
     },
   });
 }
