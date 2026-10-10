@@ -43,7 +43,7 @@ export function createSound(enabled) {
   let steps = [], sfx = null, lastStep = -1, stepBus = null;
   // steps: [{ buf, a }] — a: где начинается звук (без тишины mp3)
   let revWet = null; // сколько шагов уходит в реверб (в подземке — эхо тоннеля)
-  let nearL = null, nearR = null, nearC = null, echoL = null, echoR = null; // короткое эхо от стен: слева, справа, отовсюду (узко)
+  let nearL = null, nearR = null, nearC = null, echoL = null, echoR = null, narrowAmt = 0; // короткое эхо от стен: слева, справа, отовсюду (узко)
 
   function decode(data) {
     // старый Safari знает только колбэчный вариант decodeAudioData
@@ -178,7 +178,7 @@ export function createSound(enabled) {
     sfx = ctx.createGain(); sfx.gain.value = STEP_GAIN;
     sfx.connect(ctx.destination);
     // шаги чуть глуше: мягкий срез верхов — без «песочного» шороха
-    stepBus = ctx.createBiquadFilter(); stepBus.type = 'lowpass'; stepBus.frequency.value = 2200; stepBus.Q.value = 0.5;
+    stepBus = ctx.createBiquadFilter(); stepBus.type = 'lowpass'; stepBus.frequency.value = 3200; stepBus.Q.value = 0.5;
     stepBus.connect(sfx);
     // реверб для подземки: один свёрточный ревербератор на все звуки действий.
     // Импульс — затухающий шум ~2 с, сразу мягкий по верхам (бетон и плитка)
@@ -246,6 +246,7 @@ export function createSound(enabled) {
     // Safari на iPhone выполняет такие рампы мгновенно — звук срезался рывком.
     // стены рядом (0…1): left/right — с какой стороны, narrow — узкое место (стены с обеих сторон)
     space(left, right, narrow) {
+      narrowAmt = Math.min(1, narrow * 1.5);
       if (!ctx || !nearL) return;
       const t = ctx.currentTime;
       // −3 дБ (×0.71) к прошлому: эхо и отражения улицы — фоном
@@ -270,8 +271,11 @@ export function createSound(enabled) {
       lp.frequency.setTargetAtTime(f, t, 0.03);
       // эхо: в подземке громкое, на улице его нет
       if (revWet) revWet.gain.setTargetAtTime(1.2 * deep, t, 0.4);
-      // в подземке шаги звонкие (верха открыты — плитка и бетон), на улице — глуше
-      if (stepBus) stepBus.frequency.setTargetAtTime(2200 + 15800 * deep, t, 0.4);
+      // срез верхов шагов: улица ~3.2 кГц, узкий переулок чуть ярче, подземка ~6.5 кГц; переход быстрый
+      if (stepBus) {
+        const street = 3200 + 900 * narrowAmt;
+        stepBus.frequency.setTargetAtTime(street + (6500 - street) * deep, t, 0.12);
+      }
       duck.gain.setTargetAtTime(1 + (MUFFLE_GAIN - 1) * e, t, 0.03);
     },
   };
