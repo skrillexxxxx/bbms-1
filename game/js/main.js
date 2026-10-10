@@ -49,7 +49,10 @@ const P = {
   wallLift: 4.5,       // подброс при касании стены
   wallJumpV: 8,        // толчок от стены вверх (ниже обычного прыжка: со стены на стену, а не в небо)
   wallGravity: 3,      // в начале почти не падаешь…
-  wallGravityEnd: 22,  // …к концу — всё сильнее
+  wallGravityEnd: 12,  // …к концу — сильнее, но без пике
+  wallExitLift: 3,     // сошёл со стены — как вершина прыжка: чуть вверх…
+  wallExitGlide: 0.5,  // …и столько секунд мягко зависаешь; вниз — свайпом вниз
+  glideGravity: 0.3,   // доля обычной гравитации, пока зависаешь
   fallDeath: 4,        // упал ниже пола яруса на столько — конец
 };
 
@@ -127,8 +130,9 @@ function createBlurPass() {
           float frame = floor(uTime * 18.0);
           float h = hash(id * 1.37 + frame * 17.13);
           float on = step(1.0 - uLines * 0.5, h);                       // плотность растёт с серией
-          float r0 = mix(0.8, 0.38, uLines) + 0.25 * hash(id * 7.7 + frame * 3.3); // откуда начинается луч
-          float grow = smoothstep(r0, r0 + 0.35, rr);                    // тонкий у центра, толще к краю
+          // откуда начинается луч: в основном у краёв экрана, к центру — только на максимуме
+          float r0 = mix(1.08, 0.78, uLines * uLines) + 0.15 * hash(id * 7.7 + frame * 3.3);
+          float grow = smoothstep(r0, r0 + 0.2, rr);                     // тонкий у начала, толще к краю
           float w = (0.08 + 0.3 * hash(id * 3.1 + frame)) * grow;
           float line = 1.0 - smoothstep(w * 0.5, w * 0.5 + 0.06, abs(fa - 0.5));
           float k = on * line * grow * min(1.0, uLines * 1.4);
@@ -189,7 +193,7 @@ const pl = {
   lane: 6, pending: 0, pendT: 0,
   coyote: 0, jumpBuf: 0, slideT: 0, slideQueued: false, boost: 0, hopKeep: false,
   slideChain: 0, slideEndAt: -9,
-  wall: 0, wallT: 0, wallCool: 0, wallLast: 0, autoAttach: 0, grabT: 0, launch: null,
+  wall: 0, wallT: 0, wallCool: 0, wallLast: 0, autoAttach: 0, grabT: 0, launch: null, glideT: 0,
 };
 const cam = { roll: 0, yaw: 0, pitch: 0, dip: 0, slide: 0, bob: 0, fov: 82, slideSide: 1, lookY: 1.2, vx: 0, lines: 0, base: 0, wall: 0, fly: 0 };
 let gameTime = 0;
@@ -207,7 +211,7 @@ function reset(s) {
   Object.assign(pl, {
     x: 6 * CELL + CELL / 2, z: ROW * 0.5, y: 0, vx: 0, vy: 0, grounded: true,
     coyote: 0, jumpBuf: 0, slideT: 0, slideQueued: false, boost: 0, hopKeep: false,
-    slideChain: 0, slideEndAt: -9, wall: 0, wallT: 0, wallCool: 0, wallLast: 0, autoAttach: 0, grabT: 0, launch: null,
+    slideChain: 0, slideEndAt: -9, wall: 0, wallT: 0, wallCool: 0, wallLast: 0, autoAttach: 0, grabT: 0, launch: null, glideT: 0,
   });
   Object.assign(pl, { lane: 6, pending: 0, pendT: 0 });
   Object.assign(cam, { roll: 0, yaw: 0, pitch: 0, dip: 0, slide: 0, bob: 0, lookY: 1.2, vx: 0, lines: 0, base: 0, wall: 0, fly: 0 });
@@ -491,7 +495,12 @@ function physicsStep(dt) {
   if (pl.wall) {
     pl.wallT += dt;
     // стена кончилась, время вышло — отрываемся и летим дальше
-    if (!isRunwallAt(laneX(pl.lane + pl.wall), pl.z) || pl.wallT > P.wallTime) endWallRun();
+    if (!isRunwallAt(laneX(pl.lane + pl.wall), pl.z) || pl.wallT > P.wallTime) {
+      // стена кончилась сама — не роняем к земле, а отпускаем, как на вершине прыжка
+      endWallRun();
+      pl.vy = Math.max(pl.vy, P.wallExitLift);
+      pl.glideT = P.wallExitGlide;
+    }
   }
   if (!pl.grounded) {
     if (pl.wall) {
@@ -500,7 +509,8 @@ function physicsStep(dt) {
       pl.vy -= (P.wallGravity + (P.wallGravityEnd - P.wallGravity) * k * k) * dt;
     } else {
       const js = jumpScale(v);
-      pl.vy -= (pl.vy > 0 ? P.gravityUp : P.gravityDown) * js * js * dt;
+      const glide = pl.glideT > 0 ? P.glideGravity : 1;
+      pl.vy -= (pl.vy > 0 ? P.gravityUp : P.gravityDown) * js * js * glide * dt;
     }
     pl.y += pl.vy * dt;
     if (pl.y + h > ceil) { pl.y = ceil - h; pl.vy = Math.min(pl.vy, 0); }
@@ -523,6 +533,7 @@ function physicsStep(dt) {
   pl.wallCool -= dt;
   if (pl.grounded && world.cellAt(wrapX(pl.x), pl.z) === LAUNCH) startLaunch();
   pl.grabT = Math.max(0, pl.grabT - dt);
+  pl.glideT = pl.grounded || pl.wall ? 0 : Math.max(0, pl.glideT - dt);
 
   // подкат: заканчивается сам, но не под мостом
   if (pl.slideT > 0) {
@@ -574,6 +585,7 @@ function startSlide() {
 function slide() {
   if (state !== 'run') return;
   if (pl.wall) endWallRun();
+  pl.glideT = 0;
   if (!pl.grounded) {
     // в воздухе — резко вниз и подкат при приземлении
     pl.vy = Math.min(pl.vy, -P.fastFall);
@@ -855,7 +867,7 @@ function updateCamera(dt, running) {
   const hk = Math.min(1, Math.max(0, (pl.y - B) / (3 * LEVEL)));
   const pull = 0.7 * hk * hk * (3 - 2 * hk);
   const lookTarget = B + rel * 0.75 * (1 - pull) + 0.4 * pull;
-  cam.lookY = damp(cam.lookY, lookTarget, 3.5, dt);
+  cam.lookY = damp(cam.lookY, lookTarget, Math.abs(lookTarget - cam.lookY) > 2 ? 7 : 3.5, dt);
   camera.lookAt(0, cam.lookY, 0);
 
   // наклоны: в сторону движения, в подкате — завал вбок
@@ -919,7 +931,11 @@ function frame(now) {
 
   for (const m of meshes) m.position.set(-pl.x, 0, m.userData.zStart - pl.z);
   // уровень пола яруса — сюда сходится весь мир; на рампах и при спрыгивании плавно
-  cam.base = damp(cam.base, world.baseAt(pl.z), 4, dt);
+  // в полёте (трамплин, прыжок с крыши, подъём) целимся туда, куда приземлимся, а не откуда летим
+  let baseTarget = world.baseAt(pl.z);
+  if (pl.launch) baseTarget = pl.launch.y1;
+  else if (!pl.grounded) baseTarget = world.baseAt(pl.z + speedNow() * 0.6);
+  cam.base = damp(cam.base, baseTarget, Math.abs(baseTarget - cam.base) > 3 ? 7 : 4, dt);
   materials.main.uniforms.uB.value = cam.base;
   materials.main.uniforms.uTime.value = gameTime;
   // в подземке дымка ближе — пустые коридоры тонут в молочном свете
@@ -943,7 +959,8 @@ function frame(now) {
     // сильнее на разгоне, в подкате и при бусте после подката
     blurPass.uniforms.uStrength.value = run * (0.04 + sp * 0.11 + cam.slide * 0.05 + pl.boost * 0.006);
     blurPass.uniforms.uLateral.value.set(run * -cam.vx * 0.0012, 0);
-    const linesT = Math.max(Math.min(1, Math.max(0, (pl.slideChain - 1) / 3)), pl.wall ? 0.55 : 0, pl.launch ? 0.8 : 0);
+    // полосы копятся медленно: на всю силу — только на длинной серии подкатов
+    const linesT = Math.max(Math.min(1, Math.max(0, (pl.slideChain - 1) / 6)), pl.wall ? 0.3 : 0, pl.launch ? 0.45 : 0);
     cam.lines = damp(cam.lines, run * linesT, linesT > 0 ? 6 : 2.5, dt);
     blurPass.uniforms.uLines.value = cam.lines;
     blurPass.uniforms.uTime.value = gameTime;
