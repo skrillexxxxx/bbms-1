@@ -117,6 +117,7 @@ function createBlurPass() {
       uGrain: { value: useFx ? 0.045 : 0 },  // цифровой шум
       uCA: { value: useFx ? 0.006 : 0 },     // хроматическая аберрация у краёв (доля экрана в углу)
       uPx: { value: 1 },                     // размер «зерна» шума в пикселях экрана
+      uVig: { value: 0 },                    // ночная виньетка: края экрана в темноту
     },
     vertexShader: /* glsl */ `
       varying vec2 vUv;
@@ -133,6 +134,7 @@ function createBlurPass() {
       uniform float uGrain;
       uniform float uCA;
       uniform float uPx;
+      uniform float uVig;
       float hash(float n) { return fract(sin(n) * 43758.5453); }
       // хеш Дейва Хоскинса: равномерный и без sin
       float hash13(vec3 p3) {
@@ -189,6 +191,12 @@ function createBlurPass() {
           vec3 base = texture2D(tDiffuse, vUv).rgb;
           col.r += texture2D(tDiffuse, vUv + o).r - base.r;
           col.b += texture2D(tDiffuse, vUv - o).b - base.b;
+        }
+
+        // ночью края кадра темнеют — взгляд тянется в центр, туда, куда бежим
+        if (uVig > 0.0) {
+          vec2 q = (vUv - 0.5) * vec2(uAspect, 1.0) / max(uAspect, 1.0);
+          col.rgb *= 1.0 - uVig * smoothstep(0.18, 0.62, length(q));
         }
 
         // цифровой шум: каждый кадр — новый, независимый (кадр — третья координата хеша, а не сдвиг
@@ -1495,6 +1503,7 @@ function frame(now) {
     cam.lines = damp(cam.lines, run * linesT, linesT > 0 ? 6 : 2.5, dt);
     blurPass.uniforms.uLines.value = cam.lines;
     blurPass.uniforms.uTime.value = gameTime;
+    blurPass.uniforms.uVig.value = 0.6 * materials.main.uniforms.uNight.value;
   }
   renderLampShadow();
   if (composer) composer.render(); else renderer.render(scene, camera);
