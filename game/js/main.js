@@ -783,6 +783,7 @@ function die() {
   if (state !== 'run') return;
   state = 'dead';
   shake = 0.6;
+  sound.muffle(true);
   const meters = Math.floor(pl.z);
   lastRun = meters;
   // рекорд по сохранённому городу
@@ -806,6 +807,7 @@ function start() {
   ui.over.classList.remove('show');
   ui.hud.classList.add('show');
   state = 'run';
+  sound.muffle(false);
 }
 
 // ---------- автопилот (?auto) — для тестов: бежит по «живым» клеткам ----------
@@ -1131,4 +1133,4 @@ ui.start.classList.add('show');
 requestAnimationFrame(frame);
 
 // для автотестов
-window.__game = { materials, cam, laneShift, setAuto: (v) => { autopilot = v; }, get state() { return state; }, pl, start, jump, slide, get seed() { return seed; }, get world() { return world; } };
+window.__game = { materials, cam, laneShift, setAuto: (v) => { autopilot = v; }, get state() { return state; }, pl, start, die, jump, slide, get seed() { return seed; }, get world() { return world; } };
