@@ -685,7 +685,7 @@ function physicsStep(dt) {
       pl.longLane = lj.lane; // летим к полосе вплотную к стене — по одной полосе, огибая башни
       pl.autoAttach = lj.d; pl.autoT = t + 0.5;
       pl.fromLong = true;
-      rec.event('longJump', { z: pl.z, lane: lj.lane, d: lj.d, dz: lj.dz, t });
+      rec.event('longJump', { z: pl.z, lane: lj.lane, d: lj.d, dz: lj.dz, air: t });
     }
     if (fromSlide) {
       // slide-hop: прыжок из подката сохраняет разгон
@@ -931,9 +931,12 @@ canvas.addEventListener('pointermove', (e) => {
     touch.swiped = true;
     touch.sx = e.clientX; touch.sy = e.clientY; touch.st = now;
   } else if (Math.abs(dy) > SWIPE && Math.abs(dy) > Math.abs(dxs) * 1.1 && now - touch.st < 300) {
-    if (dy < 0) jump(); else slide();
+    // один жест = одно действие вверх и одно вниз: длинный свайп раньше давал 3–4 прыжка подряд,
+    // а на стене каждый лишний прыжок — толчок на стену напротив и обратно
+    const dir = dy < 0 ? -1 : 1;
+    if (touch.vDir !== dir) { if (dir < 0) jump(); else slide(); touch.vDir = dir; }
     touch.swiped = true;
-    touch.sx = e.clientX; touch.sy = e.clientY; touch.st = now; // можно свайпнуть ещё раз, не отпуская
+    touch.sx = e.clientX; touch.sy = e.clientY; touch.st = now; // не отпуская, можно свайпнуть в другую сторону
   } else if (now - touch.st > 300) {
     touch.sx = e.clientX; touch.sy = e.clientY; touch.st = now;
   }
@@ -1131,7 +1134,10 @@ function frame(now) {
   if (wrapped !== pl.x) {
     // сдвиг на целый круг: полосы и анимацию переезда сдвигаем вместе
     const shift = wrapped - pl.x;
-    pl.lane += Math.round(shift / CELL);
+    const dl = Math.round(shift / CELL);
+    pl.lane += dl;
+    // цель длинного прыжка — тоже номер полосы: без сдвига после шва её «догоняли» по кругу через весь мир
+    if (pl.longLane != null) pl.longLane += dl;
     pl.x = wrapped;
   }
 
