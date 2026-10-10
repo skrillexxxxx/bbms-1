@@ -43,7 +43,7 @@ export function createSound(enabled) {
   let steps = [], sfx = null, lastStep = -1, stepBus = null;
   // steps: [{ buf, a }] — a: где начинается звук (без тишины mp3)
   let revWet = null; // сколько шагов уходит в реверб (в подземке — эхо тоннеля)
-  let nearL = null, nearR = null, nearC = null, echoL = null, echoR = null, narrowAmt = 0; // короткое эхо от стен: слева, справа, отовсюду (узко)
+  let nearLP = null, nearL = null, nearR = null, nearC = null, echoL = null, echoR = null, narrowAmt = 0; // короткое эхо от стен: слева, справа, отовсюду (узко)
 
   function decode(data) {
     // старый Safari знает только колбэчный вариант decodeAudioData
@@ -149,7 +149,8 @@ export function createSound(enabled) {
   }
 
   // импульсная характеристика «зала»: стерео-шум с экспоненциальным спадом, верха гаснут быстрее низов
-  function impulse(sec, decay) {
+  // bright: «кафель» — верха в хвосте держатся долго (подземка); иначе хвост быстро темнеет
+  function impulse(sec, decay, bright = false) {
     const sr = ctx.sampleRate, n = Math.floor(sr * sec);
     const buf = ctx.createBuffer(2, n, sr);
     for (let ch = 0; ch < 2; ch++) {
@@ -157,7 +158,7 @@ export function createSound(enabled) {
       let lp = 0;
       for (let i = 0; i < n; i++) {
         const t = i / n;
-        const k = 0.25 + 0.6 * t; // со временем фильтр закрывается сильнее
+        const k = bright ? 0.03 + 0.25 * t : 0.25 + 0.6 * t; // со временем фильтр закрывается сильнее
         lp += (Math.random() * 2 - 1 - lp) * (1 - k);
         d[i] = lp * Math.pow(1 - t, decay) * (i < sr * 0.012 ? i / (sr * 0.012) : 1);
       }
@@ -178,25 +179,30 @@ export function createSound(enabled) {
     sfx = ctx.createGain(); sfx.gain.value = STEP_GAIN;
     sfx.connect(ctx.destination);
     // шаги чуть глуше: мягкий срез верхов — без «песочного» шороха
-    stepBus = ctx.createBiquadFilter(); stepBus.type = 'lowpass'; stepBus.frequency.value = 3200; stepBus.Q.value = 0.5;
+    // сами шаги везде одинаковые и полные (они прямо под нами — пространство их не глушит);
+    // «песок» убираем мягкой полкой −5 дБ выше 4 кГц, а не срезом — уши не закладывает
+    stepBus = ctx.createBiquadFilter(); stepBus.type = 'highshelf'; stepBus.frequency.value = 4000; stepBus.gain.value = -5;
     stepBus.connect(sfx);
     // реверб для подземки: один свёрточный ревербератор на все звуки действий.
     // Импульс — затухающий шум ~2 с, сразу мягкий по верхам (бетон и плитка)
     const conv = ctx.createConvolver();
-    conv.buffer = impulse(2.2, 2.6);
+    conv.buffer = impulse(2.2, 2.6, true); // подземка: кафель — яркий долгий хвост
     revWet = ctx.createGain(); revWet.gain.value = 0;
     sfx.connect(conv); conv.connect(revWet); revWet.connect(ctx.destination);
     // эхо улицы от стен рядом (~0.9 с): отражение слышно с той стороны, где стена
     const near = ctx.createConvolver();
     near.buffer = impulse(0.9, 3.0);
     sfx.connect(near);
+    // отражения улицы: на открытом месте глухие и тёмные, в узком переулке — ярче
+    nearLP = ctx.createBiquadFilter(); nearLP.type = 'lowpass'; nearLP.frequency.value = 1800; nearLP.Q.value = 0.5;
+    near.connect(nearLP);
     const pan = (p) => {
       if (!ctx.createStereoPanner) return ctx.destination;
       const sp = ctx.createStereoPanner(); sp.pan.value = p; sp.connect(ctx.destination); return sp;
     };
-    nearL = ctx.createGain(); nearL.gain.value = 0; near.connect(nearL); nearL.connect(pan(-0.85));
-    nearR = ctx.createGain(); nearR.gain.value = 0; near.connect(nearR); nearR.connect(pan(0.85));
-    nearC = ctx.createGain(); nearC.gain.value = 0; near.connect(nearC); nearC.connect(ctx.destination);
+    nearL = ctx.createGain(); nearL.gain.value = 0; nearLP.connect(nearL); nearL.connect(pan(-0.85));
+    nearR = ctx.createGain(); nearR.gain.value = 0; nearLP.connect(nearR); nearR.connect(pan(0.85));
+    nearC = ctx.createGain(); nearC.gain.value = 0; nearLP.connect(nearC); nearC.connect(ctx.destination);
     // отдельные отражения «чух-чух-чух»: пинг-понг между левой и правой стеной.
     // Каждое отражение тише и глуше предыдущего
     const mkDelay = (sec) => { const d = ctx.createDelay(1); d.delayTime.value = sec; return d; };
@@ -271,11 +277,8 @@ export function createSound(enabled) {
       lp.frequency.setTargetAtTime(f, t, 0.03);
       // эхо: в подземке громкое, на улице его нет
       if (revWet) revWet.gain.setTargetAtTime(1.2 * deep, t, 0.4);
-      // срез верхов шагов: улица ~3.2 кГц, узкий переулок чуть ярче, подземка ~6.5 кГц; переход быстрый
-      if (stepBus) {
-        const street = 3200 + 900 * narrowAmt;
-        stepBus.frequency.setTargetAtTime(street + (6500 - street) * deep, t, 0.12);
-      }
+      // яркость отражений улицы: открыто — ~1.6 кГц (звук «разлетается»), узко — ~6 кГц (плотный камень)
+      if (nearLP) nearLP.frequency.setTargetAtTime(1600 + 4400 * narrowAmt, t, 0.15);
       duck.gain.setTargetAtTime(1 + (MUFFLE_GAIN - 1) * e, t, 0.03);
     },
   };
