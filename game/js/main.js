@@ -8,7 +8,7 @@ import {
   World, CELL, ROW, W, L, LZ, COLS, WALL, BRIDGE, VOID, RUNWALL, POOL, LAUNCH, LAUNCH_ROWS, LEVEL, BRIDGE_BOTTOM, BRIDGE_TOP, CEIL_H,
   canStep, canJumpOver, aliveBackward, walk, lv,
 } from './world.js';
-import { createMaterial, createStarMaterial, buildInstanceMesh } from './render.js';
+import { createMaterial, createStarMaterial, createDepthMaterial, buildInstanceMesh } from './render.js';
 import { createSound } from './sound.js';
 import { createRecorder, shareFile } from './recorder.js';
 import { loadMonkey, createMonkeyMaterial, placeMonkeys, monkeyGeometry } from './monkeys.js';
@@ -82,6 +82,13 @@ const materials = {
   monkey: createMonkeyMaterial({ linearOut: useBloom }),
 };
 const monkeyReady = loadMonkey();
+// маска фонаря (снимок пятна реального фонаря); пока не загрузилась — пятно рисуется формулой
+new THREE.TextureLoader().load('lamp-cookie.jpg', (tex) => {
+  tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
+  tex.colorSpace = THREE.NoColorSpace;
+  materials.main.uniforms.uCookie.value = tex;
+  materials.main.uniforms.uCookieOn.value = 1;
+});
 // шейдер обезьянки собираем сразу после загрузки, а не когда первая попадёт в кадр:
 // на iPhone сборка шейдера — заметное подвисание посреди забега
 monkeyReady.then(() => {
@@ -1079,15 +1086,17 @@ const lamp = { x: 0, y: -0.1, vx: 0, vy: 0, jit: 0 };
 function updateLamp(dt) {
   const run = state === 'run';
   const ground = run && pl.grounded && !sliding();
-  let tx = ground ? Math.sin(cam.bob) * 0.05 : 0;
-  let ty = -0.1 + (ground ? -Math.abs(Math.sin(cam.bob)) * 0.06 : 0) - cam.dip * 0.12;
-  if (pl.wall) tx += pl.wall * 0.12;
-  if (sliding()) ty -= 0.06;
+  // тряска сильная: фонарь в руке бегущего человека
+  let tx = ground ? Math.sin(cam.bob) * 0.1 : 0;
+  let ty = -0.1 + (ground ? -Math.abs(Math.sin(cam.bob)) * 0.12 : 0) - cam.dip * 0.24;
+  if (pl.wall) tx += pl.wall * 0.16;
+  if (sliding()) ty -= 0.08;
+  if (!pl.grounded && !pl.wall) ty += Math.max(-0.08, Math.min(0.08, pl.vy * 0.006)); // в полёте луч «плывёт»
   // мелкая дрожь руки, сильнее на скорости
   lamp.jit += dt;
   const sp = run ? Math.min(1, speedNow() / 25) : 0;
-  tx += (Math.sin(lamp.jit * 13.1) + Math.sin(lamp.jit * 7.3)) * 0.006 * (0.4 + sp);
-  ty += (Math.sin(lamp.jit * 11.7) + Math.sin(lamp.jit * 5.9)) * 0.006 * (0.4 + sp);
+  tx += (Math.sin(lamp.jit * 13.1) + Math.sin(lamp.jit * 7.3)) * 0.013 * (0.4 + sp);
+  ty += (Math.sin(lamp.jit * 11.7) + Math.sin(lamp.jit * 5.9)) * 0.013 * (0.4 + sp);
   // пружина — луч догоняет руку с небольшим запозданием и перелётом
   // мелкими шагами: жёсткая пружина на длинном кадре иначе разлетается
   const w = 22, n = Math.ceil(dt / (1 / 240));
@@ -1100,6 +1109,55 @@ function updateLamp(dt) {
   const wide = camera.aspect > 1;
   materials.main.uniforms.uLampP.value.set(lamp.x, lamp.y, wide ? 0.5 : 0.38);
 }
+
+// ---------- тени от фонаря (экспериментально, кнопкой) ----------
+// Город ещё раз рисуется в карту глубины с точки зрения фонаря (в руке: правее и ниже глаз),
+// основной шейдер сравнивает глубину — что закрыто, в тень. Стоит ещё одного прохода по сцене.
+let shadowsOn = false;
+try { shadowsOn = localStorage.getItem('sdwg-shadows') === '1'; } catch { /* приватный режим */ }
+const SHADOW_RES = 1024;
+const shadowRT = new THREE.WebGLRenderTarget(SHADOW_RES, SHADOW_RES, { depthBuffer: true });
+shadowRT.depthTexture = new THREE.DepthTexture(SHADOW_RES, SHADOW_RES);
+shadowRT.depthTexture.type = THREE.UnsignedIntType;
+const lampCam = new THREE.PerspectiveCamera(105, 1, 0.3, 70);
+const depthMat = createDepthMaterial();
+const _lp = new THREE.Vector3(), _la = new THREE.Vector3();
+function renderLampShadow() {
+  const u = materials.main.uniforms;
+  const on = shadowsOn && u.uLamp.value > 0.01;
+  u.uShadowOn.value = on ? 1 : 0;
+  if (!on) return;
+  camera.updateMatrixWorld();
+  camera.localToWorld(_lp.set(0.35, -0.3, 0));
+  camera.localToWorld(_la.set(lamp.x * 10, lamp.y * 10, -10));
+  lampCam.position.copy(_lp);
+  lampCam.up.copy(camera.up);
+  lampCam.lookAt(_la);
+  lampCam.updateMatrixWorld();
+  lampCam.updateProjectionMatrix();
+  u.uLampMat.value.multiplyMatrices(lampCam.projectionMatrix, lampCam.matrixWorldInverse);
+  depthMat.uniforms.uB.value = u.uB.value;
+  const prevOverride = scene.overrideMaterial;
+  scene.overrideMaterial = depthMat;
+  renderer.setRenderTarget(shadowRT);
+  renderer.clear();
+  renderer.render(scene, lampCam);
+  renderer.setRenderTarget(null);
+  scene.overrideMaterial = prevOverride;
+  u.uShadow.value = shadowRT.depthTexture;
+}
+function updateShadowButtons() {
+  for (const id of ['shadows', 'shadows-over']) $(id).textContent = `Тени фонаря: ${shadowsOn ? 'вкл' : 'выкл'}`;
+}
+for (const id of ['shadows', 'shadows-over']) {
+  $(id).addEventListener('click', (e) => {
+    e.stopPropagation();
+    shadowsOn = !shadowsOn;
+    try { localStorage.setItem('sdwg-shadows', shadowsOn ? '1' : '0'); } catch { /* приватный режим */ }
+    updateShadowButtons();
+  });
+}
+updateShadowButtons();
 
 // ---------- акустика улицы: стены рядом ----------
 // Короткое эхо со стороны стены (бежим вдоль башни или по красной стене) и отовсюду в узком месте.
@@ -1424,6 +1482,7 @@ function frame(now) {
     blurPass.uniforms.uLines.value = cam.lines;
     blurPass.uniforms.uTime.value = gameTime;
   }
+  renderLampShadow();
   if (composer) composer.render(); else renderer.render(scene, camera);
 
   if (showDebug) {

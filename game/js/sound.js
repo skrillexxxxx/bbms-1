@@ -245,11 +245,12 @@ export function createSound(enabled) {
     space(left, right, narrow) {
       if (!ctx || !nearL) return;
       const t = ctx.currentTime;
-      nearL.gain.setTargetAtTime(1.2 * left, t, 0.12);
-      nearR.gain.setTargetAtTime(1.2 * right, t, 0.12);
-      nearC.gain.setTargetAtTime(1.3 * narrow, t, 0.2);
-      echoL.gain.setTargetAtTime(0.18 * Math.min(1, left + narrow), t, 0.12);
-      echoR.gain.setTargetAtTime(0.18 * Math.min(1, right + narrow), t, 0.12);
+      // −3 дБ (×0.71) к прошлому: эхо и отражения улицы — фоном
+      nearL.gain.setTargetAtTime(0.85 * left, t, 0.12);
+      nearR.gain.setTargetAtTime(0.85 * right, t, 0.12);
+      nearC.gain.setTargetAtTime(0.92 * narrow, t, 0.2);
+      echoL.gain.setTargetAtTime(0.127 * Math.min(1, left + narrow), t, 0.12);
+      echoR.gain.setTargetAtTime(0.127 * Math.min(1, right + narrow), t, 0.12);
     },
     // deep: 0 на улице … 1 в подземке; speed — скорость бега; high: 0 … 1 на небоскрёбах.
     update(deep, speed, high = 0) {

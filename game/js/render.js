@@ -35,6 +35,8 @@ const vert = /* glsl */ `
   varying float vWY;
   varying float vAO;
   varying float vLight;
+  uniform mat4 uLampMat;
+  varying vec4 vLampPos;
   void main() {
     vec4 f = modelMatrix * vec4(position, 1.0);   // плоские координаты относительно игрока
     float s = exp(-f.z / uLz);
@@ -44,6 +46,7 @@ const vert = /* glsl */ `
     vec3 w = vec3(r * sin(phi), uB + (f.y - uB) * s, r * cos(phi));
     vec4 mv = viewMatrix * vec4(w, 1.0);
     gl_Position = projectionMatrix * mv;
+    vLampPos = uLampMat * vec4(w, 1.0);
     vPos = position;
     vN = normal;
     vStyle = aStyle;
@@ -80,6 +83,11 @@ const frag = /* glsl */ `
   uniform float uNight;   // 0 — день, 1 — ночь
   uniform float uLamp;    // фонарь бегуна: ночью на улице 1, в подземке гаснет
   uniform vec3 uLampP;    // смещение луча (тряска на бегу) xy и радиус пятна z
+  uniform sampler2D uCookie; // маска фонаря — снимок пятна реального фонаря
+  uniform sampler2D uShadow;  // глубина с точки зрения фонаря
+  uniform float uShadowOn;
+  varying vec4 vLampPos;
+  uniform float uCookieOn;
   varying float vTint;
   varying vec3 vPos;
   varying vec3 vN;
@@ -301,12 +309,31 @@ const frag = /* glsl */ `
         float spot = 1.0 - smoothstep(R * 0.8, R * 1.1, r);
         float ring = exp(-pow((r - R * 0.95) / (R * 0.1), 2.0)) * 0.3;
         float halo = (1.0 - smoothstep(R * 1.1, R * 2.6, r)) * 0.3;
+        if (uCookieOn > 0.5) {
+          // маска: вся картинка — пятно с ореолом, её край — R·2.4 от центра
+          vec2 cuv = sp / (R * 2.4) * 0.5 + 0.5;
+          float ck = texture2D(uCookie, clamp(cuv, 0.0, 1.0)).r;
+          ck *= step(abs(cuv.x - 0.5), 0.5) * step(abs(cuv.y - 0.5), 0.5);
+          spot = ck * ck * 1.1; ring = 0.0; halo = ck * 0.35;
+        }
         float dist = length(vView);
         float att = 1.0 / (1.0 + dist * dist / 220.0);
         float face = n.y > 0.5 ? 0.75 : (n.y < -0.5 ? 0.3 : 0.45 + 0.55 * max(-n.z, 0.0) + 0.3 * abs(n.x));
         float fl = 0.94 + 0.06 * step(0.97, fract(sin(floor(uTime * 9.0) * 12.9898) * 43758.5453));
         vec3 lampL = c3 * vec3(1.0, 0.97, 0.9) * (spot + ring + halo) * att * face * fl * uLamp
                    + vec3(0.05) * spot * att * uLamp;
+        if (uShadowOn > 0.5) {
+          // тень: 4 выборки вокруг — мягкий край
+          vec3 lp = vLampPos.xyz / vLampPos.w * 0.5 + 0.5;
+          if (vLampPos.w > 0.0 && lp.x > 0.0 && lp.x < 1.0 && lp.y > 0.0 && lp.y < 1.0 && lp.z < 1.0) {
+            float lit = 0.0, o = 1.5 / 1024.0, bias = 0.0006 + 0.002 * (1.0 - abs(n.y));
+            lit += step(lp.z - bias, texture2D(uShadow, lp.xy + vec2(-o, -o)).r);
+            lit += step(lp.z - bias, texture2D(uShadow, lp.xy + vec2(o, -o)).r);
+            lit += step(lp.z - bias, texture2D(uShadow, lp.xy + vec2(-o, o)).r);
+            lit += step(lp.z - bias, texture2D(uShadow, lp.xy + vec2(o, o)).r);
+            lampL *= mix(0.12, 1.0, lit * 0.25);
+          }
+        }
         // свет фонаря не выше порога блума — то, куда бежим, не выжигается в белое
         dark = min(dark + lampL, vec3(0.8));
       }
@@ -342,7 +369,35 @@ export function createMaterial({ linearOut }) {
       uNight: { value: 0 },
       uLamp: { value: 0 },
       uLampP: { value: new THREE.Vector3(0, -0.1, 0.32) },
+      uCookie: { value: null },
+      uCookieOn: { value: 0 },
+      uShadow: { value: null },
+      uShadowOn: { value: 0 },
+      uLampMat: { value: new THREE.Matrix4() },
     },
+  });
+}
+
+// Глубина для теней фонаря: тот же изгиб мира, цвет не нужен — только буфер глубины.
+export function createDepthMaterial() {
+  return new THREE.ShaderMaterial({
+    side: THREE.DoubleSide,
+    colorWrite: false,
+    vertexShader: /* glsl */ `
+      uniform float uL;
+      uniform float uLz;
+      uniform float uB;
+      void main() {
+        vec4 f = modelMatrix * vec4(position, 1.0);
+        float s = exp(-f.z / uLz);
+        float r = uL * s;
+        float phi = f.x / uL;
+        vec3 w = vec3(r * sin(phi), uB + (f.y - uB) * s, r * cos(phi));
+        gl_Position = projectionMatrix * viewMatrix * vec4(w, 1.0);
+      }
+    `,
+    fragmentShader: /* glsl */ `void main() { gl_FragColor = vec4(1.0); }`,
+    uniforms: { uL: { value: L }, uLz: { value: LZ }, uB: { value: 0 } },
   });
 }
 
