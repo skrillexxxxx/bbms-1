@@ -862,11 +862,13 @@ export function buildInstanceMesh(inst, materials, world) {
       const style = abyss ? 16 : 9;
       b.tint = v === POOL ? 2 : 0;
       const same = (rr, cc) => { const rw = rows[rr] || world.rows[R0 + rr]; return rw && rw[((cc % COLS) + COLS) % COLS] === v; };
-      // нормаль смотрит внутрь ямы
-      if (!same(r, c - 1)) b.quad([x0, yb, zA], [0, 0, ROW], [0, depth, 0], 4, Math.ceil(depth / 3), [1, 0, 0], style, base, [x0, zA, x1, zB]);
-      if (!same(r, c + 1)) b.quad([x1, yb, zB], [0, 0, -ROW], [0, depth, 0], 4, Math.ceil(depth / 3), [-1, 0, 0], style, base, [x0, zA, x1, zB]);
-      if (!same(r - 1, c)) b.quad([x1, yb, zA], [-CELL, 0, 0], [0, depth, 0], 4, Math.ceil(depth / 3), [0, 0, 1], style, base, [x0, zA, x1, zB]);
-      if (!same(r + 1, c)) b.quad([x0, yb, zB], [CELL, 0, 0], [0, depth, 0], 4, Math.ceil(depth / 3), [0, 0, -1], style, base, [x0, zA, x1, zB]);
+      // нормаль смотрит внутрь ямы; стенки чуть внутри клетки — иначе совпадают
+      // с гранями фундаментов соседних стен и мерцают (z-fighting)
+      const e = 0.04;
+      if (!same(r, c - 1)) b.quad([x0 + e, yb, zA], [0, 0, ROW], [0, depth, 0], 4, Math.ceil(depth / 3), [1, 0, 0], style, base, [x0, zA, x1, zB]);
+      if (!same(r, c + 1)) b.quad([x1 - e, yb, zB], [0, 0, -ROW], [0, depth, 0], 4, Math.ceil(depth / 3), [-1, 0, 0], style, base, [x0, zA, x1, zB]);
+      if (!same(r - 1, c)) b.quad([x1, yb, zA + e], [-CELL, 0, 0], [0, depth, 0], 4, Math.ceil(depth / 3), [0, 0, 1], style, base, [x0, zA, x1, zB]);
+      if (!same(r + 1, c)) b.quad([x0, yb, zB - e], [CELL, 0, 0], [0, depth, 0], 4, Math.ceil(depth / 3), [0, 0, -1], style, base, [x0, zA, x1, zB]);
       if (water !== null) {
         b.tint = 3;
         b.quad([x0, water, zA], [0, 0, ROW], [CELL, 0, 0], 4, 4, [0, 1, 0], 14, 0, [x0, zA, x1, zB]);

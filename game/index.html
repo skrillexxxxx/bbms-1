@@ -50,6 +50,18 @@
     }
     #hud.show { display: flex; }
     #dist { font-size: 28px; font-weight: 800; }
+    button.small { padding: 10px 14px; margin: 0 0 0 6px; font-size: 15px; letter-spacing: 0; }
+    button:disabled { opacity: 0.5; }
+    #start .menu { margin-top: 22px; pointer-events: auto; }
+    #seeds { background: rgba(255,255,255,0.9); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); pointer-events: auto; justify-content: flex-start; padding-top: calc(env(safe-area-inset-top) + 48px); }
+    #seeds h2 { font-size: 28px; font-weight: 800; margin: 0 0 18px; }
+    #seed-list { width: 100%; max-width: 520px; overflow-y: auto; flex: 0 1 auto; max-height: 65vh; touch-action: pan-y; }
+    .seed-row { display: flex; align-items: center; padding: 10px 0; border-bottom: 1px solid rgba(0,0,0,0.12); text-align: left; }
+    .seed-row button:not(.small) { padding: 10px 18px; margin: 0 0 0 6px; font-size: 14px; }
+    .seed-info { flex: 1; min-width: 0; }
+    .seed-name { font-weight: 700; font-size: 17px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .seed-meta { font: 12px ui-monospace, Menlo, monospace; opacity: 0.6; margin-top: 2px; }
+    .seed-empty { opacity: 0.6; font-size: 15px; padding: 20px 0; }
     #debug {
       position: fixed; left: 16px; bottom: calc(env(safe-area-inset-bottom) + 10px);
       font: 11px ui-monospace, Menlo, monospace; opacity: 0.45; pointer-events: none;
@@ -74,6 +86,13 @@
     <h1>SDWG GAME</h1>
     <div class="hint">Свайп влево-вправо — сменить полосу<br>Свайп вверх или тап — прыжок<br>Свайп вниз — подкат (под мостами и трубами)<br>Свайп в красную стену — бег по стене, свайп от неё — прыжок на стену напротив<br>Не врезайся в здания</div>
     <div class="pulse">Тапни, чтобы бежать</div>
+    <div class="menu"><button id="open-seeds" class="ghost">Мои города</button></div>
+  </div>
+
+  <div id="seeds" class="screen">
+    <h2>Мои города</h2>
+    <div id="seed-list"></div>
+    <div style="margin-top: 18px"><button id="close-seeds" class="ghost">Назад</button></div>
   </div>
 
   <div id="over" class="screen">
@@ -84,6 +103,7 @@
       <button id="again">Новый город</button>
       <button id="same" class="ghost">Этот же сид</button>
     </div>
+    <div><button id="save" class="ghost">Сохранить сид</button><button id="open-seeds-over" class="ghost">Мои города</button></div>
   </div>
 
   <script type="module" src="js/main.js"></script>

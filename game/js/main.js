@@ -24,7 +24,9 @@ const P = {
   laneBuffer: 0.25,    // свайп чуть раньше времени ждёт, пока проём откроется
   radius: 0.45,
   step: 0.35,          // на сколько можно «перешагнуть» без прыжка
-  mantle: 1.5,         // в прыжке край до стольких единиц выше ног — забираемся
+  mantle: 1.5,         // в прыжке край до стольких единиц выше ног — забираемся с ходу
+  grab: 2.4,           // край выше (до роста с руками) — зацеп: подтягиваемся, но теряем скорость
+  grabTime: 0.7,       // сколько длится потеря скорости после зацепа
   jumpV: 12.2,
   gravityUp: 26,       // вверх легче…
   gravityDown: 46,     // …вниз тяжелее: прыжок резкий, не «лунный». Пик ≈ 2.9 ед
@@ -171,6 +173,7 @@ resize();
 // ---------- UI ----------
 const $ = (id) => document.getElementById(id);
 const ui = {
+  save: $('save'), seeds: $('seeds'), seedList: $('seed-list'),
   start: $('start'), over: $('over'), hud: $('hud'),
   dist: $('dist'), debug: $('debug'), overDist: $('over-dist'),
   overInfo: $('over-info'), best: $('best'),
@@ -186,7 +189,7 @@ const pl = {
   lane: 6, pending: 0, pendT: 0,
   coyote: 0, jumpBuf: 0, slideT: 0, slideQueued: false, boost: 0, hopKeep: false,
   slideChain: 0, slideEndAt: -9,
-  wall: 0, wallT: 0, wallCool: 0, wallLast: 0, autoAttach: 0,
+  wall: 0, wallT: 0, wallCool: 0, wallLast: 0, autoAttach: 0, grabT: 0,
 };
 const cam = { roll: 0, yaw: 0, pitch: 0, dip: 0, slide: 0, bob: 0, fov: 82, slideSide: 1, lookY: 1.2, vx: 0, lines: 0, base: 0, wall: 0 };
 let gameTime = 0;
@@ -204,7 +207,7 @@ function reset(s) {
   Object.assign(pl, {
     x: 6 * CELL + CELL / 2, z: ROW * 0.5, y: 0, vx: 0, vy: 0, grounded: true,
     coyote: 0, jumpBuf: 0, slideT: 0, slideQueued: false, boost: 0, hopKeep: false,
-    slideChain: 0, slideEndAt: -9, wall: 0, wallT: 0, wallCool: 0, wallLast: 0, autoAttach: 0,
+    slideChain: 0, slideEndAt: -9, wall: 0, wallT: 0, wallCool: 0, wallLast: 0, autoAttach: 0, grabT: 0,
   });
   Object.assign(pl, { lane: 6, pending: 0, pendT: 0 });
   Object.assign(cam, { roll: 0, yaw: 0, pitch: 0, dip: 0, slide: 0, bob: 0, lookY: 1.2, vx: 0, lines: 0, base: 0, wall: 0 });
@@ -239,7 +242,10 @@ const wrapX = (x) => ((x % W) + W) % W;
 
 function speedNow() {
   const t = Math.min(1, pl.z / P.speedRamp);
-  return P.speedStart + (P.speedMax - P.speedStart) * t + pl.boost;
+  const v = P.speedStart + (P.speedMax - P.speedStart) * t + pl.boost;
+  // после зацепа за край скорость проседает и плавно возвращается
+  const g = pl.grabT / P.grabTime;
+  return v * (1 - 0.6 * g * g);
 }
 
 const sliding = () => pl.slideT > 0;
@@ -419,6 +425,16 @@ function physicsStep(dt) {
       if (pl.wall) endWallRun();
       pl.boost = Math.max(0, pl.boost - 1.5);
       cam.dip = Math.max(cam.dip, 0.25);
+    } else if (hi !== INF && hi - pl.y <= P.grab && lo <= pl.y + 0.5 && !sliding()) {
+      // не допрыгнул или не успел прыгнуть, но край на уровне рук — зацеп и подтягивание:
+      // не смерть, а потеря скорости
+      pl.y = hi; pl.vy = 0; pl.grounded = true;
+      if (pl.wall) endWallRun();
+      pl.boost = 0; pl.hopKeep = false;
+      pl.grabT = P.grabTime;
+      cam.dip = Math.max(cam.dip, 0.55);
+      cam.pitch -= 0.08;
+      shake = Math.max(shake, 0.15);
     } else if (hi === INF && lo !== -INF && lo > pl.y + h * 0.5
       && lo - h >= supportAt(pl.x + ox, nz + r, lo - h) - 0.01) {
       // потолок тоннеля над головой — пригибаемся, а не разбиваемся
@@ -471,6 +487,7 @@ function physicsStep(dt) {
     pl.y = ground; // ступенька вверх/вниз, рампа
   }
   pl.wallCool -= dt;
+  pl.grabT = Math.max(0, pl.grabT - dt);
 
   // подкат: заканчивается сам, но не под мостом
   if (pl.slideT > 0) {
@@ -533,11 +550,94 @@ function slide() {
 
 function jump() { if (state === 'run') pl.jumpBuf = P.jumpBuffer; }
 
+// ---------- сохранённые сиды ----------
+const SEEDS_KEY = 'sdwg-seeds';
+function loadSeeds() {
+  try { return JSON.parse(localStorage.getItem(SEEDS_KEY)) || []; } catch { return []; }
+}
+function storeSeeds(list) {
+  try { localStorage.setItem(SEEDS_KEY, JSON.stringify(list)); } catch { /* приватный режим */ }
+}
+const savedSeed = (sd) => loadSeeds().find((e) => e.seed === sd);
+let lastRun = 0;
+
+function updateSaveButton() {
+  const saved = savedSeed(seed);
+  ui.save.textContent = saved ? 'Сохранён ✓' : 'Сохранить сид';
+  ui.save.disabled = !!saved;
+}
+
+function saveCurrentSeed() {
+  const list = loadSeeds();
+  if (!list.some((e) => e.seed === seed)) {
+    list.unshift({ seed, name: `Город ${seed}`, best: lastRun, at: Date.now() });
+    storeSeeds(list);
+  }
+  updateSaveButton();
+}
+
+function renderSeeds() {
+  const list = loadSeeds();
+  ui.seedList.textContent = '';
+  if (!list.length) {
+    const empty = document.createElement('div');
+    empty.className = 'seed-empty';
+    empty.textContent = 'Пока пусто. Сохранить город можно после забега.';
+    ui.seedList.append(empty);
+    return;
+  }
+  for (const e of list) {
+    const row = document.createElement('div');
+    row.className = 'seed-row';
+    const info = document.createElement('div');
+    info.className = 'seed-info';
+    const name = document.createElement('div');
+    name.className = 'seed-name';
+    name.textContent = e.name;
+    const meta = document.createElement('div');
+    meta.className = 'seed-meta';
+    meta.textContent = `seed ${e.seed} · рекорд ${e.best || 0} м`;
+    info.append(name, meta);
+    const play = document.createElement('button');
+    play.textContent = 'Играть';
+    play.addEventListener('click', () => { sound.unlock(); ui.seeds.classList.remove('show'); reset(e.seed); start(); });
+    const rename = document.createElement('button');
+    rename.className = 'ghost small';
+    rename.textContent = '✎';
+    rename.title = 'Переименовать';
+    rename.addEventListener('click', () => {
+      const n = prompt('Название города', e.name);
+      if (n === null || !n.trim()) return;
+      const l = loadSeeds();
+      const it = l.find((x) => x.seed === e.seed);
+      if (it) { it.name = n.trim().slice(0, 40); storeSeeds(l); }
+      renderSeeds();
+    });
+    const del = document.createElement('button');
+    del.className = 'ghost small';
+    del.textContent = '✕';
+    del.title = 'Удалить';
+    del.addEventListener('click', () => {
+      if (!confirm(`Удалить «${e.name}»?`)) return;
+      storeSeeds(loadSeeds().filter((x) => x.seed !== e.seed));
+      renderSeeds();
+    });
+    row.append(info, play, rename, del);
+    ui.seedList.append(row);
+  }
+}
+
 function die() {
   if (state !== 'run') return;
   state = 'dead';
   shake = 0.6;
   const meters = Math.floor(pl.z);
+  lastRun = meters;
+  // рекорд по сохранённому городу
+  const list = loadSeeds();
+  const it = list.find((e) => e.seed === seed);
+  if (it && meters > (it.best || 0)) { it.best = meters; storeSeeds(list); }
+  updateSaveButton();
   if (meters > best) {
     best = meters;
     try { localStorage.setItem('city-best', String(best)); } catch { /* ignore */ }
@@ -681,13 +781,18 @@ window.addEventListener('keydown', (e) => {
 
 // iOS: не даём странице зумиться и скроллиться
 document.addEventListener('gesturestart', (e) => e.preventDefault());
-document.addEventListener('touchmove', (e) => e.preventDefault(), { passive: false });
+document.addEventListener('touchmove', (e) => { if (!e.target.closest?.('#seed-list')) e.preventDefault(); }, { passive: false });
 
 function restart(sameSeed) {
   reset(sameSeed ? seed : newSeed());
   start();
 }
 $('again').addEventListener('click', () => { sound.unlock(); restart(false); });
+$('save').addEventListener('click', saveCurrentSeed);
+for (const id of ['open-seeds', 'open-seeds-over']) {
+  $(id).addEventListener('click', (e) => { e.stopPropagation(); renderSeeds(); ui.seeds.classList.add('show'); });
+}
+$('close-seeds').addEventListener('click', () => ui.seeds.classList.remove('show'));
 $('same').addEventListener('click', () => { sound.unlock(); restart(true); });
 
 // ---------- камера ----------
