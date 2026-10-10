@@ -53,6 +53,8 @@ const P = {
   wallExitLift: 1.5,   // сошёл со стены — как вершина прыжка: чуть вверх…
   wallExitGlide: 0.35, // …и столько секунд мягко зависаешь; вниз — свайпом вниз
   glideGravity: 0.45,  // доля обычной гравитации, пока зависаешь
+  hoverTime: 0.9,      // сколько можно зависать над пропастью за прыжок…
+  hoverGravity: 0.33,  // …падая в треть силы
   fallDeath: 4,        // упал ниже пола яруса на столько — конец
 };
 
@@ -193,7 +195,7 @@ const pl = {
   lane: 6, pending: 0, pendT: 0,
   coyote: 0, jumpBuf: 0, slideT: 0, slideQueued: false, boost: 0, hopKeep: false,
   slideChain: 0, slideEndAt: -9,
-  wall: 0, wallT: 0, wallCool: 0, wallLast: 0, autoAttach: 0, autoT: 0, grabT: 0, launch: null, glideT: 0, longT: 0,
+  wall: 0, wallT: 0, wallCool: 0, wallLast: 0, autoAttach: 0, autoT: 0, grabT: 0, launch: null, glideT: 0, longT: 0, longG: 1, hover: 0, longLane: null,
 };
 const cam = { roll: 0, yaw: 0, pitch: 0, dip: 0, slide: 0, bob: 0, fov: 82, slideSide: 1, lookY: 1.2, vx: 0, lines: 0, base: 0, wall: 0, fly: 0, baseV: 0, lookV: 0 };
 let gameTime = 0;
@@ -211,7 +213,7 @@ function reset(s) {
   Object.assign(pl, {
     x: 6 * CELL + CELL / 2, z: ROW * 0.5, y: 0, vx: 0, vy: 0, grounded: true,
     coyote: 0, jumpBuf: 0, slideT: 0, slideQueued: false, boost: 0, hopKeep: false,
-    slideChain: 0, slideEndAt: -9, wall: 0, wallT: 0, wallCool: 0, wallLast: 0, autoAttach: 0, autoT: 0, grabT: 0, launch: null, glideT: 0, longT: 0,
+    slideChain: 0, slideEndAt: -9, wall: 0, wallT: 0, wallCool: 0, wallLast: 0, autoAttach: 0, autoT: 0, grabT: 0, launch: null, glideT: 0, longT: 0, hover: 0, longLane: null, fromLong: false,
   });
   Object.assign(pl, { lane: 6, pending: 0, pendT: 0 });
   Object.assign(cam, { roll: 0, yaw: 0, pitch: 0, dip: 0, slide: 0, bob: 0, lookY: 1.2, vx: 0, lines: 0, base: 0, wall: 0, fly: 0, baseV: 0, lookV: 0 });
@@ -311,27 +313,31 @@ function laneShift(d) {
 // Длинный прыжок: впереди по своей полосе пропасть хотя бы на 2 ряда, а дальше — красная стена
 // рядом с полосой (вплотную или через одну). d — в какую сторону стена (0 — с обеих сторон).
 function longJumpTarget(v) {
-  const hole = (dz) => supportAt(pl.x, pl.z + dz, pl.y) === -INF;
-  if (!hole(4) || !hole(8)) return null;
-  // ближайшая красная стена в пределах 3 полос; ближе по полосам — важнее
+  // обычный прыжок приземлит в пропасть?
+  const reach = Math.min(JUMP_REACH, v * JUMP_AIR);
+  // пропасть — это клетка без пола (уступ выше — не пропасть, на него просто запрыгиваем)
+  const hole = (dz) => { const c = world.cellAt(wrapX(pl.x), pl.z + dz); return c === VOID || c === POOL; };
+  if (!hole(reach) || !hole(reach * 0.6)) return null;
+  // красные стены впереди в пределах 3 полос; к стене подлетаем с той стороны,
+  // где после неё есть пол (а не с наружной стороны над пропастью)
+  const floorAt = (lane, z) => walk(world.cellAt(wrapX(laneX(lane)), z));
   let best = null;
-  for (const k of [1, -1, 2, -2, 3, -3]) {
-    if (best && Math.abs(k) > Math.abs(best.k)) {
-      if (!best.both) break;
-    }
-    const x = laneX(pl.lane + k);
-    for (let dz = 2; dz <= Math.max(14, v * 1.0); dz += 1) {
-      if (isRunwallAt(x, pl.z + dz)) {
-        if (!best) best = { dz, k };
-        else if (Math.abs(k) === Math.abs(best.k) && Math.sign(k) !== Math.sign(best.k)) best.both = true;
-        break;
-      }
+  for (let k = -3; k <= 3; k++) {
+    const wl = pl.lane + k;
+    const x = laneX(wl);
+    let dz0 = -1;
+    for (let dz = 2; dz <= Math.max(26, v * 2); dz += 1) if (isRunwallAt(x, pl.z + dz)) { dz0 = dz; break; }
+    if (dz0 < 0) continue;
+    let dz1 = dz0;
+    while (dz1 < dz0 + 24 && isRunwallAt(x, pl.z + dz1 + 1)) dz1++;
+    for (const d of [-1, 1]) {
+      const lane = wl - d; // полоса вплотную к стене, стена — со стороны d
+      if (!floorAt(lane, pl.z + dz1 + 3) && !floorAt(lane, pl.z + dz1 + 6)) continue;
+      const cost = Math.abs(lane - pl.lane) * 10 + dz0;
+      if (!best || cost < best.cost) best = { cost, lane, d, dz: dz0 };
     }
   }
-  if (!best) return null;
-  if (best.both) return { d: 0, lane: pl.lane };
-  const d = Math.sign(best.k);
-  return { d, lane: pl.lane + best.k - d }; // полоса вплотную к стене
+  return best;
 }
 
 // Красная стена сбоку — сейчас или в ближайшие ~0.5 с бега?
@@ -354,8 +360,13 @@ function lanePhysics(dt, v, h) {
   };
   if (pl.pending !== 0) {
     const d = Math.sign(pl.pending);
-    if (pl.autoAttach === -d) pl.autoAttach = 0; // свайп игрока важнее подсказки
-    if (pl.wall === d) {
+    // свайп туда же, куда уже ведёт длинный прыжок, — просто подтверждение; в другую сторону — отмена подсказки
+    const lead = pl.longLane != null ? Math.sign(pl.longLane - pl.lane) : 0;
+    if (lead === -d) { pl.autoAttach = 0; pl.longLane = null; }
+    else if (lead === 0 && pl.autoAttach === -d) pl.autoAttach = 0;
+    if (lead === d) {
+      pl.pending = 0;
+    } else if (pl.wall === d) {
       pl.pending = 0; // свайп в стену, по которой бежим, — ничего
     } else if (pl.wall === -d) {
       wallKick(); // свайп от стены — толчок, прямо к стене напротив
@@ -409,6 +420,7 @@ function canWallRun(d) {
 
 function startWallRun(d) {
   pl.wall = d;
+  pl.fromLong = false;
   pl.wallT = 0;
   // подброс — только на первой стене; на второй (после толчка) не набираем высоту, а держим её
   pl.vy = pl.wallLast ? Math.max(0.5, Math.min(pl.vy, 2)) : P.wallLift;
@@ -553,9 +565,13 @@ function physicsStep(dt) {
       const k = pl.wallT / P.wallTime;
       pl.vy -= (P.wallGravity + (P.wallGravityEnd - P.wallGravity) * k * k) * dt;
     } else {
-      const js = jumpScale(v);
-      const glide = pl.longT > 0 ? 0.5 : pl.glideT > 0 ? P.glideGravity : 1;
-      pl.vy -= (pl.vy > 0 ? P.gravityUp : P.gravityDown) * js * js * glide * dt;
+      const js = pl.longT > 0 ? 1 : jumpScale(v); // длинный прыжок рассчитан сам — без поправки на скорость
+      let glide = pl.longT > 0 ? pl.longG : pl.glideT > 0 ? P.glideGravity : 1;
+      // над пропастью после вершины — зависаем: есть время понять, куда свернуть. Вниз — свайпом вниз
+      if (pl.vy <= 0 && ground === -INF && pl.hover > 0) { glide = Math.min(glide, P.hoverGravity); pl.hover -= dt; }
+      // на скорости вверх — резче (короче прыжок), а вниз тяжелеет мягче
+      const g = pl.vy > 0 ? P.gravityUp * js * js : P.gravityDown * js;
+      pl.vy -= g * glide * dt;
     }
     pl.y += pl.vy * dt;
     if (pl.y + h > ceil) { pl.y = ceil - h; pl.vy = Math.min(pl.vy, 0); }
@@ -565,6 +581,8 @@ function physicsStep(dt) {
       pl.y = ground; pl.vy = 0; pl.grounded = true; pl.hopKeep = false;
       if (pl.wall) endWallRun();
       pl.wallLast = 0;
+      // приземлились после длинного прыжка, не долетев до стены, — подсказка больше не нужна
+      if (pl.fromLong) { pl.fromLong = false; pl.autoAttach = 0; pl.longLane = null; }
       if (pl.slideQueued) { pl.slideQueued = false; startSlide(); }
     }
     // сорвались в пропасть / упали в бассейн
@@ -580,6 +598,7 @@ function physicsStep(dt) {
   pl.grabT = Math.max(0, pl.grabT - dt);
   pl.glideT = pl.grounded || pl.wall ? 0 : Math.max(0, pl.glideT - dt);
   pl.longT = pl.grounded || pl.wall ? 0 : Math.max(0, pl.longT - dt);
+  if (pl.grounded || pl.wall) pl.hover = P.hoverTime;
 
   // подкат: заканчивается сам, но не под мостом
   if (pl.slideT > 0) {
@@ -597,6 +616,19 @@ function physicsStep(dt) {
 
   pl.coyote = pl.grounded ? P.coyote : pl.coyote - dt;
   pl.jumpBuf -= dt;
+  // длинный прыжок: смещаемся к нужной полосе по одной, когда следующая впереди свободна
+  if (pl.longLane !== null && pl.longLane !== undefined) {
+    if (pl.grounded || pl.wall || pl.lane === pl.longLane) pl.longLane = null;
+    else {
+      const nl = pl.lane + Math.sign(pl.longLane - pl.lane);
+      let clear = true;
+      for (let dz = -1; dz <= 6 && clear; dz += 1) {
+        const c = world.cellAt(wrapX(laneX(nl)), pl.z + dz);
+        if (c === WALL || c === RUNWALL) clear = false;
+      }
+      if (clear && Math.abs(pl.x - laneX(pl.lane)) < 1.5) pl.lane = nl;
+    }
+  }
   // в полёте красная стена прямо по курсу — не разбиваемся о торец, а уходим на соседнюю
   // открытую полосу и бежим по ней (своё направление свайпа — в приоритете)
   if (!pl.grounded && !pl.wall && !pl.launch) {
@@ -629,12 +661,14 @@ function physicsStep(dt) {
     // впереди длинная пропасть, а за ней красная стена — прыжок дольше и тянет к стене
     const lj = longJumpTarget(v);
     if (lj) {
-      pl.longT = 1.0;
-      pl.vy = P.jumpV; // высота как у обычного прыжка, а летим вдвое дольше (гравитация слабее)
-      if (lj.d) {
-        pl.lane = lj.lane; // летим к полосе вплотную к стене
-        pl.autoAttach = lj.d; pl.autoT = 1.4;
-      }
+      // долетаем ровно до начала стены: та же высота, но гравитация слабее — дольше парим
+      const t = Math.min(2.2, Math.max(JUMP_AIR, (lj.dz + 2) / v));
+      pl.longG = (JUMP_AIR / t) * (JUMP_AIR / t);
+      pl.longT = t;
+      pl.vy = P.jumpV * Math.sqrt(pl.longG); // та же высота прыжка, просто медленнее
+      pl.longLane = lj.lane; // летим к полосе вплотную к стене — по одной полосе, огибая башни
+      pl.autoAttach = lj.d; pl.autoT = t + 0.5;
+      pl.fromLong = true;
     }
     if (fromSlide) {
       // slide-hop: прыжок из подката сохраняет разгон
@@ -656,7 +690,7 @@ function startSlide() {
 function slide() {
   if (state !== 'run') return;
   if (pl.wall) endWallRun();
-  pl.glideT = 0;
+  pl.glideT = 0; pl.hover = 0; pl.longT = 0;
   if (!pl.grounded) {
     // в воздухе — резко вниз и подкат при приземлении
     pl.vy = Math.min(pl.vy, -P.fastFall);
@@ -819,7 +853,7 @@ function autopilotStep() {
     }
     return;
   }
-  if (pl.autoAttach) return; // летим к стене напротив
+  if (pl.autoAttach && !pl.grounded) return; // летим к стене напротив
   // пропасть длиннее прыжка — к красной стене
   for (const g of [ri + 1, ri + 2]) {
     if (!pl.grounded || walk(code(g, cur)) || !passable(g, cur) || walk(code(g + 1, cur))) continue;
@@ -970,7 +1004,11 @@ function updateCamera(dt, running) {
   const pull = 0.7 * hk * hk * (3 - 2 * hk);
   // впереди выше (уступы, трамплин на небоскрёб) — взгляд заранее чуть приподнят
   const up = pl.launch ? 0 : Math.min(2.5, Math.max(0, (groundAhead() - pl.y) * 0.3));
-  const lookTarget = B + rel * 0.75 * (1 - pull) + 0.4 * pull + up;
+  // большой прыжок вниз (с крыши, с небоскрёба): весь полёт смотрим в одну точку — туда, где
+  // приземлимся (уровень глаз над местом приземления). Без «вверх-вниз-вверх».
+  const landing = tierFloor();
+  const bigDrop = !pl.grounded && !pl.launch && !pl.wall && pl.y - landing > 3;
+  const lookTarget = bigDrop ? landing + 1.2 : B + rel * 0.75 * (1 - pull) + 0.4 * pull + up;
   const w1 = pl.grounded ? 5.5 : 8;
   cam.lookV += (w1 * w1 * (lookTarget - cam.lookY) - 2 * w1 * cam.lookV) * dt;
   cam.lookY += cam.lookV * dt;
@@ -983,7 +1021,7 @@ function updateCamera(dt, running) {
   cam.wall = damp(cam.wall, pl.wall, 8, dt);
   cam.roll = damp(cam.roll, -cam.vx * 0.0045 + cam.slide * 0.16 * cam.slideSide + cam.wall * 0.2, 6, dt);
   cam.yaw = damp(cam.yaw, -cam.vx * 0.0025, 5, dt);
-  cam.pitch = damp(cam.pitch, pl.grounded ? 0 : Math.max(-0.06, Math.min(0.05, pl.vy * 0.004)), 8, dt);
+  cam.pitch = damp(cam.pitch, pl.grounded || bigDrop ? 0 : Math.max(-0.06, Math.min(0.05, pl.vy * 0.004)), 8, dt);
   let roll = cam.roll;
   if (shake > 0) {
     shake = Math.max(0, shake - dt);
