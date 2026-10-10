@@ -6,7 +6,7 @@
 import * as THREE from 'three';
 import {
   COLS, CELL, ROW, LEVEL, L, LZ, WALL, BRIDGE, VOID, BRIDGE_BOTTOM, BRIDGE_TOP, CEIL_H,
-  hash2, aliveBackward, mulberry32, walk, lv, planterAt,
+  hash2, aliveBackward, mulberry32, walk, lv, planterAt, RUNWALL, POOL,
 } from './world.js';
 
 const SEG = 1.0; // шаг разбиения по x/z, чтобы прямые рёбра красиво гнулись
@@ -17,6 +17,8 @@ const vert = /* glsl */ `
   attribute vec4 aBox;
   attribute float aAO;
   attribute float aLight;
+  attribute float aTint;
+  varying float vTint;
   uniform float uL;
   uniform float uLz;
   uniform float uB;
@@ -55,6 +57,7 @@ const vert = /* glsl */ `
     vWY = f.y * s;
     vAO = aAO;
     vLight = aLight;
+    vTint = aTint;
   }
 `;
 
@@ -67,6 +70,8 @@ const frag = /* glsl */ `
   uniform float uLinearOut;
   uniform float uCell;
   uniform float uRow;
+  uniform float uTime;
+  varying float vTint;
   varying vec3 vPos;
   varying vec3 vN;
   varying float vStyle;
@@ -104,6 +109,16 @@ const frag = /* glsl */ `
       col = (0.8 + 0.17 * vTop) * (0.92 + 0.08 * abs(n.y));
     } else if (st == 7) {
       col = 0.58 + 0.06 * n.x; // ствол и ветки
+    } else if (st == 14) {
+      // вода: светлая рябь, бегущая по поверхности
+      float w1 = sin(vPos.x * 2.3 + uTime * 1.6 + sin(vPos.z * 1.7 + uTime));
+      float w2 = sin(vPos.z * 2.9 - uTime * 1.3 + sin(vPos.x * 1.3 - uTime * 0.7));
+      col = 0.5 + 0.35 * smoothstep(0.75, 1.0, w1 * w2 * 0.5 + 0.5);
+    } else if (st == 16) {
+      // стены дыры в пустоту: плитка, а вглубь — растворяются в белом
+      col = 0.6;
+      col = mix(col, col * 0.82, max(lineAA(y, 1.2, 0.015), lineAA(abs(n.x) > 0.5 ? vPos.z : vPos.x, 1.2, 0.015)));
+      col = mix(col, 1.0, smoothstep(0.5, 18.0, vTop - y));
     } else if (st == 9) {
       // стены тоннеля и траншеи: плитка, свет из прохода
       col = abs(n.y) > 0.5 ? 0.5 : 0.64;
@@ -129,6 +144,7 @@ const frag = /* glsl */ `
       else col = 0.66;
 
       bool wallFace = abs(n.y) < 0.5;
+      if (st >= 11 && st <= 13) col = n.y > 0.5 ? 0.78 : col * 0.92;
       if (wallFace) {
         // вдоль грани: координата и расстояние до углов коробки
         float u = abs(n.x) > 0.5 ? vPos.z : vPos.x;
@@ -147,8 +163,21 @@ const frag = /* glsl */ `
           float fu = fract((u - uMin) / 2.6);
           if (fy > 0.28 && fy < 0.8 && fu > 0.18 && fu < 0.82) col = 0.07;
         }
+        float dt = vTop - y; // расстояние от верха предмета
+        if (st == 11) {
+          // гофра контейнера
+          col *= 0.86 + 0.14 * smoothstep(0.35, 0.65, abs(fract(u / 0.32) - 0.5) * 2.0);
+          col = mix(col, col * 0.7, lineAA(y, 2.0, 0.03));
+        } else if (st == 12) {
+          // электрошкафы: дверцы и решётки вентиляции
+          col = mix(col, col * 0.75, lineAA(u, 1.0, 0.02));
+          if (dt > 0.2 && dt < 0.6 && edge > 0.15 && fract(y / 0.09) < 0.45) col *= 0.55;
+        } else if (st == 13) {
+          // будка: тёмное стекло
+          if (dt > 0.5 && dt < 1.3 && edge > 0.25) col = 0.1;
+        }
         // тонкие межэтажные линии
-        col = mix(col, col * 0.86, lineAA(y, floorH, 0.02));
+        if (st <= 3) col = mix(col, col * 0.86, lineAA(y, floorH, 0.02));
         // свет только сверху: низ улицы в тени, к верху башен светлее
         col *= mix(0.6, 1.0, smoothstep(0.0, 45.0, y));
         // контактная тень у земли (кроме мостов — они висят в воздухе)
@@ -159,7 +188,7 @@ const frag = /* glsl */ `
     }
 
     // светлые рёбра: края крыш, углы, верх барьеров — чтобы читалась форма и край для прыжка
-    if (st > 0 && st < 6) {
+    if ((st > 0 && st < 6) || (st >= 11 && st <= 13)) {
       float ex = min(vPos.x - vBox.x, vBox.z - vPos.x);
       float ez = min(vPos.z - vBox.y, vBox.w - vPos.z);
       float et = vTop - y;
@@ -171,7 +200,7 @@ const frag = /* glsl */ `
       float fw = max(fwidth(e), 1e-4);
       float width = max(0.07, fw * 1.6);        // не тоньше ~1.5 пикселя вдали
       float rim = 1.0 - smoothstep(width, width + fw * 1.2, e);
-      bool low = st == 4 || st == 5;            // низкие здания и мосты — кромка заметнее
+      bool low = st >= 4;                       // низкие здания, предметы, мосты — кромка заметнее
       col = mix(col, low ? 0.93 : 0.97, rim * (low ? 0.9 : 0.6)); // ниже порога блума
     }
 
@@ -182,7 +211,22 @@ const frag = /* glsl */ `
     float f1 = smoothstep(uFogNear, uFogFar, vDz);
     float f2 = smoothstep(uL * 1.15, uL * 2.0, vDist);
     float fog = max(f1, f2);
-    vec3 c = mix(vec3(col), uFogColor, fog);
+    // цвет: в белом мире — редкие акценты, как в Mirror's Edge
+    vec3 c3 = vec3(col);
+    vec3 red = vec3(1.0, 0.2, 0.15);
+    if (vTint > 0.5 && vTint < 1.5) c3 = col * red * 0.95;                      // красные трубы
+    else if (vTint > 3.5 && vTint < 4.5) {
+      // Runner Vision: красный только верх и кромка — «хватайся здесь»
+      float k = n.y > 0.5 ? 1.0 : 1.0 - smoothstep(0.2, 0.26, vTop - y);
+      c3 = mix(c3, col * red * 1.1, k);
+    } else if (vTint > 4.5 && vTint < 5.5) {
+      // красная стена: белая панель с красными полосами на высоте бега
+      float k = step(fract(y / 1.1), 0.32);
+      c3 = mix(c3 * 1.05, vec3(col * 0.9) * red, k);
+    }
+    else if (vTint > 1.5 && vTint < 2.5) c3 = col * vec3(0.8, 0.97, 1.04);     // бирюзовая плитка
+    else if (vTint > 2.5 && vTint < 3.5) c3 = col * vec3(0.62, 0.9, 1.0);      // вода
+    vec3 c = mix(c3, uFogColor, fog);
     if (uLinearOut > 0.5) c = pow(c, vec3(2.2));
     gl_FragColor = vec4(c, 1.0);
   }
@@ -204,6 +248,7 @@ export function createMaterial({ linearOut }) {
       uLinearOut: { value: linearOut ? 1 : 0 },
       uCell: { value: CELL },
       uRow: { value: ROW },
+      uTime: { value: 0 },
     },
   });
 }
@@ -322,6 +367,7 @@ class Builder {
   constructor() {
     this.pos = []; this.nor = []; this.sty = []; this.top = []; this.box = []; this.ao = []; this.lit = []; this.idx = [];
     this.aoFn = null; this.lightFn = null;
+    this.tint = 0; this.tnt = [];
   }
 
   _vert(p, normal, style, top, box) {
@@ -330,6 +376,7 @@ class Builder {
     this.sty.push(style); this.top.push(top); this.box.push(box[0], box[1], box[2], box[3]);
     this.ao.push(style === 0 && this.aoFn ? this.aoFn(p[0], p[2]) : 1);
     this.lit.push(this.lightFn && style !== 6 && style !== 7 ? this.lightFn(p[0], p[2]) : 0);
+    this.tnt.push(this.tint);
   }
 
   // четырёхугольник по углам (билинейно), разбитый на сетку na × nb
@@ -479,6 +526,7 @@ class Builder {
     g.setAttribute('aBox', new THREE.Float32BufferAttribute(this.box, 4));
     g.setAttribute('aAO', new THREE.Float32BufferAttribute(this.ao, 1));
     g.setAttribute('aLight', new THREE.Float32BufferAttribute(this.lit, 1));
+    g.setAttribute('aTint', new THREE.Float32BufferAttribute(this.tnt, 1));
     g.setIndex(this.idx);
     return g;
   }
@@ -505,6 +553,52 @@ function greedy(nRows, key, emit, maxH = () => 99) {
   }
 }
 
+// ---- городские предметы (заполняют свою клетку: столкновение — по клетке целиком) ----
+function cabinets(b, x0, x1, zA, zB, y0, y1, ac) {
+  // ряд электрошкафов (или кондиционеров на крыше) с узкими щелями
+  const along = x1 - x0 >= zB - zA;
+  const len = along ? x1 - x0 : zB - zA;
+  const n = Math.max(1, Math.round(len / (ac ? 2 : 1.3)));
+  const step = len / n;
+  for (let i = 0; i < n; i++) {
+    const a = i * step + 0.06, e = (i + 1) * step - 0.06;
+    if (along) b.boxGeo(x0 + a, x0 + e, zA + 0.15, zB - 0.15, y1 - 0.08, 12, y0, { bottom: false });
+    else b.boxGeo(x0 + 0.15, x1 - 0.15, zA + a, zA + e, y1 - 0.08, 12, y0, { bottom: false });
+  }
+  // общая крышка-козырёк по верху — чтобы край для прыжка читался целиком
+  b.boxGeo(x0 + 0.05, x1 - 0.05, zA + 0.05, zB - 0.05, y1, 4, y1 - 0.08);
+}
+
+function kiosk(b, x0, x1, zA, zB, y0) {
+  b.boxGeo(x0 + 0.35, x1 - 0.35, zA + 0.35, zB - 0.35, y0 + 1.75, 13, y0, { bottom: false, top: false });
+  b.boxGeo(x0, x1, zA, zB, y0 + 2, 4, y0 + 1.75); // крыша с навесом
+}
+
+function container(b, x0, x1, zA, zB, y0, layers) {
+  // морские контейнеры: гофра, стык между ярусами, яруса чуть сдвинуты
+  for (let i = 0; i < layers; i++) {
+    const o = i % 2 ? 0.12 : 0;
+    const ya = y0 + i * 2, yb = y0 + (i + 1) * 2;
+    b.boxGeo(x0 + 0.08 + o, x1 - 0.2 + o, zA + 0.1, zB - 0.1, yb - (i === layers - 1 ? 0 : 0.04), 11, ya, { bottom: false });
+  }
+}
+
+function crates(b, x0, x1, zA, zB, y0, height, rng) {
+  // штабель ящиков — ряды по ~1 м
+  const nx = Math.max(1, Math.round((x1 - x0) / 1.33)), nz = Math.max(1, Math.round((zB - zA) / 1.33));
+  const sx = (x1 - x0) / nx, sz = (zB - zA) / nz;
+  const layers = Math.round(height / 1);
+  const tint = b.tint;
+  for (let l = 0; l < layers; l++) {
+    b.tint = l === layers - 1 ? tint : 0; // красная кромка — только у верхнего яруса
+    for (let i = 0; i < nx; i++) for (let j = 0; j < nz; j++) {
+      const g = l === layers - 1 ? 0.03 : 0.05 + rng() * 0.06;
+      b.boxGeo(x0 + i * sx + g, x0 + (i + 1) * sx - g, zA + j * sz + g, zA + (j + 1) * sz - g, y0 + (l + 1) * (height / layers), 4, y0 + l * (height / layers), { bottom: false });
+    }
+  }
+  b.tint = tint;
+}
+
 // Меш для одного вставленного паттерна. Координаты z — локальные (от начала паттерна).
 export function buildInstanceMesh(inst, materials, world) {
   const b = new Builder();
@@ -524,7 +618,7 @@ export function buildInstanceMesh(inst, materials, world) {
       if (!row) continue;
       for (let dc = -1; dc <= 1; dc++) {
         const v = row[((ci + dc) % COLS + COLS) % COLS];
-        if (v !== WALL && (v === VOID || v === BRIDGE || v === 0)) continue;
+        if (v === VOID || v === POOL || v === BRIDGE || v === 0) continue;
         const cx0 = (ci + dc) * CELL, cz0 = (ri + dr) * ROW;
         const dx = Math.max(cx0 - x, 0, x - (cx0 + CELL));
         const dz = Math.max(cz0 - z, 0, z - (cz0 + ROW));
@@ -562,7 +656,9 @@ export function buildInstanceMesh(inst, materials, world) {
     const key = (c) => {
       const v = row[c];
       if (walk(v) && lv(v) === 0) return 'p';
-      if ((v === WALL || v === VOID) && Math.min(row.b0, row.b1) >= 0) return 'g';
+      const lo = Math.min(row.b0, row.b1);
+      if ((v === WALL || v === RUNWALL) && lo >= 0) return 'g';
+      if (v === VOID && lo > 0) return 'g'; // под пропастью между крышами — улица
       return null;
     };
     for (let c = 0; c < COLS;) {
@@ -580,9 +676,12 @@ export function buildInstanceMesh(inst, materials, world) {
   // 2. башни над стенами и над тоннелями; у некоторых вдоль улицы — клумба:
   //    башня отступает, у края — бетонная кадка с деревьями и кустами
   const R0 = inst.rowStart;
+  const solid = (v) => v === WALL || v === RUNWALL;
   const towerKey = (r, c) => {
-    if (rows[r].cover && walk(rows[r][c])) return 1;
-    if (rows[r][c] !== WALL) return null;
+    const v = rows[r][c];
+    if (rows[r].cover && !solid(v)) return 1;
+    if (v === RUNWALL) return 9;
+    if (v !== WALL) return null;
     return 1 + (planterAt(world, R0 + r, c, -1) ? 2 : 0) + (planterAt(world, R0 + r, c, 1) ? 4 : 0);
   };
   const plants = []; // где посадить деревья: [x, y, z, вид]
@@ -601,6 +700,17 @@ export function buildInstanceMesh(inst, materials, world) {
       if (side < 0) x0 += 1.3; else x1 -= 1.3;
     }
     b.boxGeo(x0 + 0.15, x1 - 0.15, zA + 0.15, zB - 0.15, 24 + rnd * 56, style);
+    if (k === 9) {
+      // красная стена: панели на гранях, вдоль которых бегут
+      b.tint = 5;
+      for (let rr = r; rr < r + h; rr++) {
+        const base = Math.min(rows[rr].b0, rows[rr].b1);
+        const za = rr * ROW + (rr === r ? 0.15 : 0), zb = (rr + 1) * ROW - (rr === r + h - 1 ? 0.15 : 0);
+        if (!solid(rows[rr][((c - 1) % COLS + COLS) % COLS])) b.boxGeo(x0 + 0.05, x0 + 0.17, za, zb, base + 4.6, 4, base + 0.3);
+        if (!solid(rows[rr][(c + w) % COLS])) b.boxGeo(x1 - 0.17, x1 - 0.05, za, zb, base + 4.6, 4, base + 0.3);
+      }
+      b.tint = 0;
+    }
   }, (r, c) => (rows[r][c] === WALL ? 1 + Math.floor(hash2(inst.seed, r * 31 + c) * 4) : 99));
 
   // 3. ниже улицы: фундаменты = стены траншей и тоннелей, потолки тоннелей
@@ -611,11 +721,11 @@ export function buildInstanceMesh(inst, materials, world) {
     const zA = r * ROW, zB = zA + ROW;
     for (let c = 0; c < COLS;) {
       const v = row[c];
-      const isWall = v === WALL;
-      const isCeil = row.cover && walk(v);
+      const isWall = solid(v);
+      const isCeil = row.cover && !isWall;
       if (!isWall && !isCeil) { c++; continue; }
       let w = 1;
-      while (c + w < COLS && (row[c + w] === WALL) === isWall && (row.cover && walk(row[c + w])) === isCeil) w++;
+      while (c + w < COLS && solid(row[c + w]) === isWall && (row.cover && !solid(row[c + w])) === isCeil) w++;
       if (isWall) b.boxGeo(c * CELL, (c + w) * CELL, zA, zB, 0, 9, lo - 0.3, { top: false, bottom: false });
       else b.boxGeo(c * CELL, (c + w) * CELL, zA, zB, 0, 8, lo + CEIL_H, { top: false, bottom: true });
       c += w;
@@ -634,14 +744,35 @@ export function buildInstanceMesh(inst, materials, world) {
     b.wedge(c * CELL, (c + w) * CELL, r * ROW, (r + h) * ROW, row.b0, last.b1, style);
   });
 
-  // 5. препятствия на пути: низкие здания, кондиционеры на крышах
+  // 5. препятствия на пути — не кубы, а городские предметы: будки, электрошкафы,
+  //    ящики, контейнеры, пристройки; на крышах — кондиционеры.
+  //    В паттернах с vision — красные (Runner Vision): «по этому — наверх».
   greedy(nRows, (r, c) => {
     const row = rows[r], v = row[c];
     if (!walk(v) || lv(v) === 0 || row.b0 !== row.b1) return null;
     return v * 1000 + row.b0;
   }, (r, c, w, h) => {
     const base = rows[r].b0;
-    b.boxGeo(c * CELL, (c + w) * CELL, r * ROW, (r + h) * ROW, base + lv(rows[r][c]) * LEVEL, 4, base, { bottom: false });
+    const lvl = lv(rows[r][c]);
+    const x0 = c * CELL, x1 = (c + w) * CELL, zA = r * ROW, zB = (r + h) * ROW;
+    const pick = hash2(inst.seed + 41, r * 13 + c);
+    b.tint = inst.vision ? 4 : 0;
+    if (lvl === 1 && base > 0) cabinets(b, x0, x1, zA, zB, base, base + 2, true);
+    else if (lvl === 1) {
+      if (pick < 0.3) kiosk(b, x0, x1, zA, zB, base);
+      else if (pick < 0.55) cabinets(b, x0, x1, zA, zB, base, base + 2, false);
+      else if (pick < 0.8) crates(b, x0, x1, zA, zB, base, 2, rng);
+      else container(b, x0, x1, zA, zB, base, 1);
+    } else if (lvl === 2) {
+      if (pick < 0.65) container(b, x0, x1, zA, zB, base, 2);
+      else crates(b, x0, x1, zA, zB, base, 4, rng);
+    } else {
+      // пристройка: этажи с окнами и бетонный козырёк
+      const style = 2 + Math.floor(pick * 2);
+      b.boxGeo(x0 + 0.1, x1 - 0.1, zA + 0.1, zB - 0.1, base + lvl * LEVEL - 0.3, style, base, { bottom: false });
+      b.boxGeo(x0, x1, zA, zB, base + lvl * LEVEL, 4, base + lvl * LEVEL - 0.3);
+    }
+    b.tint = 0;
   });
 
   // 6. мосты на улице, трубы в тоннеле — только подкатом
@@ -652,8 +783,25 @@ export function buildInstanceMesh(inst, materials, world) {
       let w = 1;
       while (c + w < COLS && row[c + w] === BRIDGE) w++;
       const x0 = c * CELL, x1 = (c + w) * CELL, zA = r * ROW;
-      if (row.cover) b.boxGeo(x0, x1, zA + 0.6, zA + ROW - 0.6, row.b0 + CEIL_H, 5, row.b0 + BRIDGE_BOTTOM, { top: false });
-      else b.boxGeo(x0 - 0.2, x1 + 0.2, zA + 0.6, zA + ROW - 0.6, row.b0 + BRIDGE_TOP, 5, row.b0 + BRIDGE_BOTTOM);
+      const base = row.b0;
+      if (row.cover) {
+        // трубы под потолком — красные, как в Mirror's Edge; подвесы к потолку
+        b.tint = 1;
+        const zm = zA + ROW / 2;
+        for (const [dz, y, rad] of [[-0.75, 1.42, 0.3], [0.05, 1.42, 0.3], [0.8, 1.38, 0.26], [-0.35, 2.0, 0.22], [0.45, 2.02, 0.24]]) {
+          b.prism([x0, base + y, zm + dz], [x1, base + y, zm + dz], rad, rad, 8, 5);
+        }
+        b.tint = 0;
+        for (let x = x0 + 1; x < x1; x += 2) b.boxGeo(x - 0.04, x + 0.04, zm - 0.9, zm + 0.9, base + CEIL_H, 5, base + 2.2);
+      } else {
+        // пешеходный мост: пролёт, балка снизу и перила
+        b.boxGeo(x0 - 0.2, x1 + 0.2, zA + 0.6, zA + ROW - 0.6, base + BRIDGE_TOP, 5, base + BRIDGE_TOP - 0.7);
+        b.boxGeo(x0 - 0.2, x1 + 0.2, zA + 0.9, zA + ROW - 0.9, base + BRIDGE_TOP - 0.7, 5, base + BRIDGE_BOTTOM);
+        for (const zr of [zA + 0.68, zA + ROW - 0.68]) {
+          for (let x = x0; x <= x1 + 0.01; x += 1.2) b.boxGeo(x - 0.03, x + 0.03, zr - 0.03, zr + 0.03, base + BRIDGE_TOP + 1.0, 4, base + BRIDGE_TOP);
+          b.boxGeo(x0 - 0.2, x1 + 0.2, zr - 0.05, zr + 0.05, base + BRIDGE_TOP + 1.06, 4, base + BRIDGE_TOP + 0.96);
+        }
+      }
       c += w;
     }
   }
@@ -670,11 +818,11 @@ export function buildInstanceMesh(inst, materials, world) {
   };
   for (let r = 0; r < nRows; r++) {
     for (let c = 0; c < COLS; c++) {
-      if (rows[r][c] !== VOID) continue;
+      if (rows[r][c] !== VOID || Math.min(rows[r].b0, rows[r].b1) <= 0) continue;
       const hsh = hash2(inst.seed + 21, r * 19 + c);
       const x0 = c * CELL, zA = r * ROW;
       let hgt;
-      if (nearPath(r, c)) hgt = [0, 0, 2, 4, 4, 6, 8][Math.floor(hsh * 7)];
+      if (nearPath(r, c)) hgt = [0, 0, 0, 2, 2, 4][Math.floor(hsh * 6)]; // заметно ниже крыши — видно обрыв
       else {
         hgt = 15 + Math.floor(hsh * 6) * 3;
         const style = 2 + Math.floor(hash2(inst.seed + 29, r * 11 + c) * 2);
@@ -682,9 +830,37 @@ export function buildInstanceMesh(inst, materials, world) {
         continue;
       }
       if (hgt > 0) b.boxGeo(x0 + 0.25, x0 + CELL - 0.25, zA + 0.25, zA + ROW - 0.25, hgt, 4);
-      const g = hash2(inst.seed + 23, r * 5 + c);
+      const g = hgt === 0 ? hash2(inst.seed + 23, r * 5 + c) : 1; // деревья — только внизу, на улице
       if (g < 0.45) plants.push([x0 + 1 + rng() * 2, hgt, zA + 1 + rng() * 2, 'tree']);
       if (g < 0.25) plants.push([x0 + 1 + rng() * 2, hgt, zA + 1 + rng() * 2, 'bush']);
+    }
+  }
+
+  // 7б. канал на улице, дыра в пустоту в тоннеле, бассейн: стенки ямы и вода
+  for (let r = 0; r < nRows; r++) {
+    const row = rows[r];
+    const base = Math.min(row.b0, row.b1);
+    for (let c = 0; c < COLS; c++) {
+      const v = row[c];
+      if (!(v === POOL || (v === VOID && base <= 0))) continue;
+      const abyss = v === VOID && row.cover;
+      const depth = v === POOL ? 1.4 : abyss ? 30 : 4.6;
+      const water = v === POOL ? base - 0.45 : abyss ? null : base - 4;
+      const x0 = c * CELL, x1 = x0 + CELL, zA = r * ROW, zB = zA + ROW;
+      const yb = base - depth;
+      const style = abyss ? 16 : 9;
+      b.tint = v === POOL ? 2 : 0;
+      const same = (rr, cc) => { const rw = rows[rr] || world.rows[R0 + rr]; return rw && rw[((cc % COLS) + COLS) % COLS] === v; };
+      // нормаль смотрит внутрь ямы
+      if (!same(r, c - 1)) b.quad([x0, yb, zA], [0, 0, ROW], [0, depth, 0], 4, Math.ceil(depth / 3), [1, 0, 0], style, base, [x0, zA, x1, zB]);
+      if (!same(r, c + 1)) b.quad([x1, yb, zB], [0, 0, -ROW], [0, depth, 0], 4, Math.ceil(depth / 3), [-1, 0, 0], style, base, [x0, zA, x1, zB]);
+      if (!same(r - 1, c)) b.quad([x1, yb, zA], [-CELL, 0, 0], [0, depth, 0], 4, Math.ceil(depth / 3), [0, 0, 1], style, base, [x0, zA, x1, zB]);
+      if (!same(r + 1, c)) b.quad([x0, yb, zB], [CELL, 0, 0], [0, depth, 0], 4, Math.ceil(depth / 3), [0, 0, -1], style, base, [x0, zA, x1, zB]);
+      if (water !== null) {
+        b.tint = 3;
+        b.quad([x0, water, zA], [0, 0, ROW], [CELL, 0, 0], 4, 4, [0, 1, 0], 14, 0, [x0, zA, x1, zB]);
+      }
+      b.tint = 0;
     }
   }
 

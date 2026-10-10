@@ -2,7 +2,7 @@
 // проверка проходимости и честности, запросы к клеткам для физики.
 // Без three.js, чтобы можно было гонять проверки в node.
 
-import { PATTERNS, START, BREATHERS } from './patterns.js';
+import { PATTERNS, START, BREATHERS, OPENS } from './patterns.js';
 
 export const COLS = 12;          // колонок по кругу
 export const CELL = 4;           // ширина колонки (единиц)
@@ -17,15 +17,17 @@ export const LZ = L * DEPTH;
 
 export const WALL = 255;
 export const BRIDGE = 254;        // улица с низким мостом сверху: только подкатом
-export const VOID = 253;          // пропасть между крышами: только перепрыгнуть
+export const VOID = 253;          // пропасть: между крышами, канал на улице, дыра в пустоту в тоннеле
+export const RUNWALL = 252;       // красная стена: по ней можно бежать
+export const POOL = 251;          // бассейн в подземке: упал — конец
 export const BRIDGE_BOTTOM = 1.1; // просвет под мостом
 export const BRIDGE_TOP = 2 * LEVEL; // верх моста на уровне крыши «2»
 
 // Ярусы: улица, крыши, подземка. Высота пола яруса.
-export const TIERS = { street: 0, roof: 12, under: -6 };
+export const TIERS = { street: 0, roof: 8, under: -6 };
 export const CEIL_H = 5;          // высота потолка в тоннеле
 
-const CHAR_CODE = { '.': 0, '1': 1, '2': 2, '3': 3, '#': WALL, b: BRIDGE, _: VOID };
+const CHAR_CODE = { '.': 0, '1': 1, '2': 2, '3': 3, '#': WALL, b: BRIDGE, _: VOID, w: RUNWALL, '~': POOL };
 
 // у каждого ряда: b0/b1 — высота пола в начале и в конце ряда (рампа, если разные),
 // cover — ряд в тоннеле (есть потолок)
@@ -84,11 +86,15 @@ function transformRows(rows, shift, mirror) {
 // ---- Проверка проходимости ----
 // Модель на уровне рядов: за один ряд игрок смещается максимум на 1 колонку,
 // забирается максимум на 1 уровень, спрыгивает с любой высоты,
-// может перепрыгнуть один ряд (провал между крышами или улицу между домами).
+// может перепрыгнуть один ряд (провал, канал, бассейн или улицу между домами),
+// может пробежать по красной стене до 3 рядов и оттолкнуться на соседнюю полосу —
+// в том числе на вторую красную стену с другой стороны (ещё до 3 рядов).
 // Под мост (b) можно только с уровня пола — подкатом.
-// Высоты сравниваются абсолютные: у рядов разный пол (улица, крыши, тоннель, рампы).
-export const walk = (v) => v !== WALL && v !== VOID;
-export const lv = (v) => (v === BRIDGE || v === VOID || v === WALL ? 0 : v);
+// Высоты сравниваются абсолютные: у рядов разный пол (улица, крыши, тоннель).
+const SOLIDISH = (v) => v === WALL || v === RUNWALL;
+const HOLE = (v) => v === VOID || v === POOL;
+export const walk = (v) => !SOLIDISH(v) && !HOLE(v);
+export const lv = (v) => (v <= 3 ? v : 0);
 const hAt = (row, v, atEnd) => (atEnd ? row.b1 : row.b0) + lv(v) * LEVEL;
 
 // Можно ли зайти в клетку v ряда row (в начале или в конце ряда), если стоим на высоте from.
@@ -114,42 +120,76 @@ export function canStep(rPrev, rCur, c, c2) {
 // Прыжок из ряда rS через ряд rM в ряд rL по колонке c.
 export function canJumpOver(rS, rM, rL, c) {
   const s = rS[c], m = rM[c], l = rL[c];
-  if (!walk(s) || !walk(l) || m === WALL) return false;
+  if (!walk(s) || !walk(l) || SOLIDISH(m)) return false;
   if (m === BRIDGE || l === BRIDGE) return false;
-  if (rS.cover || rM.cover || rL.cover) return false; // в тоннеле потолок
   const hs = hAt(rS, s, true);
-  if (m !== VOID) {
+  if (!HOLE(m)) {
     // через улицу — только с крыши, и середина не выше старта
     if (lv(s) === 0 || Math.max(rM.b0, rM.b1) + lv(m) * LEVEL > hs + 0.01) return false;
   }
   return hAt(rL, l, false) <= hs + LEVEL + 0.01;
 }
 
-function stepReach(Fprev, rPrev, rCur, Fprev2, rPrev2) {
-  const F = new Uint8Array(COLS);
-  for (let c2 = 0; c2 < COLS; c2++) {
-    if (!walk(rCur[c2])) continue;
-    for (let d = -1; d <= 1 && !F[c2]; d++) {
-      const c = mod(c2 + d, COLS);
-      if (Fprev[c] && canStep(rPrev, rCur, c, c2)) F[c2] = 1;
+// Все переходы из клетки (r, c): шаг, прыжок через ряд, бег по стене (и со стены на стену).
+const RUN_MAX = 3;
+export function transitions(rows, r, c, out) {
+  const n = rows.length;
+  const row = rows[r], v = row[c];
+  if (!walk(v)) return out;
+  if (r + 1 < n) {
+    for (let d = -1; d <= 1; d++) {
+      const c2 = mod(c + d, COLS);
+      if (canStep(row, rows[r + 1], c, c2)) out.push(r + 1, c2);
     }
-    if (!F[c2] && Fprev2 && Fprev2[c2] && canJumpOver(rPrev2, rPrev, rCur, c2)) F[c2] = 1;
   }
-  return F;
+  if (r + 2 < n && canJumpOver(row, rows[r + 1], rows[r + 2], c)) out.push(r + 2, c);
+  if (v === BRIDGE) return out;
+  const hs = hAt(row, v, true);
+  const cell = (rr, cc) => rows[rr][mod(cc, COLS)];
+  const passable = (rr, cc) => { const x = cell(rr, cc); return !SOLIDISH(x) && x !== BRIDGE; };
+  const land = (rr, cc) => {
+    if (rr >= n) return;
+    const x = cell(rr, cc);
+    if (walk(x) && x !== BRIDGE && hAt(rows[rr], x, false) <= hs + LEVEL + 0.01) out.push(rr, mod(cc, COLS));
+  };
+  for (const d of [-1, 1]) {
+    if (cell(r, c + d) !== RUNWALL) continue; // прилипаем к стене, которая уже рядом
+    for (let j1 = 1; j1 <= RUN_MAX; j1++) {
+      const r1 = r + j1;
+      if (r1 >= n || cell(r1, c + d) !== RUNWALL || !passable(r1, c)) break;
+      land(r1 + 1, c);
+      // толчок от стены на соседнюю полосу
+      if (!passable(r1, c - d)) continue;
+      land(r1 + 1, c - d);
+      // …и на вторую красную стену с другой стороны
+      for (let j2 = 1; j2 <= RUN_MAX; j2++) {
+        const r2 = r1 + j2;
+        if (r2 >= n || cell(r2, c - 2 * d) !== RUNWALL || !passable(r2, c - d)) break;
+        land(r2 + 1, c - d);
+        if (passable(r2, c)) land(r2 + 1, c);
+      }
+    }
+  }
+  return out;
 }
 
-// Прогоняет достижимость через ряды. Возвращает массив F по каждому ряду
-// (или null, если где-то путь обрывается полностью).
-export function reachThrough(F0, rowLast, F0prev, rowPrev, rows) {
-  const out = [];
-  let Fp2 = F0prev, rp2 = rowPrev, Fp = F0, rp = rowLast;
-  for (const r of rows) {
-    const F = stepReach(Fp, rp, r, Fp2, rp2);
-    // пустой ряд допустим (провал, который перепрыгивают), два подряд — нет
-    if (!F.some(Boolean) && !Fp.some(Boolean)) return null;
-    out.push(F);
-    Fp2 = Fp; rp2 = rp; Fp = F; rp = r;
+// Прогоняет достижимость через новые ряды rows, продолжая историю (предыдущие ряды и их F).
+// Возвращает массив F по каждому новому ряду или null, если путь обрывается.
+export function reachThrough(histRows, histReach, rows) {
+  const all = [...histRows, ...rows];
+  const h = histRows.length;
+  const F = [...histReach, ...rows.map(() => new Uint8Array(COLS))];
+  const tmp = [];
+  for (let r = 0; r < all.length; r++) {
+    for (let c = 0; c < COLS; c++) {
+      if (!F[r][c]) continue;
+      tmp.length = 0;
+      transitions(all, r, c, tmp);
+      for (let i = 0; i < tmp.length; i += 2) if (tmp[i] >= h) F[tmp[i]][tmp[i + 1]] = 1;
+    }
   }
+  const out = F.slice(h);
+  if (!out[out.length - 1].some(Boolean)) return null;
   return out;
 }
 
@@ -158,15 +198,14 @@ export function aliveBackward(rows, reach) {
   const n = rows.length;
   const alive = new Array(n);
   alive[n - 1] = Uint8Array.from(reach[n - 1]);
+  const tmp = [];
   for (let r = n - 2; r >= 0; r--) {
     const a = new Uint8Array(COLS);
     for (let c = 0; c < COLS; c++) {
       if (!reach[r][c]) continue;
-      for (let d = -1; d <= 1 && !a[c]; d++) {
-        const c2 = mod(c + d, COLS);
-        if (alive[r + 1][c2] && canStep(rows[r], rows[r + 1], c, c2)) a[c] = 1;
-      }
-      if (!a[c] && r + 2 < n && alive[r + 2][c] && canJumpOver(rows[r], rows[r + 1], rows[r + 2], c)) a[c] = 1;
+      tmp.length = 0;
+      transitions(rows, r, c, tmp);
+      for (let i = 0; i < tmp.length && !a[c]; i += 2) if (alive[tmp[i]][tmp[i + 1]]) a[c] = 1;
     }
     alive[r] = a;
   }
@@ -202,7 +241,7 @@ export function validatePattern(p) {
   const rows = p.parsed;
   const F0 = Uint8Array.from(rows[0], (v) => (walk(v) ? 1 : 0));
   if (!F0.some(Boolean)) return { ok: false, reason: 'entry row is fully blocked' };
-  const rest = reachThrough(F0, rows[0], null, null, rows.slice(1));
+  const rest = reachThrough([rows[0]], [F0], rows.slice(1));
   if (!rest) return { ok: false, reason: 'no path from entry to exit' };
   const reach = [F0, ...rest];
   if (!reach[reach.length - 1].some(Boolean)) return { ok: false, reason: 'pattern must not end with a gap' };
@@ -214,6 +253,7 @@ export function validatePattern(p) {
 const PARSED = PATTERNS.map(parsePattern);
 const START_P = parsePattern(START);
 const BREATHER_P = Object.fromEntries(Object.entries(BREATHERS).map(([k, p]) => [k, parsePattern({ ...p, tier: k })]));
+const OPEN_P = Object.fromEntries(Object.entries(OPENS).map(([k, p]) => [k, parsePattern({ ...p, tier: k })]));
 export const PATTERN_REPORT = [START_P, ...PARSED].map((p) => ({ name: p.name, ...validatePattern(p) }));
 const USABLE = PARSED.filter((p, i) => PATTERN_REPORT[i + 1].ok);
 
@@ -233,7 +273,7 @@ export class World {
     // старт: прямой проспект, игрок в колонке 6
     const rows = START_P.parsed;
     const F0 = new Uint8Array(COLS); F0[6] = 1;
-    const reach = [F0, ...reachThrough(F0, rows[0], null, null, rows.slice(1))];
+    const reach = [F0, ...reachThrough([rows[0]], [F0], rows.slice(1))];
     this._push(START_P, rows, reach, 0, false);
   }
 
@@ -242,6 +282,7 @@ export class World {
       id: this.instCount++,
       name: p.name,
       shift, mirror,
+      vision: !!p.vision,
       rowStart: this.rows.length,
       rows,
       seed: Math.floor(this.rng() * 1e9),
@@ -267,6 +308,7 @@ export class World {
       let w = p.weight * (p.diff <= level ? 1 : Math.max(0, 1 - (p.diff - level)));
       if (p.to !== p.tier) {
         if (this.tier === 'street') w *= distance < 120 ? 0 : Math.min(1, Math.max(0, (age - 1) / 3));
+        else if (this.tier === 'under') w *= age < 4 ? 0 : age < 6 ? 1 : 20; // подземка — подольше
         else w *= age < 2 ? 0 : age < 4 ? 1 : 20;
       }
       return { p, w };
@@ -279,10 +321,7 @@ export class World {
 
   // Пробует пристыковать ряды; проверяет честность на стыке (предыдущий паттерн + новый).
   _tryRows(rows) {
-    const n = this.rows.length;
-    const Fl = this.reach[n - 1], rl = this.rows[n - 1];
-    const Fp = this.reach[n - 2] || null, rp = this.rows[n - 2] || null;
-    const reach = reachThrough(Fl, rl, Fp, rp, rows);
+    const reach = reachThrough(this.rows.slice(-8), this.reach.slice(-8), rows);
     if (!reach) return null;
     const last = this.instances[this.instances.length - 1];
     const winRows = [...this.rows.slice(last.rowStart), ...rows];
@@ -320,12 +359,17 @@ export class World {
       }
       if (best) return this._push(p, best.rows, best.res.reach, best.shift, best.mirror);
     }
-    // запасной вариант: открытая площадь подходит всегда
+    // запасной вариант: короткий коридор любого поворота, в крайнем случае — открытый ряд
     this.fallbacks++;
-    const n = this.rows.length;
     const bp = BREATHER_P[this.tier];
-    const reach = reachThrough(this.reach[n - 1], this.rows[n - 1], this.reach[n - 2] || null, this.rows[n - 2] || null, bp.parsed);
-    return this._push(bp, bp.parsed, reach, 0, false);
+    for (let shift = 0; shift < COLS; shift++) {
+      const rows = transformRows(bp.parsed, shift, false);
+      const res = this._tryRows(rows);
+      if (res) return this._push(bp, rows, res.reach, shift, false);
+    }
+    const op = OPEN_P[this.tier];
+    const reach = reachThrough(this.rows.slice(-8), this.reach.slice(-8), op.parsed);
+    return this._push(op, op.parsed, reach, 0, false);
   }
 
   ensureRows(count) {

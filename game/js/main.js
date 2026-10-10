@@ -5,8 +5,8 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import {
-  World, CELL, ROW, W, L, LZ, COLS, WALL, BRIDGE, VOID, LEVEL, BRIDGE_BOTTOM, BRIDGE_TOP, CEIL_H,
-  canStep, canJumpOver, aliveBackward, walk, lv, planterAt,
+  World, CELL, ROW, W, L, LZ, COLS, WALL, BRIDGE, VOID, RUNWALL, POOL, LEVEL, BRIDGE_BOTTOM, BRIDGE_TOP, CEIL_H,
+  canStep, canJumpOver, aliveBackward, walk, lv,
 } from './world.js';
 import { createMaterial, createStarMaterial, buildInstanceMesh } from './render.js';
 
@@ -44,6 +44,7 @@ const P = {
   wallBoost: 3,
   wallJumpBoost: 2,
   wallLift: 4.5,       // подброс при касании стены
+  wallJumpV: 8,        // толчок от стены вверх (ниже обычного прыжка: со стены на стену, а не в небо)
   wallGravity: 3,      // в начале почти не падаешь…
   wallGravityEnd: 22,  // …к концу — всё сильнее
   fallDeath: 4,        // упал ниже пола яруса на столько — конец
@@ -252,8 +253,8 @@ function solidsAt(x, z) {
   const row = world.rows[ri];
   if (!row) return [[-INF, 0]];
   const v = row[Math.floor(wrapX(x) / CELL) % COLS];
-  if (v === WALL) return SOLID_WALL;
-  if (v === VOID) return SOLID_NONE;
+  if (v === WALL || v === RUNWALL) return SOLID_WALL;
+  if (v === VOID || v === POOL) return SOLID_NONE;
   const lz = z - ri * ROW;
   const base = row.b0 + (row.b1 - row.b0) * (lz / ROW);
   const out = [[-INF, base + lv(v) * LEVEL]];
@@ -282,7 +283,7 @@ function ceilingAt(x, z, y) {
   return best;
 }
 
-const isWallAt = (x, z) => solidsAt(x, z) === SOLID_WALL;
+const isRunwallAt = (x, z) => world.cellAt(wrapX(x), z) === RUNWALL;
 
 const laneX = (lane) => lane * CELL + CELL / 2;
 
@@ -310,7 +311,7 @@ function lanePhysics(dt, v, h) {
     } else if (sideFree(pl.lane + d)) {
       if (pl.wall) endWallRun();
       pl.lane += d; pl.pending -= d;
-    } else if (!pl.wall && pl.wallCool <= 0 && canWallRun(d, v)) {
+    } else if (!pl.wall && pl.wallCool <= 0 && canWallRun(d)) {
       pl.pending = 0;
       startWallRun(d);
     } else {
@@ -338,14 +339,11 @@ function lanePhysics(dt, v, h) {
 // ---- бег по стене ----
 // Свайп в сторону стены (в прыжке или с земли) — прилипаем к ней.
 // Если проём в стене откроется совсем скоро — это обычная смена полосы, а не бег по стене.
-function canWallRun(d, v) {
+// Бегать можно только по красным стенам (как Runner Vision в Mirror's Edge).
+function canWallRun(d) {
   if (sliding()) return false;
   const x = laneX(pl.lane + d);
-  const col = Math.floor(wrapX(x) / CELL) % COLS;
-  for (const dz of [0, 2, 4, 6]) {
-    if (!isWallAt(x, pl.z + dz)) return false;
-    if (planterAt(world, Math.floor((pl.z + dz) / ROW), col, -d)) return false; // клумба — не стена
-  }
+  for (const dz of [0, 2]) if (!isRunwallAt(x, pl.z + dz)) return false;
   // в тоннеле под потолком не разбежишься
   if (ceilingAt(pl.x, pl.z, pl.y) < pl.y + 4) return false;
   return true;
@@ -354,7 +352,8 @@ function canWallRun(d, v) {
 function startWallRun(d) {
   pl.wall = d;
   pl.wallT = 0;
-  pl.vy = Math.max(pl.vy, P.wallLift);
+  // подброс — только на первой стене; на второй (после толчка) не набираем высоту, а держим её
+  pl.vy = pl.wallLast ? Math.max(0.5, Math.min(pl.vy, 2)) : P.wallLift;
   pl.grounded = false;
   pl.coyote = 0;
   pl.boost = Math.min(P.boostMax, pl.boost + P.wallBoost);
@@ -368,6 +367,12 @@ function endWallRun() {
   pl.wall = 0;
   pl.wallCool = 0.2;
 }
+
+// На скорости прыжок становится резче: та же высота, но дальность не больше ~12 м (3 ряда) —
+// иначе на разгоне перелетаешь место, где надо приземлиться и прыгнуть снова.
+const JUMP_AIR = 0.82;   // время в воздухе обычного прыжка, с
+const JUMP_REACH = 12;
+const jumpScale = (v) => Math.max(1, (v * JUMP_AIR) / JUMP_REACH);
 
 function physicsStep(dt) {
   const r = P.radius;
@@ -410,9 +415,7 @@ function physicsStep(dt) {
   if (pl.wall) {
     pl.wallT += dt;
     // стена кончилась, время вышло — отрываемся и летим дальше
-    const wx = laneX(pl.lane + pl.wall);
-    if (!isWallAt(wx, pl.z) || planterAt(world, Math.floor(pl.z / ROW), Math.floor(wrapX(wx) / CELL), -pl.wall)
-      || pl.wallT > P.wallTime) endWallRun();
+    if (!isRunwallAt(laneX(pl.lane + pl.wall), pl.z) || pl.wallT > P.wallTime) endWallRun();
   }
   if (!pl.grounded) {
     if (pl.wall) {
@@ -420,7 +423,8 @@ function physicsStep(dt) {
       const k = pl.wallT / P.wallTime;
       pl.vy -= (P.wallGravity + (P.wallGravityEnd - P.wallGravity) * k * k) * dt;
     } else {
-      pl.vy -= (pl.vy > 0 ? P.gravityUp : P.gravityDown) * dt;
+      const js = jumpScale(v);
+      pl.vy -= (pl.vy > 0 ? P.gravityUp : P.gravityDown) * js * js * dt;
     }
     pl.y += pl.vy * dt;
     if (pl.y + h > ceil) { pl.y = ceil - h; pl.vy = Math.min(pl.vy, 0); }
@@ -429,10 +433,12 @@ function physicsStep(dt) {
       cam.dip = Math.max(cam.dip, Math.min(0.55, -pl.vy * 0.022));
       pl.y = ground; pl.vy = 0; pl.grounded = true; pl.hopKeep = false;
       if (pl.wall) endWallRun();
+      pl.wallLast = 0;
       if (pl.slideQueued) { pl.slideQueued = false; startSlide(); }
     }
-    // сорвались в пропасть
-    if (pl.y < world.baseAt(pl.z) - P.fallDeath) { die(); return; }
+    // сорвались в пропасть / упали в бассейн
+    const depth = world.cellAt(wrapX(pl.x), pl.z) === POOL ? 0.4 : P.fallDeath;
+    if (pl.y < world.baseAt(pl.z) - depth) { die(); return; }
   } else {
     pl.y = ground; // ступенька вверх/вниз, рампа
   }
@@ -458,7 +464,7 @@ function physicsStep(dt) {
     // прыжок от стены: толчок вверх и на соседнюю полосу, плюс разгон — стена как трамплин
     const d = -pl.wall;
     endWallRun();
-    pl.vy = P.jumpV; pl.jumpBuf = 0;
+    pl.vy = P.wallJumpV * jumpScale(v); pl.jumpBuf = 0;
     pl.boost = Math.min(P.boostMax, pl.boost + P.wallJumpBoost);
     pl.hopKeep = true;
     pl.lane += d; pl.pending = 0;
@@ -467,7 +473,7 @@ function physicsStep(dt) {
     cam.pitch += 0.05;
   } else if (pl.jumpBuf > 0 && pl.coyote > 0) {
     const fromSlide = sliding();
-    pl.vy = P.jumpV; pl.grounded = false; pl.coyote = 0; pl.jumpBuf = 0;
+    pl.vy = P.jumpV * jumpScale(v); pl.grounded = false; pl.coyote = 0; pl.jumpBuf = 0;
     if (fromSlide) {
       // slide-hop: прыжок из подката сохраняет разгон
       if (!blocksBody(solidsAt(pl.x, pl.z + r), pl.y, P.bodyStand)) { pl.slideT = 0; pl.hopKeep = true; }
@@ -527,7 +533,9 @@ const AHEAD = 10;
 function autopilotStep() {
   const ri = Math.floor(pl.z / ROW);
   const rows = world.rows, reach = world.reach;
-  const end = Math.min(rows.length - 1, ri + AHEAD);
+  let end = Math.min(rows.length - 1, ri + AHEAD);
+  // окно не должно кончаться посреди пропасти — иначе всё впереди «мёртвое»
+  while (end < rows.length - 1 && !reach[end].some(Boolean)) end++;
   if (end <= ri + 2) return;
   const alive = aliveBackward(rows.slice(ri, end + 1), reach.slice(ri, end + 1));
   const A = (r) => alive[r - ri];
@@ -550,14 +558,46 @@ function autopilotStep() {
     const score = nd * 10 + Math.abs(d);
     if (score < bscore) { bscore = score; best = c; }
   }
+  const into = (ri + 1) * ROW - pl.z;
+  // бег по стене: на стене — держимся, пока впереди пропасть; стена кончается — прыгаем к следующей
+  const passable = (r, c) => { const v = code(r, c); return v !== WALL && v !== RUNWALL; };
+  if (pl.wall) {
+    const d = pl.wall;
+    const zA = pl.z + speedNow() * 0.22;
+    const rA = Math.floor(zA / ROW);
+    const ends = world.cellAt(wrapX(laneX(pl.lane + d)), zA) !== RUNWALL;
+    if (ends || pl.wallT > 1.1) {
+      // впереди пол — просто спрыгиваем; иначе — толчок на соседнюю полосу
+      if (!walk(code(rA, cur)) && !walk(code(rA + 1, cur))) jump();
+    }
+    return;
+  }
+  if (!pl.grounded && pl.wallLast && pl.pending === 0) {
+    // после толчка — на вторую стену, если она есть и под нами пропасть
+    const d = -pl.wallLast;
+    if (world.cellAt(wrapX(laneX(pl.lane + d)), pl.z + 1) === RUNWALL && !walk(code(ri + 1, cur))) { laneShift(d); return; }
+  }
+  // пропасть длиннее прыжка — к красной стене
+  for (const g of [ri + 1, ri + 2]) {
+    if (!pl.grounded || walk(code(g, cur)) || !passable(g, cur) || walk(code(g + 1, cur))) continue;
+    for (const d of [-1, 1]) {
+      if (code(g, cur + d) === RUNWALL) {
+        if (g === ri + 1 && code(ri, cur + d) === RUNWALL && into < 3.2) laneShift(d);
+        return;
+      }
+    }
+    // стена через полосу — перестраиваемся к ней заранее
+    for (const d of [-1, 1]) {
+      if (code(g, cur + 2 * d) === RUNWALL && walk(code(ri, cur + d)) && pl.pending === 0 && pl.lane === Math.round((pl.x - CELL / 2) / CELL)) { laneShift(d); return; }
+    }
+  }
   // как человек: один свайп, когда решение меняется
   const laneNow = cm(pl.lane + pl.pending);
   if (best !== laneNow && pl.pending === 0 && !pl.wall) laneShift(cm(best - laneNow) === 1 ? 1 : -1);
-  const into = (ri + 1) * ROW - pl.z;
   const c1 = code(ri + 1, best), c2 = code(ri + 2, best);
   if (c1 === BRIDGE && into < 2.5 && !sliding() && pl.grounded) slide();
-  if (into < 2.6 && into > 0.8 && pl.grounded && !sliding() && !rows[ri + 1].cover) {
-    if (c1 === VOID) jump();
+  if (into < 2.6 && into > 0.8 && pl.grounded && !(sliding() && c1 === BRIDGE)) {
+    if ((c1 === VOID || c1 === POOL) && walk(c2)) jump();
     else if (walk(c1) && absH(ri + 1, best) > pl.y + 0.5) jump();
     else if (walk(c1) && absH(ri + 1, best) < pl.y - 0.5 && walk(c2) && c2 !== BRIDGE && absH(ri + 2, best) >= pl.y - 0.1
       && rows[ri + 1].b0 === rows[ri].b1) jump();
@@ -713,6 +753,7 @@ function frame(now) {
   // уровень пола яруса — сюда сходится весь мир; на рампах и при спрыгивании плавно
   cam.base = damp(cam.base, world.baseAt(pl.z), 4, dt);
   materials.main.uniforms.uB.value = cam.base;
+  materials.main.uniforms.uTime.value = gameTime;
   materials.star.uniforms.uB.value = cam.base;
   updateCamera(dt, state === 'run');
 
