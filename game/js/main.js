@@ -195,7 +195,7 @@ const pl = {
   slideChain: 0, slideEndAt: -9,
   wall: 0, wallT: 0, wallCool: 0, wallLast: 0, autoAttach: 0, autoT: 0, grabT: 0, launch: null, glideT: 0, longT: 0,
 };
-const cam = { roll: 0, yaw: 0, pitch: 0, dip: 0, slide: 0, bob: 0, fov: 82, slideSide: 1, lookY: 1.2, vx: 0, lines: 0, base: 0, wall: 0, fly: 0 };
+const cam = { roll: 0, yaw: 0, pitch: 0, dip: 0, slide: 0, bob: 0, fov: 82, slideSide: 1, lookY: 1.2, vx: 0, lines: 0, base: 0, wall: 0, fly: 0, baseV: 0, lookV: 0 };
 let gameTime = 0;
 let state = 'ready';
 let shake = 0;
@@ -214,7 +214,7 @@ function reset(s) {
     slideChain: 0, slideEndAt: -9, wall: 0, wallT: 0, wallCool: 0, wallLast: 0, autoAttach: 0, autoT: 0, grabT: 0, launch: null, glideT: 0, longT: 0,
   });
   Object.assign(pl, { lane: 6, pending: 0, pendT: 0 });
-  Object.assign(cam, { roll: 0, yaw: 0, pitch: 0, dip: 0, slide: 0, bob: 0, lookY: 1.2, vx: 0, lines: 0, base: 0, wall: 0, fly: 0 });
+  Object.assign(cam, { roll: 0, yaw: 0, pitch: 0, dip: 0, slide: 0, bob: 0, lookY: 1.2, vx: 0, lines: 0, base: 0, wall: 0, fly: 0, baseV: 0, lookV: 0 });
   shake = 0;
   ensureWorld();
   const u = new URL(location.href);
@@ -893,6 +893,27 @@ $('close-seeds').addEventListener('click', () => ui.seeds.classList.remove('show
 $('same').addEventListener('click', () => { sound.unlock(); restart(true); });
 
 // ---------- камера ----------
+// Высота земли впереди по своей полосе (через ~0.6 с бега): пол яруса плюс высота предмета.
+// Перед трамплином — сразу крыша небоскрёба. Над пропастью — пол яруса.
+function groundAhead() {
+  if (pl.launch) return pl.launch.y1;
+  const v = speedNow();
+  const x = wrapX(laneX(pl.lane));
+  let best = -INF;
+  for (const t of [0.35, 0.6, 0.85]) {
+    const z = pl.z + v * t;
+    const c = world.cellAt(x, z);
+    if (c === LAUNCH) {
+      const land = world.rows[Math.floor(z / ROW) + LAUNCH_ROWS];
+      if (land) return land.b0;
+    }
+    // предметы учитываем вполовину: на подъёме взгляд тянется вверх, а на одиночных барьерах не качается
+    if (walk(c)) best = Math.max(best, world.baseAt(z) + lv(c) * LEVEL * 0.6);
+  }
+  // впереди стена или пропасть — держим пол яруса
+  return best === -INF ? world.baseAt(pl.z + v * 0.6) : best;
+}
+
 const damp = (cur, target, rate, dt) => cur + (target - cur) * (1 - Math.exp(-rate * dt));
 
 function updateCamera(dt, running) {
@@ -916,7 +937,9 @@ function updateCamera(dt, running) {
   const hk = Math.min(1, Math.max(0, (pl.y - B) / (3 * LEVEL)));
   const pull = 0.7 * hk * hk * (3 - 2 * hk);
   const lookTarget = B + rel * 0.75 * (1 - pull) + 0.4 * pull;
-  cam.lookY = damp(cam.lookY, lookTarget, Math.abs(lookTarget - cam.lookY) > 2 ? 7 : 3.5, dt);
+  const w1 = 5.5;
+  cam.lookV += (w1 * w1 * (lookTarget - cam.lookY) - 2 * w1 * cam.lookV) * dt;
+  cam.lookY += cam.lookV * dt;
   camera.lookAt(0, cam.lookY, 0);
 
   // наклоны: в сторону движения, в подкате — завал вбок
@@ -981,10 +1004,13 @@ function frame(now) {
   for (const m of meshes) m.position.set(-pl.x, 0, m.userData.zStart - pl.z);
   // уровень пола яруса — сюда сходится весь мир; на рампах и при спрыгивании плавно
   // в полёте (трамплин, прыжок с крыши, подъём) целимся туда, куда приземлимся, а не откуда летим
-  let baseTarget = world.baseAt(pl.z);
-  if (pl.launch) baseTarget = pl.launch.y1;
-  else if (!pl.grounded) baseTarget = world.baseAt(pl.z + speedNow() * 0.6);
-  cam.base = damp(cam.base, baseTarget, Math.abs(baseTarget - cam.base) > 3 ? 7 : 4, dt);
+  // Точка схода (и взгляд) идут за землёй ВПЕРЕДИ, а не под ногами: на подъёме смотрим вверх,
+  // на уступ, перед трамплином — на крышу небоскрёба, перед прыжком вниз — на место приземления.
+  // Плавная пружина без рывков.
+  const baseTarget = groundAhead();
+  const w0 = 4.5;
+  cam.baseV += (w0 * w0 * (baseTarget - cam.base) - 2 * w0 * cam.baseV) * dt;
+  cam.base += cam.baseV * dt;
   materials.main.uniforms.uB.value = cam.base;
   materials.main.uniforms.uTime.value = gameTime;
   // в подземке дымка ближе — пустые коридоры тонут в молочном свете
