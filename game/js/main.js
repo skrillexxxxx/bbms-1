@@ -1479,15 +1479,15 @@ function updateCamera(dt, running) {
 const _c = new THREE.Vector3();
 let last = performance.now();
 const fpsEl = document.getElementById('fps');
-let fpsN = 0, fpsT = 0;
+let hudFpsN = 0, hudFpsT = 0;
 let fpsAcc = 0, fpsN = 0, fps = 0;
 
 function frame(now) {
   requestAnimationFrame(frame);
   const dt = Math.min(0.05, (now - last) / 1000) * timeScale;
   // FPS в углу: среднее за полсекунды
-  fpsN++; fpsT += now - last;
-  if (fpsT >= 500) { fpsEl.textContent = `${Math.round(fpsN * 1000 / fpsT)} fps`; fpsN = 0; fpsT = 0; }
+  hudFpsN++; hudFpsT += now - last;
+  if (hudFpsT >= 500) { fpsEl.textContent = `${Math.round(hudFpsN * 1000 / hudFpsT)} fps`; hudFpsN = 0; hudFpsT = 0; }
   // подвисание — в запись забега: сколько длился кадр и где мы были
   if (state === 'run' && last && now - last > 120) rec.event('hitch', { ms: now - last, z: pl.z, built, meshes: meshes.length });
   gameTime += dt;
