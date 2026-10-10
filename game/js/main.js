@@ -841,9 +841,10 @@ canvas.addEventListener('pointermove', (e) => {
   const dy = e.clientY - touch.sy, dxs = e.clientX - touch.sx;
   const now = performance.now();
   if (Math.abs(dxs) > SWIPE && Math.abs(dxs) > Math.abs(dy) * 1.1 && now - touch.st < 300) {
-    // один жест = одна полоса, как бы далеко ни ушёл палец; развернуть палец обратно — можно
+    // один жест = одно действие вбок, как бы далеко ни ушёл палец и куда бы ни дрогнул обратно:
+    // иначе на стене дрожание пальца кидает со стены на стену. Обратно — новым свайпом
     const dir = dxs > 0 ? 1 : -1;
-    if (dir !== touch.hDir) { laneShift(dir); touch.hDir = dir; }
+    if (!touch.hDir) { laneShift(dir); touch.hDir = dir; }
     touch.swiped = true;
     touch.sx = e.clientX; touch.sy = e.clientY; touch.st = now;
   } else if (Math.abs(dy) > SWIPE && Math.abs(dy) > Math.abs(dxs) * 1.1 && now - touch.st < 300) {
