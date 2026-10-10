@@ -1458,6 +1458,8 @@ function frame(now) {
   materials.main.uniforms.uFogColor.value.setRGB(
     df[0] + (nf[0] - df[0]) * night, df[1] + (nf[1] - df[1]) * night, df[2] + (nf[2] - df[2]) * night);
   materials.main.uniforms.uNight.value = night;
+  // ночью блум слабее и с порогом повыше: светятся только окна и красное, без пересвета
+  if (bloom) { bloom.strength = 0.45 - 0.22 * night; bloom.threshold = 0.9 + 0.05 * night; }
   // фонарь: ночью на улице; в подземке плавно гаснет (deep меняется плавно вместе с камерой)
   materials.main.uniforms.uLamp.value = lampSwitch(nightAmount() > 0.55 && deep < 0.35);
   updateLamp(dt);
