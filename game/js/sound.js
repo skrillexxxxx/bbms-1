@@ -202,7 +202,7 @@ export function createSound(enabled) {
     const dL = mkDelay(0.085), dR = mkDelay(0.11);
     const tone = () => { const f = ctx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 2600; return f; };
     const fL = tone(), fR = tone();
-    const fbLR = ctx.createGain(), fbRL = ctx.createGain(); fbLR.gain.value = 0.42; fbRL.gain.value = 0.42;
+    const fbLR = ctx.createGain(), fbRL = ctx.createGain(); fbLR.gain.value = 0.18; fbRL.gain.value = 0.18; // одно-два заметных повтора, не больше
     sfx.connect(echoL); echoL.connect(dL); dL.connect(fL);
     sfx.connect(echoR); echoR.connect(dR); dR.connect(fR);
     fL.connect(pan(-0.9)); fR.connect(pan(0.9));
@@ -248,8 +248,8 @@ export function createSound(enabled) {
       nearL.gain.setTargetAtTime(1.2 * left, t, 0.12);
       nearR.gain.setTargetAtTime(1.2 * right, t, 0.12);
       nearC.gain.setTargetAtTime(1.3 * narrow, t, 0.2);
-      echoL.gain.setTargetAtTime(0.5 * Math.min(1, left + narrow), t, 0.12);
-      echoR.gain.setTargetAtTime(0.5 * Math.min(1, right + narrow), t, 0.12);
+      echoL.gain.setTargetAtTime(0.18 * Math.min(1, left + narrow), t, 0.12);
+      echoR.gain.setTargetAtTime(0.18 * Math.min(1, right + narrow), t, 0.12);
     },
     // deep: 0 на улице … 1 в подземке; speed — скорость бега; high: 0 … 1 на небоскрёбах.
     update(deep, speed, high = 0) {

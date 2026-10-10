@@ -1072,6 +1072,35 @@ window.addEventListener('keydown', (e) => {
 document.addEventListener('gesturestart', (e) => e.preventDefault());
 document.addEventListener('touchmove', (e) => { if (!e.target.closest?.('#seed-list')) e.preventDefault(); }, { passive: false });
 
+// ---------- фонарь: луч трясётся на бегу ----------
+// Фонарь «в руке»: качается в такт шагам (cam.bob), вздрагивает при приземлении и толчках (cam.dip),
+// в полёте плывёт, на стене уходит в сторону стены. Пятно крупнее на широком экране.
+const lamp = { x: 0, y: -0.1, vx: 0, vy: 0, jit: 0 };
+function updateLamp(dt) {
+  const run = state === 'run';
+  const ground = run && pl.grounded && !sliding();
+  let tx = ground ? Math.sin(cam.bob) * 0.05 : 0;
+  let ty = -0.1 + (ground ? -Math.abs(Math.sin(cam.bob)) * 0.06 : 0) - cam.dip * 0.12;
+  if (pl.wall) tx += pl.wall * 0.12;
+  if (sliding()) ty -= 0.06;
+  // мелкая дрожь руки, сильнее на скорости
+  lamp.jit += dt;
+  const sp = run ? Math.min(1, speedNow() / 25) : 0;
+  tx += (Math.sin(lamp.jit * 13.1) + Math.sin(lamp.jit * 7.3)) * 0.006 * (0.4 + sp);
+  ty += (Math.sin(lamp.jit * 11.7) + Math.sin(lamp.jit * 5.9)) * 0.006 * (0.4 + sp);
+  // пружина — луч догоняет руку с небольшим запозданием и перелётом
+  // мелкими шагами: жёсткая пружина на длинном кадре иначе разлетается
+  const w = 22, n = Math.ceil(dt / (1 / 240));
+  for (let i = 0; i < n; i++) {
+    const h = dt / n;
+    lamp.vx += (w * w * (tx - lamp.x) - 2 * 0.55 * w * lamp.vx) * h; lamp.x += lamp.vx * h;
+    lamp.vy += (w * w * (ty - lamp.y) - 2 * 0.55 * w * lamp.vy) * h; lamp.y += lamp.vy * h;
+  }
+  if (!Number.isFinite(lamp.x + lamp.y)) Object.assign(lamp, { x: 0, y: -0.1, vx: 0, vy: 0 });
+  const wide = camera.aspect > 1;
+  materials.main.uniforms.uLampP.value.set(lamp.x, lamp.y, wide ? 0.5 : 0.38);
+}
+
 // ---------- акустика улицы: стены рядом ----------
 // Короткое эхо со стороны стены (бежим вдоль башни или по красной стене) и отовсюду в узком месте.
 // В подземке своё длинное эхо, там это не нужно.
@@ -1361,6 +1390,7 @@ function frame(now) {
   materials.main.uniforms.uNight.value = night;
   // фонарь: ночью на улице; в подземке плавно гаснет (deep меняется плавно вместе с камерой)
   materials.main.uniforms.uLamp.value = nightAmount() * Math.max(0, 1 - deep * 1.5);
+  updateLamp(dt);
   materials.monkey.uniforms.uNight.value = night;
   _sky.copy(materials.main.uniforms.uFogColor.value);
   renderer.setClearColor(useBloom ? _sky.clone().convertSRGBToLinear() : _sky, 1);

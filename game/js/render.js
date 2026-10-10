@@ -79,6 +79,7 @@ const frag = /* glsl */ `
   uniform float uHigh;
   uniform float uNight;   // 0 — день, 1 — ночь
   uniform float uLamp;    // фонарь бегуна: ночью на улице 1, в подземке гаснет
+  uniform vec3 uLampP;    // смещение луча (тряска на бегу) xy и радиус пятна z
   varying float vTint;
   varying vec3 vPos;
   varying vec3 vN;
@@ -250,8 +251,8 @@ const frag = /* glsl */ `
       else if (abs(n.x) > 0.5) e = min(ez, et); // боковая грань: вертикальные углы и верхний край
       else e = min(ex, et);                     // передняя/задняя грань
       float fw = max(fwidth(e), 1e-4);
-      float width = max(0.07, fw * 1.6);        // не тоньше ~1.5 пикселя вдали
-      float rim = 1.0 - smoothstep(width, width + fw * 1.2, e);
+      float width = max(0.03, fw * 0.8);        // тонкая линия: вблизи 3 см, вдали ~1 пиксель
+      float rim = 1.0 - smoothstep(width, width + fw * 1.0, e);
       bool low = st >= 4;                       // низкие здания, предметы, мосты — кромка заметнее
       col = mix(col, low ? 0.93 : 0.97, rim * (low ? 0.9 : 0.6)); // ниже порога блума
       rimK = rim * (low ? 0.9 : 0.5);
@@ -292,18 +293,22 @@ const frag = /* glsl */ `
       // фонарь бегуна, как в хоррорах: круглое пятно по центру взгляда (чуть ниже), мягкий ореол
       // и светлое кольцо по краю. Считаем по направлению от камеры, вблизи ярко, вдаль слабеет
       if (uLamp > 0.0) {
-        vec2 sp = vView.xy / max(-vView.z, 0.05) - vec2(0.0, -0.1);
+        // пятно шире по горизонтали — как у настоящего фонаря, и не теряется на широком экране
+        vec2 sp = vView.xy / max(-vView.z, 0.05) - uLampP.xy;
+        sp.x *= 0.78;
+        float R = uLampP.z;
         float r = length(sp);
-        float spot = 1.0 - smoothstep(0.26, 0.36, r);
-        float ring = exp(-pow((r - 0.31) / 0.035, 2.0)) * 0.35;
-        float halo = (1.0 - smoothstep(0.36, 0.95, r)) * 0.28;
+        float spot = 1.0 - smoothstep(R * 0.8, R * 1.1, r);
+        float ring = exp(-pow((r - R * 0.95) / (R * 0.1), 2.0)) * 0.3;
+        float halo = (1.0 - smoothstep(R * 1.1, R * 2.6, r)) * 0.3;
         float dist = length(vView);
-        float att = 1.0 / (1.0 + dist * dist / 160.0);
+        float att = 1.0 / (1.0 + dist * dist / 220.0);
         float face = n.y > 0.5 ? 0.75 : (n.y < -0.5 ? 0.3 : 0.45 + 0.55 * max(-n.z, 0.0) + 0.3 * abs(n.x));
         float fl = 0.94 + 0.06 * step(0.97, fract(sin(floor(uTime * 9.0) * 12.9898) * 43758.5453));
-        dark += c3 * vec3(1.0, 0.97, 0.9) * (spot + ring + halo) * att * face * fl * 1.0 * uLamp;
-        // в воздухе луч не видно, но пол в пятне читается всегда — даже тёмный
-        dark += vec3(0.05) * spot * att * uLamp;
+        vec3 lampL = c3 * vec3(1.0, 0.97, 0.9) * (spot + ring + halo) * att * face * fl * uLamp
+                   + vec3(0.05) * spot * att * uLamp;
+        // свет фонаря не выше порога блума — то, куда бежим, не выжигается в белое
+        dark = min(dark + lampL, vec3(0.8));
       }
       c3 = mix(c3, dark + emit, uNight);
     }
@@ -336,6 +341,7 @@ export function createMaterial({ linearOut }) {
       uHigh: { value: 0 },
       uNight: { value: 0 },
       uLamp: { value: 0 },
+      uLampP: { value: new THREE.Vector3(0, -0.1, 0.32) },
     },
   });
 }
