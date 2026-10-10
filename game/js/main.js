@@ -5,7 +5,7 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import {
-  World, CELL, ROW, W, L, LZ, COLS, WALL, BRIDGE, VOID, RUNWALL, POOL, LEVEL, BRIDGE_BOTTOM, BRIDGE_TOP, CEIL_H,
+  World, CELL, ROW, W, L, LZ, COLS, WALL, BRIDGE, VOID, RUNWALL, POOL, LAUNCH, LAUNCH_ROWS, LEVEL, BRIDGE_BOTTOM, BRIDGE_TOP, CEIL_H,
   canStep, canJumpOver, aliveBackward, walk, lv,
 } from './world.js';
 import { createMaterial, createStarMaterial, buildInstanceMesh } from './render.js';
@@ -189,9 +189,9 @@ const pl = {
   lane: 6, pending: 0, pendT: 0,
   coyote: 0, jumpBuf: 0, slideT: 0, slideQueued: false, boost: 0, hopKeep: false,
   slideChain: 0, slideEndAt: -9,
-  wall: 0, wallT: 0, wallCool: 0, wallLast: 0, autoAttach: 0, grabT: 0,
+  wall: 0, wallT: 0, wallCool: 0, wallLast: 0, autoAttach: 0, grabT: 0, launch: null,
 };
-const cam = { roll: 0, yaw: 0, pitch: 0, dip: 0, slide: 0, bob: 0, fov: 82, slideSide: 1, lookY: 1.2, vx: 0, lines: 0, base: 0, wall: 0 };
+const cam = { roll: 0, yaw: 0, pitch: 0, dip: 0, slide: 0, bob: 0, fov: 82, slideSide: 1, lookY: 1.2, vx: 0, lines: 0, base: 0, wall: 0, fly: 0 };
 let gameTime = 0;
 let state = 'ready';
 let shake = 0;
@@ -207,10 +207,10 @@ function reset(s) {
   Object.assign(pl, {
     x: 6 * CELL + CELL / 2, z: ROW * 0.5, y: 0, vx: 0, vy: 0, grounded: true,
     coyote: 0, jumpBuf: 0, slideT: 0, slideQueued: false, boost: 0, hopKeep: false,
-    slideChain: 0, slideEndAt: -9, wall: 0, wallT: 0, wallCool: 0, wallLast: 0, autoAttach: 0, grabT: 0,
+    slideChain: 0, slideEndAt: -9, wall: 0, wallT: 0, wallCool: 0, wallLast: 0, autoAttach: 0, grabT: 0, launch: null,
   });
   Object.assign(pl, { lane: 6, pending: 0, pendT: 0 });
-  Object.assign(cam, { roll: 0, yaw: 0, pitch: 0, dip: 0, slide: 0, bob: 0, lookY: 1.2, vx: 0, lines: 0, base: 0, wall: 0 });
+  Object.assign(cam, { roll: 0, yaw: 0, pitch: 0, dip: 0, slide: 0, bob: 0, lookY: 1.2, vx: 0, lines: 0, base: 0, wall: 0, fly: 0 });
   shake = 0;
   ensureWorld();
   const u = new URL(location.href);
@@ -408,10 +408,42 @@ const JUMP_AIR = 0.82;   // время в воздухе обычного пры
 const JUMP_REACH = 12;
 const jumpScale = (v) => Math.max(1, (v * JUMP_AIR) / JUMP_REACH);
 
+// ---- трамплин: полёт по заранее рассчитанной дуге — приземление гарантировано ----
+function startLaunch() {
+  const ri = Math.floor(pl.z / ROW);
+  const land = world.rows[ri + LAUNCH_ROWS];
+  if (!land) return;
+  if (pl.wall) endWallRun();
+  pl.slideT = 0; pl.pending = 0; pl.autoAttach = 0;
+  const y1 = land.b0;
+  pl.launch = { z0: pl.z, z1: (ri + LAUNCH_ROWS) * ROW + 1.5, y0: pl.y, y1, yc: Math.max(pl.y, y1) + 12 };
+  pl.grounded = false;
+  pl.boost = Math.min(P.boostMax, pl.boost + 3);
+  pl.hopKeep = true;
+  shake = Math.max(shake, 0.12);
+}
+
+function launchStep(dt, v) {
+  const L0 = pl.launch;
+  pl.z += v * dt;
+  const t = Math.min(1, (pl.z - L0.z0) / (L0.z1 - L0.z0));
+  const y = (1 - t) * (1 - t) * L0.y0 + 2 * t * (1 - t) * L0.yc + t * t * L0.y1;
+  pl.vy = (y - pl.y) / dt;
+  pl.y = y;
+  pl.vx += (P.laneW * P.laneW * (laneX(pl.lane) - pl.x) - 2 * P.laneW * pl.vx) * dt;
+  pl.x += pl.vx * dt;
+  if (t >= 1) {
+    cam.dip = Math.max(cam.dip, 0.55);
+    pl.y = L0.y1; pl.vy = 0; pl.grounded = true; pl.hopKeep = false;
+    pl.launch = null;
+  }
+}
+
 function physicsStep(dt) {
   const r = P.radius;
   const h = bodyH();
   const v = speedNow();
+  if (pl.launch) { launchStep(dt, v); return; }
 
   // вперёд
   const nz = pl.z + v * dt;
@@ -481,12 +513,15 @@ function physicsStep(dt) {
       if (pl.slideQueued) { pl.slideQueued = false; startSlide(); }
     }
     // сорвались в пропасть / упали в бассейн
-    const depth = world.cellAt(wrapX(pl.x), pl.z) === POOL ? 0.4 : P.fallDeath;
-    if (pl.y < world.baseAt(pl.z) - depth) { die(); return; }
+    const base = world.baseAt(pl.z);
+    // с небоскрёба — дольше видно, как падаешь
+    const depth = world.cellAt(wrapX(pl.x), pl.z) === POOL ? 0.4 : base > 20 ? 12 : P.fallDeath;
+    if (pl.y < base - depth) { die(); return; }
   } else {
     pl.y = ground; // ступенька вверх/вниз, рампа
   }
   pl.wallCool -= dt;
+  if (pl.grounded && world.cellAt(wrapX(pl.x), pl.z) === LAUNCH) startLaunch();
   pl.grabT = Math.max(0, pl.grabT - dt);
 
   // подкат: заканчивается сам, но не под мостом
@@ -659,6 +694,7 @@ function start() {
 // ---------- автопилот (?auto) — для тестов: бежит по «живым» клеткам ----------
 const AHEAD = 10;
 function autopilotStep() {
+  if (pl.launch) return;
   const ri = Math.floor(pl.z / ROW);
   const rows = world.rows, reach = world.reach;
   let end = Math.min(rows.length - 1, ri + AHEAD);
@@ -843,7 +879,8 @@ function updateCamera(dt, running) {
   camera.rotateZ(roll);
 
   // ощущение скорости: поле зрения шире на разгоне и в подкате
-  const fov = baseFov() + (v - P.speedStart) * 0.55 + cam.slide * 5;
+  cam.fly = damp(cam.fly, pl.launch ? 1 : 0, 4, dt);
+  const fov = baseFov() + (v - P.speedStart) * 0.55 + cam.slide * 5 + cam.fly * 12;
   cam.fov = damp(cam.fov, fov, 6, dt);
   if (Math.abs(camera.fov - cam.fov) > 0.05) { camera.fov = cam.fov; camera.updateProjectionMatrix(); }
 }
@@ -890,7 +927,9 @@ function frame(now) {
   materials.main.uniforms.uFogNear.value = LZ * (2.2 - 1.0 * deep);
   materials.main.uniforms.uFogFar.value = LZ * (6.0 - 2.6 * deep);
   materials.main.uniforms.uFogColor.value.setRGB(1 - 0.05 * deep, 1 - 0.01 * deep, 1 - 0.02 * deep);
-  sound.update(deep, state === 'run' ? speedNow() : 0);
+  const high = Math.min(1, Math.max(0, (cam.base - 10) / 25));
+  materials.main.uniforms.uHigh.value = high;
+  sound.update(deep, state === 'run' ? speedNow() : 0, high);
   materials.star.uniforms.uB.value = cam.base;
   updateCamera(dt, state === 'run');
 
@@ -904,7 +943,7 @@ function frame(now) {
     // сильнее на разгоне, в подкате и при бусте после подката
     blurPass.uniforms.uStrength.value = run * (0.04 + sp * 0.11 + cam.slide * 0.05 + pl.boost * 0.006);
     blurPass.uniforms.uLateral.value.set(run * -cam.vx * 0.0012, 0);
-    const linesT = Math.max(Math.min(1, Math.max(0, (pl.slideChain - 1) / 3)), pl.wall ? 0.55 : 0);
+    const linesT = Math.max(Math.min(1, Math.max(0, (pl.slideChain - 1) / 3)), pl.wall ? 0.55 : 0, pl.launch ? 0.8 : 0);
     cam.lines = damp(cam.lines, run * linesT, linesT > 0 ? 6 : 2.5, dt);
     blurPass.uniforms.uLines.value = cam.lines;
     blurPass.uniforms.uTime.value = gameTime;

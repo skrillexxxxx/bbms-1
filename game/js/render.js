@@ -6,7 +6,7 @@
 import * as THREE from 'three';
 import {
   COLS, CELL, ROW, LEVEL, L, LZ, WALL, BRIDGE, VOID, BRIDGE_BOTTOM, BRIDGE_TOP, CEIL_H,
-  hash2, aliveBackward, mulberry32, walk, lv, planterAt, RUNWALL, POOL,
+  hash2, aliveBackward, mulberry32, walk, lv, planterAt, RUNWALL, POOL, LAUNCH, LAUNCH_ROWS,
 } from './world.js';
 
 const SEG = 1.0; // шаг разбиения по x/z, чтобы прямые рёбра красиво гнулись
@@ -64,6 +64,7 @@ const vert = /* glsl */ `
 const frag = /* glsl */ `
   precision highp float;
   uniform float uL;
+  uniform float uB;
   uniform float uFogNear;
   uniform float uFogFar;
   uniform vec3 uFogColor;
@@ -71,6 +72,7 @@ const frag = /* glsl */ `
   uniform float uCell;
   uniform float uRow;
   uniform float uTime;
+  uniform float uHigh;
   varying float vTint;
   varying vec3 vPos;
   varying vec3 vN;
@@ -114,6 +116,11 @@ const frag = /* glsl */ `
       float w1 = sin(vPos.x * 2.3 + uTime * 1.6 + sin(vPos.z * 1.7 + uTime));
       float w2 = sin(vPos.z * 2.9 - uTime * 1.3 + sin(vPos.x * 1.3 - uTime * 0.7));
       col = 0.5 + 0.35 * smoothstep(0.75, 1.0, w1 * w2 * 0.5 + 0.5);
+    } else if (st == 17) {
+      // трамплин: белые шевроны «вперёд» на красном
+      float ax = abs(fract(vPos.x / uCell) - 0.5) * uCell;
+      float ch = fract((vPos.z - ax * 0.9) / 1.3);
+      col = n.y > 0.5 ? (ch < 0.45 ? 0.95 : 0.55) : 0.5;
     } else if (st == 16) {
       // стены дыры в пустоту: плитка, а вглубь — растворяются в белом
       col = 0.6;
@@ -228,11 +235,16 @@ const frag = /* glsl */ `
       c3 = mix(c3, col * red * 1.1, k * near);
     } else if (vTint > 4.5 && vTint < 5.5) {
       // красная стена: белая панель с красными полосами на высоте бега
-      float k = step(fract(y / 1.1), 0.32);
+      // полосы под 45°, «вверх и вперёд» — по направлению бега
+      float k = step(fract((y - vPos.z) / 1.4), 0.36);
       c3 = mix(c3 * 1.05, vec3(col * 0.9) * red, k * near);
     }
     else if (vTint > 1.5 && vTint < 2.5) c3 = col * vec3(0.8, 0.97, 1.04);     // бирюзовая плитка
     else if (vTint > 2.5 && vTint < 3.5) c3 = col * vec3(0.62, 0.9, 1.0);      // вода
+    else if (vTint > 5.5 && vTint < 6.5) c3 = col < 0.9 ? col * red * 1.2 : vec3(col); // трамплин
+    // высота: всё, что далеко внизу под ярусом, тонет в белой дымке
+    float below = uB - y;
+    c3 = mix(c3, vec3(1.0), smoothstep(4.0, 38.0, below) * (0.25 + 0.3 * uHigh));
     vec3 c = mix(c3, uFogColor, fog);
     if (uLinearOut > 0.5) c = pow(c, vec3(2.2));
     gl_FragColor = vec4(c, 1.0);
@@ -256,6 +268,7 @@ export function createMaterial({ linearOut }) {
       uCell: { value: CELL },
       uRow: { value: ROW },
       uTime: { value: 0 },
+      uHigh: { value: 0 },
     },
   });
 }
@@ -706,7 +719,10 @@ export function buildInstanceMesh(inst, materials, world) {
       }
       if (side < 0) x0 += 1.3; else x1 -= 1.3;
     }
-    b.boxGeo(x0 + 0.15, x1 - 0.15, zA + 0.15, zB - 0.15, 24 + rnd * 56, style);
+    // башня всегда заметно выше пола своих рядов (на верхушках небоскрёбов — тоже)
+    let top = 0;
+    for (let rr = r; rr < r + h; rr++) top = Math.max(top, rows[rr].b0, rows[rr].b1);
+    b.boxGeo(x0 + 0.15, x1 - 0.15, zA + 0.15, zB - 0.15, Math.max(24 + rnd * 56, top + 12 + rnd * 35), style);
     if (k === 9) {
       // красная стена: панели на гранях, вдоль которых бегут
       b.tint = 5;
@@ -827,16 +843,36 @@ export function buildInstanceMesh(inst, materials, world) {
     for (let dc = -3; dc <= 3; dc++) if (row[((c + dc) % COLS + COLS) % COLS] === RUNWALL) return true;
     return false;
   };
+  // после трамплина — по дуге летим над этими рядами, там должно быть пусто
+  const afterLaunch = (r) => {
+    for (let k = 1; k < LAUNCH_ROWS; k++) {
+      const row = world.rows[R0 + r - k];
+      if (row && row.includes(LAUNCH)) return true;
+    }
+    return false;
+  };
   for (let r = 0; r < nRows; r++) {
+    const base = Math.min(rows[r].b0, rows[r].b1);
     for (let c = 0; c < COLS; c++) {
-      if (rows[r][c] !== VOID || Math.min(rows[r].b0, rows[r].b1) <= 0) continue;
+      if (rows[r][c] !== VOID || base <= 0) continue;
       const hsh = hash2(inst.seed + 21, r * 19 + c);
       const x0 = c * CELL, zA = r * ROW;
+      const sky = base > 20;
       let hgt;
-      if (nearPath(r, c)) hgt = [0, 0, 0, 2, 2, 4][Math.floor(hsh * 6)]; // заметно ниже крыши — видно обрыв
-      else {
-        hgt = 15 + Math.floor(hsh * 6) * 3;
+      if (nearPath(r, c) || afterLaunch(r)) {
+        // заметно ниже пути — видно обрыв; с небоскрёбов — далеко внизу
+        hgt = sky && !afterLaunch(r) ? [0, 0, 8, 14, 20, 24][Math.floor(hsh * 6)] : [0, 0, 0, 2, 2, 4][Math.floor(hsh * 6)];
+      } else {
+        // дальше от пути — соседние дома; на небоскрёбах — в основном ниже, изредка выше
+        hgt = sky
+          ? (hsh < 0.2 ? base + 14 + hsh * 150 : base * (0.35 + hsh * 0.6))
+          : 15 + Math.floor(hsh * 6) * 3;
         const style = 2 + Math.floor(hash2(inst.seed + 29, r * 11 + c) * 2);
+        b.boxGeo(x0 + 0.4, x0 + CELL - 0.4, zA + 0.4, zA + ROW - 0.4, hgt, style);
+        continue;
+      }
+      if (hgt > 4) {
+        const style = 2 + Math.floor(hash2(inst.seed + 31, r * 7 + c) * 2);
         b.boxGeo(x0 + 0.4, x0 + CELL - 0.4, zA + 0.4, zA + ROW - 0.4, hgt, style);
         continue;
       }
@@ -874,6 +910,38 @@ export function buildInstanceMesh(inst, materials, world) {
         b.quad([x0, water, zA], [0, 0, ROW], [CELL, 0, 0], 4, 4, [0, 1, 0], 14, 0, [x0, zA, x1, zB]);
       }
       b.tint = 0;
+    }
+  }
+
+  // 7в. трамплин: красная плита с белыми шевронами, чуть приподнята
+  for (let r = 0; r < nRows; r++) {
+    const row = rows[r];
+    for (let c = 0; c < COLS;) {
+      if (row[c] !== LAUNCH) { c++; continue; }
+      let w = 1;
+      while (c + w < COLS && row[c + w] === LAUNCH) w++;
+      b.tint = 6;
+      b.boxGeo(c * CELL + 0.1, (c + w) * CELL - 0.1, r * ROW + 0.3, (r + 1) * ROW - 0.1, row.b1 + 0.12, 17, row.b1, { bottom: false });
+      b.tint = 0;
+      c += w;
+    }
+  }
+
+  // 7г. ограждения по бокам крыш, вдоль пропастей: стойки и два поручня
+  for (let r = 0; r < nRows; r++) {
+    const row = rows[r];
+    if (row.b0 !== row.b1 || row.b0 <= 0) continue;
+    const base = row.b0, zA = r * ROW, zB = zA + ROW;
+    for (let c = 0; c < COLS; c++) {
+      const v = row[c];
+      if (!walk(v) || lv(v) !== 0 || v === LAUNCH) continue;
+      for (const side of [-1, 1]) {
+        if (row[((c + side) % COLS + COLS) % COLS] !== VOID) continue;
+        const x = side < 0 ? c * CELL + 0.1 : (c + 1) * CELL - 0.1;
+        for (let z = zA + 0.2; z < zB; z += 1.33) b.boxGeo(x - 0.035, x + 0.035, z - 0.035, z + 0.035, base + 1.1, 4, base);
+        b.boxGeo(x - 0.05, x + 0.05, zA, zB, base + 1.14, 4, base + 1.04);
+        b.boxGeo(x - 0.025, x + 0.025, zA, zB, base + 0.58, 4, base + 0.52);
+      }
     }
   }
 

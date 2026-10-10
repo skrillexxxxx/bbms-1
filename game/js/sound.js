@@ -49,14 +49,16 @@ export function createSound(enabled) {
       if (ctx && ctx.state === 'suspended') ctx.resume();
     },
     // deep: 0 на улице … 1 в подземке; speed — скорость бега (0 — стоим)
-    update(deep, speed) {
+    // high: 0 … 1 на верхушках небоскрёбов — ветер сильнее
+    update(deep, speed, high = 0) {
       if (!ctx) return;
       const t = ctx.currentTime;
       drone.gain.setTargetAtTime(0.05 * deep, t, 0.6);
       hum.gain.setTargetAtTime(0.012 * deep, t, 0.6);
       const sk = Math.min(1, speed / 25);
-      wind.gain.setTargetAtTime(speed > 0 ? (0.015 + 0.05 * sk * sk) * (1 - 0.6 * deep) : 0, t, 0.3);
-      windF.frequency.setTargetAtTime(350 + 900 * sk, t, 0.3);
+      const gust = high * (0.04 + 0.03 * Math.sin(t * 0.7) * Math.sin(t * 1.9));
+      wind.gain.setTargetAtTime((speed > 0 ? (0.015 + 0.05 * sk * sk) * (1 - 0.6 * deep) : 0) + gust, t, 0.3);
+      windF.frequency.setTargetAtTime(350 + 900 * sk - 150 * high, t, 0.3);
     },
   };
 }

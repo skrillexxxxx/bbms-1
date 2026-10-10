@@ -20,14 +20,16 @@ export const BRIDGE = 254;        // улица с низким мостом с�
 export const VOID = 253;          // пропасть: между крышами, канал на улице, дыра в пустоту в тоннеле
 export const RUNWALL = 252;       // красная стена: по ней можно бежать
 export const POOL = 251;          // бассейн в подземке: упал — конец
+export const LAUNCH = 250;        // красный трамплин: подбрасывает на верхушку небоскрёба
+export const LAUNCH_ROWS = 4;     // через сколько рядов приземляемся после трамплина
 export const BRIDGE_BOTTOM = 1.1; // просвет под мостом
 export const BRIDGE_TOP = 2 * LEVEL; // верх моста на уровне крыши «2»
 
 // Ярусы: улица, крыши, подземка. Высота пола яруса.
-export const TIERS = { street: 0, roof: 8, under: -6 };
+export const TIERS = { street: 0, roof: 8, under: -6, sky: 40 };
 export const CEIL_H = 5;          // высота потолка в тоннеле
 
-const CHAR_CODE = { '.': 0, '1': 1, '2': 2, '3': 3, '#': WALL, b: BRIDGE, _: VOID, w: RUNWALL, '~': POOL };
+const CHAR_CODE = { '.': 0, '1': 1, '2': 2, '3': 3, '#': WALL, b: BRIDGE, _: VOID, w: RUNWALL, '~': POOL, L: LAUNCH };
 
 // у каждого ряда: b0/b1 — высота пола в начале и в конце ряда (рампа, если разные),
 // cover — ряд в тоннеле (есть потолок)
@@ -136,6 +138,12 @@ export function transitions(rows, r, c, out) {
   const n = rows.length;
   const row = rows[r], v = row[c];
   if (!walk(v)) return out;
+  if (v === LAUNCH) {
+    // трамплин бросает строго вперёд, на LAUNCH_ROWS рядов
+    const rl = r + LAUNCH_ROWS;
+    if (rl < n && walk(rows[rl][c]) && rows[rl][c] !== BRIDGE) out.push(rl, c);
+    return out;
+  }
   if (r + 1 < n) {
     for (let d = -1; d <= 1; d++) {
       const c2 = mod(c + d, COLS);
@@ -312,6 +320,7 @@ export class World {
       if (p.to !== p.tier) {
         if (this.tier === 'street') w *= distance < 120 ? 0 : Math.min(1, Math.max(0, (age - 1) / 3));
         else if (this.tier === 'under') w *= age < 4 ? 0 : age < 6 ? 1 : 20; // подземка — подольше
+        else if (this.tier === 'roof' && p.to === 'sky') w *= age < 1 ? 0 : 1;  // с крыш — иногда ещё выше
         else w *= age < 2 ? 0 : age < 4 ? 1 : 20;
       }
       return { p, w };
