@@ -87,8 +87,8 @@ function transformRows(rows, shift, mirror) {
 // Модель на уровне рядов: за один ряд игрок смещается максимум на 1 колонку,
 // забирается максимум на 1 уровень, спрыгивает с любой высоты,
 // может перепрыгнуть один ряд (провал, канал, бассейн или улицу между домами),
-// может пробежать по красной стене до 3 рядов и оттолкнуться на соседнюю полосу —
-// в том числе на вторую красную стену с другой стороны (ещё до 3 рядов).
+// может пробежать по красной стене до 3 рядов и оттолкнуться на соседнюю полосу
+// или прямо на красную стену напротив — и так по очереди.
 // Под мост (b) можно только с уровня пола — подкатом.
 // Высоты сравниваются абсолютные: у рядов разный пол (улица, крыши, тоннель).
 const SOLIDISH = (v) => v === WALL || v === RUNWALL;
@@ -152,23 +152,26 @@ export function transitions(rows, r, c, out) {
     const x = cell(rr, cc);
     if (walk(x) && x !== BRIDGE && hAt(rows[rr], x, false) <= hs + LEVEL + 0.01) out.push(rr, mod(cc, COLS));
   };
-  for (const d of [-1, 1]) {
-    if (cell(r, c + d) !== RUNWALL) continue; // прилипаем к стене, которая уже рядом
-    for (let j1 = 1; j1 <= RUN_MAX; j1++) {
-      const r1 = r + j1;
-      if (r1 >= n || cell(r1, c + d) !== RUNWALL || !passable(r1, c)) break;
-      land(r1 + 1, c);
-      // толчок от стены на соседнюю полосу
-      if (!passable(r1, c - d)) continue;
-      land(r1 + 1, c - d);
-      // …и на вторую красную стену с другой стороны
-      for (let j2 = 1; j2 <= RUN_MAX; j2++) {
-        const r2 = r1 + j2;
-        if (r2 >= n || cell(r2, c - 2 * d) !== RUNWALL || !passable(r2, c - d)) break;
-        land(r2 + 1, c - d);
-        if (passable(r2, c)) land(r2 + 1, c);
+  // бег по стене: до 3 рядов; толчок — прямо к противоположной красной стене (до 3 полос),
+  // и так по очереди, до 5 стен подряд
+  const run = (r0, c0, d, depth) => {
+    for (let j = 1; j <= RUN_MAX; j++) {
+      const r1 = r0 + j;
+      if (r1 >= n || cell(r1, c0 + d) !== RUNWALL || !passable(r1, c0)) break;
+      land(r1 + 1, c0);
+      // толчок от стены: на соседнюю полосу или к стене напротив
+      if (!passable(r1, c0 - d)) continue;
+      land(r1 + 1, c0 - d);
+      if (depth >= 5) continue;
+      for (let k = 1; k <= 3; k++) {
+        const cc = c0 - d * k;
+        if (!passable(r1, cc)) break;
+        if (r1 + 1 < n && cell(r1 + 1, cc - d) === RUNWALL) { run(r1, cc, -d, depth + 1); break; }
       }
     }
+  };
+  for (const d of [-1, 1]) {
+    if (cell(r, c + d) === RUNWALL) run(r, c, d, 1); // прилипаем к стене, которая уже рядом
   }
   return out;
 }

@@ -129,6 +129,11 @@ const frag = /* glsl */ `
       col = 0.34;
       float lx = abs(fract(vPos.x / uCell) - 0.5) * uCell;
       float seg = step(fract(vPos.z / 2.0), 0.72);
+      // liminal: одни лампы мигают, другие перегорели
+      float lid = floor(vPos.z / 2.0) * 7.13 + floor(vPos.x / uCell) * 3.71 + vTop * 1.37;
+      float lh = fract(sin(lid) * 43758.5453);
+      if (lh < 0.08) seg = 0.0;
+      else if (lh > 0.9) seg *= step(0.35, fract(sin(floor(uTime * 14.0) * 12.9898 + lid) * 43758.5453));
       float lamp = (1.0 - smoothstep(0.1, 0.1 + fwidth(vPos.x) * 1.5 + 0.02, lx)) * seg;
       col = mix(col, 1.35, lamp);
       col *= 1.0 + vLight * 0.4;
@@ -214,15 +219,17 @@ const frag = /* glsl */ `
     // цвет: в белом мире — редкие акценты, как в Mirror's Edge
     vec3 c3 = vec3(col);
     vec3 red = vec3(1.0, 0.2, 0.15);
-    if (vTint > 0.5 && vTint < 1.5) c3 = col * red * 0.95;                      // красные трубы
+    // Runner Vision: издалека предметы белые, краснеют по мере приближения
+    float near = 1.0 - smoothstep(16.0, 34.0, vDz);
+    if (vTint > 0.5 && vTint < 1.5) c3 = mix(c3, col * red * 0.95, near);      // красные трубы
     else if (vTint > 3.5 && vTint < 4.5) {
       // Runner Vision: красный только верх и кромка — «хватайся здесь»
       float k = n.y > 0.5 ? 1.0 : 1.0 - smoothstep(0.2, 0.26, vTop - y);
-      c3 = mix(c3, col * red * 1.1, k);
+      c3 = mix(c3, col * red * 1.1, k * near);
     } else if (vTint > 4.5 && vTint < 5.5) {
       // красная стена: белая панель с красными полосами на высоте бега
       float k = step(fract(y / 1.1), 0.32);
-      c3 = mix(c3 * 1.05, vec3(col * 0.9) * red, k);
+      c3 = mix(c3 * 1.05, vec3(col * 0.9) * red, k * near);
     }
     else if (vTint > 1.5 && vTint < 2.5) c3 = col * vec3(0.8, 0.97, 1.04);     // бирюзовая плитка
     else if (vTint > 2.5 && vTint < 3.5) c3 = col * vec3(0.62, 0.9, 1.0);      // вода
@@ -706,8 +713,8 @@ export function buildInstanceMesh(inst, materials, world) {
       for (let rr = r; rr < r + h; rr++) {
         const base = Math.min(rows[rr].b0, rows[rr].b1);
         const za = rr * ROW + (rr === r ? 0.15 : 0), zb = (rr + 1) * ROW - (rr === r + h - 1 ? 0.15 : 0);
-        if (!solid(rows[rr][((c - 1) % COLS + COLS) % COLS])) b.boxGeo(x0 + 0.05, x0 + 0.17, za, zb, base + 4.6, 4, base + 0.3);
-        if (!solid(rows[rr][(c + w) % COLS])) b.boxGeo(x1 - 0.17, x1 - 0.05, za, zb, base + 4.6, 4, base + 0.3);
+        if (!solid(rows[rr][((c - 1) % COLS + COLS) % COLS])) b.boxGeo(x0 + 0.05, x0 + 0.17, za, zb, base + 9.5, 4, base + 0.3);
+        if (!solid(rows[rr][(c + w) % COLS])) b.boxGeo(x1 - 0.17, x1 - 0.05, za, zb, base + 9.5, 4, base + 0.3);
       }
       b.tint = 0;
     }
@@ -808,12 +815,16 @@ export function buildInstanceMesh(inst, materials, world) {
 
   // 7. пропасти между крышами: у края пути — улица и низкие дома (видно, что там обрыв),
   //    дальше от пути — дома средней высоты, чтобы вокруг был город, а не пустое небо
+  // «у пути» — рядом есть пол (в пределах нескольких рядов: длинные пропасти)
+  // или красная стена: между ними бегут по стенам, там должно быть пусто
   const nearPath = (r, c) => {
-    for (let dr = -1; dr <= 1; dr++) {
-      const row = rows[r + dr] || world.rows[inst.rowStart + r + dr];
+    for (let dr = -4; dr <= 4; dr++) {
+      const row = world.rows[inst.rowStart + r + dr];
       if (!row) continue;
       for (let dc = -1; dc <= 1; dc++) if (walk(row[((c + dc) % COLS + COLS) % COLS])) return true;
     }
+    const row = rows[r];
+    for (let dc = -3; dc <= 3; dc++) if (row[((c + dc) % COLS + COLS) % COLS] === RUNWALL) return true;
     return false;
   };
   for (let r = 0; r < nRows; r++) {

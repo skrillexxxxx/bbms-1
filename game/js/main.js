@@ -9,6 +9,7 @@ import {
   canStep, canJumpOver, aliveBackward, walk, lv,
 } from './world.js';
 import { createMaterial, createStarMaterial, buildInstanceMesh } from './render.js';
+import { createSound } from './sound.js';
 
 // ---------- параметры игрока (их же учитывает проверка паттернов) ----------
 const P = {
@@ -55,6 +56,7 @@ const useBloom = params.get('bloom') !== '0';
 const useBlur = params.get('blur') !== '0';
 const showDebug = params.has('debug');
 const autopilot = params.has('auto');
+const sound = createSound(params.get('sound') !== '0' && !autopilot);
 const timeScale = autopilot ? Number(params.get('ts')) || 1 : 1; // для тестов: ускорить время
 
 // ---------- рендер ----------
@@ -184,7 +186,7 @@ const pl = {
   lane: 6, pending: 0, pendT: 0,
   coyote: 0, jumpBuf: 0, slideT: 0, slideQueued: false, boost: 0, hopKeep: false,
   slideChain: 0, slideEndAt: -9,
-  wall: 0, wallT: 0, wallCool: 0, wallLast: 0,
+  wall: 0, wallT: 0, wallCool: 0, wallLast: 0, autoAttach: 0,
 };
 const cam = { roll: 0, yaw: 0, pitch: 0, dip: 0, slide: 0, bob: 0, fov: 82, slideSide: 1, lookY: 1.2, vx: 0, lines: 0, base: 0, wall: 0 };
 let gameTime = 0;
@@ -202,7 +204,7 @@ function reset(s) {
   Object.assign(pl, {
     x: 6 * CELL + CELL / 2, z: ROW * 0.5, y: 0, vx: 0, vy: 0, grounded: true,
     coyote: 0, jumpBuf: 0, slideT: 0, slideQueued: false, boost: 0, hopKeep: false,
-    slideChain: 0, slideEndAt: -9, wall: 0, wallT: 0, wallCool: 0, wallLast: 0,
+    slideChain: 0, slideEndAt: -9, wall: 0, wallT: 0, wallCool: 0, wallLast: 0, autoAttach: 0,
   });
   Object.assign(pl, { lane: 6, pending: 0, pendT: 0 });
   Object.assign(cam, { roll: 0, yaw: 0, pitch: 0, dip: 0, slide: 0, bob: 0, lookY: 1.2, vx: 0, lines: 0, base: 0, wall: 0 });
@@ -308,6 +310,8 @@ function lanePhysics(dt, v, h) {
     const d = Math.sign(pl.pending);
     if (pl.wall === d) {
       pl.pending = 0; // свайп в стену, по которой бежим, — ничего
+    } else if (pl.wall === -d) {
+      wallKick(); // свайп от стены — толчок, прямо к стене напротив
     } else if (sideFree(pl.lane + d)) {
       if (pl.wall) endWallRun();
       pl.lane += d; pl.pending -= d;
@@ -360,6 +364,30 @@ function startWallRun(d) {
   pl.hopKeep = true;
   if (sliding()) pl.slideT = 0;
   cam.pitch -= 0.03;
+}
+
+// Толчок от стены: вверх и вбок. Если напротив (до 3 полос) есть красная стена —
+// летим прямо к ней и прилипаем сами: со стены на стену — одним свайпом.
+function wallKick() {
+  const d = -pl.wall;
+  endWallRun();
+  pl.vy = P.wallJumpV * jumpScale(speedNow());
+  pl.jumpBuf = 0; pl.pending = 0;
+  pl.boost = Math.min(P.boostMax, pl.boost + P.wallJumpBoost);
+  pl.hopKeep = true;
+  const open = (lane) => { const v = world.cellAt(wrapX(laneX(lane)), pl.z); return v !== WALL && v !== RUNWALL; };
+  let target = open(pl.lane + d) ? pl.lane + d : pl.lane, attach = 0;
+  for (let k = 1; k <= 3; k++) {
+    const lane = pl.lane + d * k;
+    if (!open(lane)) break;
+    const wx = laneX(lane + d);
+    if (isRunwallAt(wx, pl.z + 2) || isRunwallAt(wx, pl.z + 5)) { target = lane; attach = d; break; }
+  }
+  pl.lane = target;
+  pl.autoAttach = attach;
+  pl.vx += d * 6;
+  pl.wallCool = 0.1;
+  cam.pitch += 0.05;
 }
 
 function endWallRun() {
@@ -460,17 +488,17 @@ function physicsStep(dt) {
 
   pl.coyote = pl.grounded ? P.coyote : pl.coyote - dt;
   pl.jumpBuf -= dt;
+  // прилипаем к стене напротив, долетев до неё
+  if (pl.autoAttach && !pl.grounded && !pl.wall && Math.abs(pl.x - laneX(pl.lane)) < 1.2
+    && isRunwallAt(laneX(pl.lane + pl.autoAttach), pl.z)) {
+    const d = pl.autoAttach;
+    pl.autoAttach = 0;
+    startWallRun(d);
+  }
+  if (pl.grounded) pl.autoAttach = 0;
   if (pl.jumpBuf > 0 && pl.wall) {
-    // прыжок от стены: толчок вверх и на соседнюю полосу, плюс разгон — стена как трамплин
-    const d = -pl.wall;
-    endWallRun();
-    pl.vy = P.wallJumpV * jumpScale(v); pl.jumpBuf = 0;
-    pl.boost = Math.min(P.boostMax, pl.boost + P.wallJumpBoost);
-    pl.hopKeep = true;
-    pl.lane += d; pl.pending = 0;
-    pl.vx += d * 6;
-    pl.wallCool = 0.12;
-    cam.pitch += 0.05;
+    // прыжок на стене — тот же толчок, что и свайп от стены
+    wallKick();
   } else if (pl.jumpBuf > 0 && pl.coyote > 0) {
     const fromSlide = sliding();
     pl.vy = P.jumpV * jumpScale(v); pl.grounded = false; pl.coyote = 0; pl.jumpBuf = 0;
@@ -572,11 +600,7 @@ function autopilotStep() {
     }
     return;
   }
-  if (!pl.grounded && pl.wallLast && pl.pending === 0) {
-    // после толчка — на вторую стену, если она есть и под нами пропасть
-    const d = -pl.wallLast;
-    if (world.cellAt(wrapX(laneX(pl.lane + d)), pl.z + 1) === RUNWALL && !walk(code(ri + 1, cur))) { laneShift(d); return; }
-  }
+  if (pl.autoAttach) return; // летим к стене напротив
   // пропасть длиннее прыжка — к красной стене
   for (const g of [ri + 1, ri + 2]) {
     if (!pl.grounded || walk(code(g, cur)) || !passable(g, cur) || walk(code(g + 1, cur))) continue;
@@ -609,6 +633,7 @@ let touch = null;
 const SWIPE = 28; // пикселей
 canvas.addEventListener('pointerdown', (e) => {
   e.preventDefault();
+  sound.unlock();
   if (state === 'ready') { start(); return; }
   if (state !== 'run') return;
   touch = { id: e.pointerId, x: e.clientX, x0: e.clientX, y0: e.clientY, sx: e.clientX, sy: e.clientY, st: performance.now(), t: performance.now(), swiped: false };
@@ -643,6 +668,7 @@ canvas.addEventListener('pointerup', endTouch);
 canvas.addEventListener('pointercancel', endTouch);
 
 window.addEventListener('keydown', (e) => {
+  sound.unlock();
   if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'KeyA', 'KeyD', 'KeyW', 'KeyS', 'Space'].includes(e.code)) e.preventDefault();
   if (state === 'ready' && (e.code === 'Space' || e.code === 'Enter')) { start(); return; }
   if (state === 'dead' && ui.over.classList.contains('show') && e.code === 'Enter') { restart(false); return; }
@@ -661,8 +687,8 @@ function restart(sameSeed) {
   reset(sameSeed ? seed : newSeed());
   start();
 }
-$('again').addEventListener('click', () => restart(false));
-$('same').addEventListener('click', () => restart(true));
+$('again').addEventListener('click', () => { sound.unlock(); restart(false); });
+$('same').addEventListener('click', () => { sound.unlock(); restart(true); });
 
 // ---------- камера ----------
 const damp = (cur, target, rate, dt) => cur + (target - cur) * (1 - Math.exp(-rate * dt));
@@ -754,6 +780,12 @@ function frame(now) {
   cam.base = damp(cam.base, world.baseAt(pl.z), 4, dt);
   materials.main.uniforms.uB.value = cam.base;
   materials.main.uniforms.uTime.value = gameTime;
+  // в подземке дымка ближе — пустые коридоры тонут в молочном свете
+  const deep = Math.min(1, Math.max(0, -cam.base / 5));
+  materials.main.uniforms.uFogNear.value = LZ * (2.2 - 1.0 * deep);
+  materials.main.uniforms.uFogFar.value = LZ * (6.0 - 2.6 * deep);
+  materials.main.uniforms.uFogColor.value.setRGB(1 - 0.05 * deep, 1 - 0.01 * deep, 1 - 0.02 * deep);
+  sound.update(deep, state === 'run' ? speedNow() : 0);
   materials.star.uniforms.uB.value = cam.base;
   updateCamera(dt, state === 'run');
 
