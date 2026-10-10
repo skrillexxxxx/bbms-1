@@ -302,7 +302,8 @@ const laneX = (lane) => lane * CELL + CELL / 2;
 // Свайп вбок: копим запрос, выполняем, как только соседняя полоса свободна.
 function laneShift(d) {
   if (state !== 'run') return;
-  pl.pending = Math.max(-2, Math.min(2, pl.pending + d));
+  // в очереди — не больше одной смены полосы: лишний свайп не «выстрелит» в стену на выходе из поворота
+  pl.pending = Math.max(-1, Math.min(1, pl.pending + d));
   // свайп к красной стене, которая ещё впереди, ждёт дольше
   pl.pendT = runwallSoon(d, speedNow()) ? 0.55 : P.laneBuffer;
 }

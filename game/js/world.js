@@ -331,6 +331,22 @@ export class World {
     return pool[pool.length - 1].p;
   }
 
+  // На сколько колонок надо сместиться на стыке: от достижимых клеток последнего ряда
+  // до ближайшей проходимой клетки первого ряда нового паттерна.
+  _joinShift(rows) {
+    const F = this.reach[this.reach.length - 1];
+    let best = COLS;
+    for (let p = 0; p < COLS; p++) {
+      if (!F[p]) continue;
+      for (let q = 0; q < COLS; q++) {
+        if (!walk(rows[0][q])) continue;
+        const d = Math.min(mod(p - q, COLS), mod(q - p, COLS));
+        if (d < best) best = d;
+      }
+    }
+    return best;
+  }
+
   // Пробует пристыковать ряды; проверяет честность на стыке (предыдущий паттерн + новый).
   _tryRows(rows) {
     const reach = reachThrough(this.rows.slice(-8), this.reach.slice(-8), rows);
@@ -366,7 +382,10 @@ export class World {
         const rows = transformRows(p.parsed, shift, mirror);
         const res = this._tryRows(rows);
         if (!res) continue;
-        const score = res.doomed + this.rng() * 2;
+        // стык без лишних виляний: вход нового паттерна — напротив выхода предыдущего
+        // (особенно в тоннеле: за стенами и потолком не видно, сколько ещё сворачивать)
+        const shiftCost = this.tier === 'under' ? 6 : 3;
+        const score = res.doomed + this.rng() * 2 + shiftCost * this._joinShift(rows);
         if (!best || score < best.score) best = { score, rows, res, shift, mirror };
       }
       if (best) return this._push(p, best.rows, best.res.reach, best.shift, best.mirror);
