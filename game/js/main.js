@@ -313,19 +313,25 @@ function laneShift(d) {
 function longJumpTarget(v) {
   const hole = (dz) => supportAt(pl.x, pl.z + dz, pl.y) === -INF;
   if (!hole(4) || !hole(8)) return null;
+  // ближайшая красная стена в пределах 3 полос; ближе по полосам — важнее
   let best = null;
-  for (const k of [1, 2, -1, -2]) {
+  for (const k of [1, -1, 2, -2, 3, -3]) {
+    if (best && Math.abs(k) > Math.abs(best.k)) {
+      if (!best.both) break;
+    }
     const x = laneX(pl.lane + k);
-    for (let dz = 2; dz <= Math.max(12, v * 0.9); dz += 1) {
+    for (let dz = 2; dz <= Math.max(14, v * 1.0); dz += 1) {
       if (isRunwallAt(x, pl.z + dz)) {
-        if (!best || dz < best.dz - 0.5) best = { dz, k };
-        else if (Math.abs(dz - best.dz) <= 0.5 && Math.sign(k) !== Math.sign(best.k)) best.both = true;
+        if (!best) best = { dz, k };
+        else if (Math.abs(k) === Math.abs(best.k) && Math.sign(k) !== Math.sign(best.k)) best.both = true;
         break;
       }
     }
   }
   if (!best) return null;
-  return best.both ? { d: 0 } : { d: Math.sign(best.k), far: Math.abs(best.k) === 2 };
+  if (best.both) return { d: 0, lane: pl.lane };
+  const d = Math.sign(best.k);
+  return { d, lane: pl.lane + best.k - d }; // полоса вплотную к стене
 }
 
 // Красная стена сбоку — сейчас или в ближайшие ~0.5 с бега?
@@ -348,6 +354,7 @@ function lanePhysics(dt, v, h) {
   };
   if (pl.pending !== 0) {
     const d = Math.sign(pl.pending);
+    if (pl.autoAttach === -d) pl.autoAttach = 0; // свайп игрока важнее подсказки
     if (pl.wall === d) {
       pl.pending = 0; // свайп в стену, по которой бежим, — ничего
     } else if (pl.wall === -d) {
@@ -590,6 +597,21 @@ function physicsStep(dt) {
 
   pl.coyote = pl.grounded ? P.coyote : pl.coyote - dt;
   pl.jumpBuf -= dt;
+  // в полёте красная стена прямо по курсу — не разбиваемся о торец, а уходим на соседнюю
+  // открытую полосу и бежим по ней (своё направление свайпа — в приоритете)
+  if (!pl.grounded && !pl.wall && !pl.launch) {
+    const za = pl.z + r + v * 0.3;
+    if (isRunwallAt(laneX(pl.lane), za)) {
+      const open = (lane) => { const c = world.cellAt(wrapX(laneX(lane)), za); return c !== WALL && c !== RUNWALL; };
+      const pref = pl.autoAttach ? -pl.autoAttach : Math.sign(pl.vx) || -1;
+      for (const side of [pref, -pref]) {
+        if (!open(pl.lane + side)) continue;
+        pl.lane += side;
+        pl.autoAttach = -side; pl.autoT = 0.8;
+        break;
+      }
+    }
+  }
   // прилипаем к стене напротив, долетев до неё
   if (pl.autoAttach && !pl.wall && Math.abs(pl.x - laneX(pl.lane)) < 1.2 && canWallRun(pl.autoAttach)) {
     const d = pl.autoAttach;
@@ -610,7 +632,7 @@ function physicsStep(dt) {
       pl.longT = 1.0;
       pl.vy = P.jumpV; // высота как у обычного прыжка, а летим вдвое дольше (гравитация слабее)
       if (lj.d) {
-        if (lj.far) pl.lane += lj.d; // стена через полосу — сразу смещаемся к ней
+        pl.lane = lj.lane; // летим к полосе вплотную к стене
         pl.autoAttach = lj.d; pl.autoT = 1.4;
       }
     }
