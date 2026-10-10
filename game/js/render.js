@@ -188,14 +188,14 @@ const frag = /* glsl */ `
 
         // ночью окна загораются: каждое — своё, по хешу дома, этажа и номера окна
         vec2 bid = vec2(vBox.x * 1.7 + vBox.w * 0.37, vBox.y * 0.91 + vBox.z * 1.3);
-        // окна — фон: тусклые (ниже порога блума), у земли ещё темнее — не спорят с путём
-        float winK = mix(0.35, 1.0, smoothstep(6.0, 30.0, y));
+        // окна яркие, но горит меньше половины; у земли чуть тусклее — не спорят с путём
+        float winK = mix(0.6, 1.0, smoothstep(6.0, 30.0, y));
         if (st == 2 && inBody) {
           // ленточные окна — чёрные полосы, как на скринах
           if (fy > 0.3 && fy < 0.78) {
             col = 0.06;
             float h = h21(vec2(floor((u - uMin) / 3.4), floor(y / floorH)) + bid);
-            if (h > 0.62) emit += WARM * winK * (0.25 + 0.3 * h) * uNight;
+            if (h > 0.6) emit += WARM * winK * (0.75 + 0.55 * h) * uNight;
           }
         } else if (st == 3 && inBody) {
           // сетка окон
@@ -205,7 +205,7 @@ const frag = /* glsl */ `
             float h = h21(vec2(floor((u - uMin) / 2.6), floor(y / floorH)) + bid);
             // большинство тёплые, некоторые — холодный свет экранов
             vec3 wc = h > 0.93 ? vec3(0.7, 0.85, 1.1) : WARM;
-            if (h > 0.65) emit += wc * winK * (0.25 + 0.3 * h) * uNight;
+            if (h > 0.6) emit += wc * winK * (0.75 + 0.55 * h) * uNight;
           }
         }
         float dt = vTop - y; // расстояние от верха предмета
