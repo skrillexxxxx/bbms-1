@@ -355,7 +355,7 @@ function ensureWorld() {
     scene.add(m);
   }
   meshes = meshes.filter((m) => {
-    if (m.userData.zEnd < pl.z - ROW * 3) {
+    if (m.userData.zEnd < pl.z - ROW * 6) {
       scene.remove(m); disposeGroup(m); return false;
     }
     return true;
@@ -947,6 +947,7 @@ function start() {
   ui.hud.classList.add('show');
   state = 'run';
   runStartT = gameTime;
+  if (slideSnd) { slideSnd = false; sound.slide(false, true); }
   resetWeather();
   sound.muffle(false);
   runMonkeys = 0;
@@ -1229,7 +1230,7 @@ function renderSunShadow(deep) {
   if (k <= 0.01) return;
   const d = u.uSunDir.value;
   // центр карты — чуть впереди игрока: туда, что видно
-  _sc.set(0, cam.base + 10, 100);
+  _sc.set(0, cam.base + 10, 95);
   sunCam.position.copy(_sc).addScaledVector(d, 300);
   sunCam.up.set(0, 0, 1);
   sunCam.lookAt(_sc);
@@ -1501,7 +1502,8 @@ function frame(now) {
     wasGroundedSnd = pl.grounded;
     // звук скольжения — только подкат по полу (на стене — шаги). Подкат сразу за подкатом
     // не обрывает звук: выход звучит, только если не скользим ~0.12 с
-    if (sliding()) { slideOffT = 0; if (!slideSnd) { slideSnd = true; sound.slide(true); } }
+    // только пока бежим: смерть в подкате глушит звук, и в том же кадре его нельзя запускать заново
+    if (state === 'run' && sliding()) { slideOffT = 0; if (!slideSnd) { slideSnd = true; sound.slide(true); } }
     else if (slideSnd && (slideOffT += dt) > 0.12) { slideSnd = false; sound.slide(false); }
   } else if (state === 'ready') {
     // медленный «облёт» на стартовом экране

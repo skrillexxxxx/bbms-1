@@ -462,7 +462,7 @@ export function createMaterial({ linearOut }) {
       uSunMat: { value: new THREE.Matrix4() },
       uSunShadow: { value: null },
       uSun: { value: 0 },
-      uSunDir: { value: new THREE.Vector3(0.55, 1.05, -1.0).normalize() },
+      uSunDir: { value: new THREE.Vector3(0.75, 1.45, 0.5).normalize() }, // спереди-сбоку: тени отбрасывает то, что впереди и всегда есть
     },
   });
 }
