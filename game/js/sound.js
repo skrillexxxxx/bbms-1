@@ -6,7 +6,7 @@ const MUSIC_URL = 'audio/ambient.mp3';
 const MUSIC_GAIN = 0.8;
 // смерть: музыка уходит «под воду» — срез высоких до MUFFLE_HZ и на 3 дБ тише
 const OPEN_HZ = 20000, MUFFLE_HZ = 350, MUFFLE_GAIN = 0.708; // −3 дБ
-const MUFFLE_IN = 1.2, MUFFLE_OUT = 0.8; // секунды
+const MUFFLE_IN = 2.2, MUFFLE_OUT = 1.2; // секунды
 
 // mp3 в начале несёт тишину от кодировщика (~50 мс) — на стыке лупа она слышна как провал.
 // Ищем первый и последний «звучащий» сэмпл и крутим луп между ними.
@@ -25,6 +25,7 @@ function audibleRange(buf) {
 
 export function createSound(enabled) {
   let ctx = null, master = null, lp = null, duck = null, started = false, muffled = false;
+  let m = 0, lastT = 0; // m: 0 — чистый звук, 1 — «под водой»
   // файл тянем сразу, а декодируем после первого касания (раньше AudioContext на iOS не создать)
   const raw = enabled ? fetch(MUSIC_URL).then((r) => r.arrayBuffer()).catch(() => null) : null;
 
@@ -56,7 +57,6 @@ export function createSound(enabled) {
     lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = OPEN_HZ; lp.Q.value = 0.7;
     duck = ctx.createGain(); duck.gain.value = 1;
     master.connect(lp); lp.connect(duck); duck.connect(ctx.destination);
-    if (muffled) { lp.frequency.value = MUFFLE_HZ; duck.gain.value = MUFFLE_GAIN; }
     // свернули Safari — музыка замолкает, вернулись — продолжает
     document.addEventListener('visibilitychange', () => {
       if (document.hidden) ctx.suspend(); else ctx.resume();
@@ -72,20 +72,22 @@ export function createSound(enabled) {
       if (!started) { started = true; startMusic().catch(() => { started = false; }); }
     },
     // true — плавно глушим (смерть), false — плавно возвращаем как было (снова играем)
-    muffle(on) {
-      muffled = on;
-      if (!ctx) return;
-      const t = ctx.currentTime, dur = on ? MUFFLE_IN : MUFFLE_OUT;
-      // экспоненциально по частоте — на слух срез идёт равномерно, без провала в начале
-      for (const [param, to] of [[lp.frequency, on ? MUFFLE_HZ : OPEN_HZ], [duck.gain, on ? MUFFLE_GAIN : 1]]) {
-        // если прошлый переход ещё идёт — продолжаем с того места, где он сейчас
-        if (param.cancelAndHoldAtTime) param.cancelAndHoldAtTime(t);
-        else { param.cancelScheduledValues(t); param.setValueAtTime(param.value, t); }
-        param.exponentialRampToValueAtTime(to, t + dur);
-      }
-    },
+    muffle(on) { muffled = on; },
+    // зовётся каждый кадр. Переход ведём сами, а не расписанием AudioParam:
+    // Safari на iPhone выполняет такие рампы мгновенно — звук срезался рывком.
     // deep: 0 на улице … 1 в подземке; speed — скорость бега; high: 0 … 1 на небоскрёбах.
-    // Пока музыка от этого не зависит — сюда же лягут шаги и звуки действий.
-    update(deep, speed, high = 0) {},
+    update(deep, speed, high = 0) {
+      if (!ctx) return;
+      const now = performance.now() / 1000;
+      const dt = Math.min(0.1, now - (lastT || now)); lastT = now;
+      m = muffled ? Math.min(1, m + dt / MUFFLE_IN) : Math.max(0, m - dt / MUFFLE_OUT);
+      const e = m * m * (3 - 2 * m); // smoothstep: мягкий старт и мягкий конец
+      // по частоте — в логарифме, и со сдвигом к низам: трек и так глухой, всё выше ~3 кГц
+      // почти не слышно, поэтому быстро проходим верх и долго плывём в слышимой полосе
+      const f = MUFFLE_HZ * Math.pow(OPEN_HZ / MUFFLE_HZ, Math.pow(1 - e, 2.2));
+      const t = ctx.currentTime;
+      lp.frequency.setTargetAtTime(f, t, 0.03);
+      duck.gain.setTargetAtTime(1 + (MUFFLE_GAIN - 1) * e, t, 0.03);
+    },
   };
 }
