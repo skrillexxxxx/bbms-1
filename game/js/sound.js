@@ -231,9 +231,9 @@ export function createSound(enabled) {
     space(left, right, narrow) {
       if (!ctx || !nearL) return;
       const t = ctx.currentTime;
-      nearL.gain.setTargetAtTime(0.55 * left, t, 0.12);
-      nearR.gain.setTargetAtTime(0.55 * right, t, 0.12);
-      nearC.gain.setTargetAtTime(0.6 * narrow, t, 0.2);
+      nearL.gain.setTargetAtTime(1.2 * left, t, 0.12);
+      nearR.gain.setTargetAtTime(1.2 * right, t, 0.12);
+      nearC.gain.setTargetAtTime(1.3 * narrow, t, 0.2);
     },
     // deep: 0 на улице … 1 в подземке; speed — скорость бега; high: 0 … 1 на небоскрёбах.
     update(deep, speed, high = 0) {
