@@ -81,14 +81,16 @@ function createBlurPass() {
       void main() {
         vec2 d = vUv - uCenter;
         float dist = length(d * vec2(uAspect, 1.0));
-        vec2 vel = d * uStrength * smoothstep(0.08, 0.7, dist) + uLateral;
+        vec2 vel = d * uStrength * smoothstep(0.04, 0.55, dist) + uLateral;
         if (dot(vel, vel) < 1e-7) { gl_FragColor = texture2D(tDiffuse, vUv); return; }
+        // 12 выборок со сдвигом-шумом на пиксель: сильный смаз без «лесенки» из копий
+        float jitter = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453) / 12.0;
         vec4 acc = vec4(0.0);
-        for (int i = 0; i < 8; i++) {
-          float t = float(i) / 7.0 - 0.5;
+        for (int i = 0; i < 12; i++) {
+          float t = (float(i) / 12.0 + jitter) - 0.5;
           acc += texture2D(tDiffuse, vUv - vel * t);
         }
-        gl_FragColor = acc / 8.0;
+        gl_FragColor = acc / 12.0;
       }
     `,
   });
@@ -558,8 +560,9 @@ function frame(now) {
     blurPass.uniforms.uAspect.value = camera.aspect;
     const run = state === 'run' ? 1 : 0;
     const sp = Math.min(1, Math.max(0, (speedNow() - 12) / 14));
-    blurPass.uniforms.uStrength.value = run * (0.015 + sp * 0.05 + cam.slide * 0.025);
-    blurPass.uniforms.uLateral.value.set(run * -cam.vx * 0.0007, 0);
+    // сильнее на разгоне, в подкате и при бусте после подката
+    blurPass.uniforms.uStrength.value = run * (0.04 + sp * 0.11 + cam.slide * 0.05 + pl.boost * 0.006);
+    blurPass.uniforms.uLateral.value.set(run * -cam.vx * 0.0012, 0);
   }
   if (composer) composer.render(); else renderer.render(scene, camera);
 
