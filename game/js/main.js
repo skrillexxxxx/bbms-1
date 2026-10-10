@@ -11,7 +11,7 @@ import {
 import { createMaterial, createStarMaterial, buildInstanceMesh } from './render.js';
 import { createSound } from './sound.js';
 import { createRecorder, shareFile } from './recorder.js';
-import { loadMonkey, createMonkeyMaterial, placeMonkeys } from './monkeys.js';
+import { loadMonkey, createMonkeyMaterial, placeMonkeys, monkeyGeometry } from './monkeys.js';
 
 // ---------- параметры игрока (их же учитывает проверка паттернов) ----------
 const P = {
@@ -82,6 +82,17 @@ const materials = {
   monkey: createMonkeyMaterial({ linearOut: useBloom }),
 };
 const monkeyReady = loadMonkey();
+// шейдер обезьянки собираем сразу после загрузки, а не когда первая попадёт в кадр:
+// на iPhone сборка шейдера — заметное подвисание посреди забега
+monkeyReady.then(() => {
+  const g = monkeyGeometry();
+  if (!g) return;
+  const m = new THREE.Mesh(g, materials.monkey);
+  m.frustumCulled = false;
+  scene.add(m);
+  try { renderer.compile(scene, camera); } catch { /* не страшно */ }
+  scene.remove(m);
+});
 
 // Motion blur: смазывание по лучам от точки схода (весь мир летит из центра)
 // плюс горизонтальное — при резком уходе вбок. В центре кадра чётко.
@@ -1242,6 +1253,8 @@ let fpsAcc = 0, fpsN = 0, fps = 0;
 function frame(now) {
   requestAnimationFrame(frame);
   const dt = Math.min(0.05, (now - last) / 1000) * timeScale;
+  // подвисание — в запись забега: сколько длился кадр и где мы были
+  if (state === 'run' && last && now - last > 120) rec.event('hitch', { ms: now - last, z: pl.z, built, meshes: meshes.length });
   gameTime += dt;
   last = now;
 

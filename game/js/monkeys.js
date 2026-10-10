@@ -1,17 +1,19 @@
 // Красные обезьянки — собираем, как монетки. Модель — Suzanne из Blender (models/monkey.bin:
 // сжатые до int16 вершины и индексы, ~9 КБ). Рисуются через тот же изгиб мира, что и всё остальное.
-// Ставятся редко: цепочкой по 3 на «живых» клетках пути (куда точно можно добежать), не чаще чем раз в ~120 м.
+// Ставятся редко и поодиночке — ценный артефакт: на «живой» клетке пути (куда точно можно добежать),
+// не чаще чем раз в ~300 м, в среднем раз в ~600 м.
 
 import * as THREE from 'three';
 import { COLS, CELL, ROW, LEVEL, L, LZ, WALL, BRIDGE, LAUNCH, aliveBackward, walk, lv, mulberry32 } from './world.js';
 
 const SIZE = 1.1;          // ширина модели, м
 const HOVER = 1.15;        // высота центра над полом
-const TRAIL = 3;           // обезьянок в цепочке (по одной на ряд)
-const GAP_ROWS = 30;       // минимум рядов между цепочками
-const CHANCE = 0.55;       // шанс поставить цепочку в подходящем паттерне
+const TRAIL = 1;           // одна обезьянка, без цепочек
+const GAP_ROWS = 75;       // минимум рядов между обезьянками (~300 м)
+const CHANCE = 0.45;       // шанс поставить обезьянку в подходящем паттерне
 
 let geometry = null;
+export const monkeyGeometry = () => geometry;
 export async function loadMonkey() {
   try {
     const buf = await (await fetch('models/monkey.bin')).arrayBuffer();
