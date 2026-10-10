@@ -10,6 +10,7 @@ import {
 } from './world.js';
 import { createMaterial, createStarMaterial, buildInstanceMesh } from './render.js';
 import { createSound } from './sound.js';
+import { createRecorder, shareFile } from './recorder.js';
 
 // ---------- параметры игрока (их же учитывает проверка паттернов) ----------
 const P = {
@@ -178,7 +179,9 @@ resize();
 
 // ---------- UI ----------
 const $ = (id) => document.getElementById(id);
+const rec = createRecorder();
 const ui = {
+  rec: $('rec'), flag: $('flag'),
   save: $('save'), seeds: $('seeds'), seedList: $('seed-list'),
   start: $('start'), over: $('over'), hud: $('hud'),
   dist: $('dist'), debug: $('debug'), overDist: $('over-dist'),
@@ -304,6 +307,7 @@ const laneX = (lane) => lane * CELL + CELL / 2;
 // Свайп вбок: копим запрос, выполняем, как только соседняя полоса свободна.
 function laneShift(d) {
   if (state !== 'run') return;
+  rec.event('in', { a: d < 0 ? 'left' : 'right', z: pl.z });
   // в очереди — не больше одной смены полосы: лишний свайп не «выстрелит» в стену на выходе из поворота
   pl.pending = Math.max(-1, Math.min(1, pl.pending + d));
   // свайп к красной стене, которая ещё впереди, ждёт дольше
@@ -425,6 +429,7 @@ function canWallRun(d) {
 }
 
 function startWallRun(d) {
+  rec.event('wall', { d, z: pl.z, y: pl.y, lane: pl.lane });
   pl.wall = d;
   pl.fromLong = false;
   pl.jumpBuf = 0; // прыжок, нажатый до прилипания, — не толчок от стены сразу же
@@ -443,6 +448,7 @@ function startWallRun(d) {
 // летим прямо к ней и прилипаем сами: со стены на стену — одним свайпом.
 function wallKick() {
   const d = -pl.wall;
+  rec.event('kick', { d, z: pl.z, y: pl.y });
   endWallRun();
   pl.vy = P.wallJumpV * jumpScale(speedNow());
   pl.jumpBuf = 0; pl.pending = 0;
@@ -465,6 +471,7 @@ function wallKick() {
 }
 
 function endWallRun() {
+  rec.event('wallEnd', { d: pl.wall, z: pl.z, y: pl.y });
   pl.wallLast = pl.wall;
   pl.wall = 0;
   pl.wallCool = 0.2;
@@ -484,6 +491,7 @@ function startLaunch() {
   if (pl.wall) endWallRun();
   pl.slideT = 0; pl.pending = 0; pl.autoAttach = 0;
   const y1 = land.b0;
+  rec.event('launch', { z: pl.z, y: pl.y });
   pl.launch = { z0: pl.z, z1: (ri + LAUNCH_ROWS) * ROW + 1.5, y0: pl.y, y1, yc: Math.max(pl.y, y1) + 12 };
   pl.grounded = false;
   pl.boost = Math.min(P.boostMax, pl.boost + 3);
@@ -532,6 +540,7 @@ function physicsStep(dt) {
       if (pl.wall) endWallRun();
       pl.boost = 0; pl.hopKeep = false;
       pl.grabT = P.grabTime;
+      rec.event('grab', { z: pl.z, y: pl.y });
       cam.dip = Math.max(cam.dip, 0.55);
       cam.pitch -= 0.08;
       shake = Math.max(shake, 0.15);
@@ -541,7 +550,7 @@ function physicsStep(dt) {
       pl.y = lo - h - 0.01; pl.vy = Math.min(pl.vy, -1); pl.grounded = false;
       cam.dip = Math.max(cam.dip, 0.2);
     } else {
-      die();
+      die('crash');
       return;
     }
   }
@@ -596,7 +605,7 @@ function physicsStep(dt) {
     const base = world.baseAt(pl.z);
     // с небоскрёба — дольше видно, как падаешь
     const depth = world.cellAt(wrapX(pl.x), pl.z) === POOL ? 0.4 : base > 20 ? 12 : P.fallDeath;
-    if (pl.y < base - depth) { die(); return; }
+    if (pl.y < base - depth) { die('fall'); return; }
   } else {
     pl.y = ground; // ступенька вверх/вниз, рампа
   }
@@ -676,6 +685,7 @@ function physicsStep(dt) {
       pl.longLane = lj.lane; // летим к полосе вплотную к стене — по одной полосе, огибая башни
       pl.autoAttach = lj.d; pl.autoT = t + 0.5;
       pl.fromLong = true;
+      rec.event('longJump', { z: pl.z, lane: lj.lane, d: lj.d, dz: lj.dz, t });
     }
     if (fromSlide) {
       // slide-hop: прыжок из подката сохраняет разгон
@@ -696,6 +706,7 @@ function startSlide() {
 
 function slide() {
   if (state !== 'run') return;
+  rec.event('in', { a: 'down', z: pl.z });
   if (pl.wall) endWallRun();
   pl.glideT = 0; pl.hover = 0; pl.longT = 0;
   if (!pl.grounded) {
@@ -707,7 +718,7 @@ function slide() {
   startSlide();
 }
 
-function jump() { if (state === 'run') pl.jumpBuf = P.jumpBuffer; }
+function jump() { if (state === 'run') { rec.event('in', { a: 'jump', z: pl.z }); pl.jumpBuf = P.jumpBuffer; } }
 
 // ---------- сохранённые сиды ----------
 const SEEDS_KEY = 'sdwg-seeds';
@@ -786,8 +797,9 @@ function renderSeeds() {
   }
 }
 
-function die() {
+function die(cause = '?') {
   if (state !== 'run') return;
+  rec.event('die', { cause, z: pl.z, x: pl.x, y: pl.y, lane: pl.lane });
   state = 'dead';
   shake = 0.6;
   sound.muffle(true);
@@ -815,6 +827,10 @@ function start() {
   ui.hud.classList.add('show');
   state = 'run';
   sound.muffle(false);
+  rec.begin({
+    seed, url: location.href, ua: navigator.userAgent,
+    screen: `${innerWidth}x${innerHeight}@${devicePixelRatio}`, autopilot,
+  });
 }
 
 // ---------- автопилот (?auto) — для тестов: бежит по «живым» клеткам ----------
@@ -898,6 +914,7 @@ canvas.addEventListener('pointerdown', (e) => {
   sound.unlock();
   if (state === 'ready') { start(); return; }
   if (state !== 'run') return;
+  rec.event('touch', { x: e.clientX, y: e.clientY });
   touch = { id: e.pointerId, x: e.clientX, x0: e.clientX, y0: e.clientY, sx: e.clientX, sy: e.clientY, st: performance.now(), t: performance.now(), swiped: false };
   canvas.setPointerCapture?.(e.pointerId);
 });
@@ -924,6 +941,7 @@ canvas.addEventListener('pointermove', (e) => {
 const endTouch = (e) => {
   if (!touch || e.pointerId !== touch.id) return;
   const moved = Math.hypot(e.clientX - touch.x0, e.clientY - touch.y0);
+  rec.event('release', { dx: e.clientX - touch.x0, dy: e.clientY - touch.y0, ms: performance.now() - touch.t, swiped: touch.swiped });
   if (!touch.swiped && moved < 12 && performance.now() - touch.t < 250) jump(); // короткий тап — прыжок
   touch = null;
 };
@@ -945,6 +963,40 @@ window.addEventListener('keydown', (e) => {
 // iOS: не даём странице зумиться и скроллиться
 document.addEventListener('gesturestart', (e) => e.preventDefault());
 document.addEventListener('touchmove', (e) => { if (!e.target.closest?.('#seed-list')) e.preventDefault(); }, { passive: false });
+
+// ---------- запись забега (для отладки) ----------
+let wasGrounded = true;
+function recordFrame() {
+  if (pl.grounded !== wasGrounded) { rec.event(pl.grounded ? 'land' : 'air', { z: pl.z, y: pl.y, vy: pl.vy }); wasGrounded = pl.grounded; }
+  rec.frame(gameTime, {
+    z: pl.z, x: pl.x, y: pl.y, vy: pl.vy, v: speedNow(), lane: pl.lane, wall: pl.wall, grounded: pl.grounded ? 1 : 0,
+    slide: sliding() ? 1 : 0, pending: pl.pending, autoAttach: pl.autoAttach, longLane: pl.longLane ?? '', longT: pl.longT,
+    hover: pl.hover, grabT: pl.grabT, camBase: cam.base, camLook: cam.lookY, camPitch: cam.pitch, fov: camera.fov,
+  });
+}
+const CELL_CH = { [WALL]: '#', [BRIDGE]: 'b', [VOID]: '_', [RUNWALL]: 'w', [POOL]: '~', [LAUNCH]: 'L' };
+function runFile() {
+  const last = Math.min(world.rows.length - 1, Math.floor(pl.z / ROW) + 12);
+  const rows = [];
+  for (let r = 0; r <= last; r++) {
+    const row = world.rows[r], info = world.rowInfo[r];
+    rows.push(`${r} ${Array.from(row, (v) => CELL_CH[v] ?? String(v)).join('')} ${row.b0}..${row.b1}${row.cover ? ' cover' : ''} ${info.name}#${info.inst} ${info.local + 1}/${info.total}`);
+  }
+  return rec.build({ meta: { meters: Math.floor(pl.z), info: ui.overInfo.textContent, P }, rows });
+}
+async function sendRecording() {
+  if (!rec.has()) return;
+  const name = `sdwg-run-${seed}-${Math.floor(pl.z)}m.json`;
+  const res = await shareFile(name, JSON.stringify(runFile()));
+  if (res !== 'cancelled') { ui.rec.textContent = 'Запись готова ✓'; setTimeout(() => { ui.rec.textContent = 'Отправить запись'; }, 2500); }
+}
+ui.rec.addEventListener('click', sendRecording);
+ui.flag.addEventListener('pointerdown', (e) => {
+  e.stopPropagation(); e.preventDefault();
+  if (state !== 'run') return;
+  rec.flag(pl.z);
+  ui.flag.classList.add('hit'); setTimeout(() => ui.flag.classList.remove('hit'), 300);
+});
 
 function restart(sameSeed) {
   reset(sameSeed ? seed : newSeed());
@@ -1067,6 +1119,7 @@ function frame(now) {
     for (let i = 0; i < n && state === 'run'; i++) { if (autopilot) autopilotStep(); physicsStep(dt / n); }
     ensureWorld();
     ui.dist.textContent = `${Math.floor(pl.z)} м`;
+    recordFrame();
   } else if (state === 'ready') {
     // медленный «облёт» на стартовом экране
     pl.z = Math.min(pl.z + dt * 2, ROW * 4);
@@ -1140,4 +1193,4 @@ ui.start.classList.add('show');
 requestAnimationFrame(frame);
 
 // для автотестов
-window.__game = { materials, cam, laneShift, setAuto: (v) => { autopilot = v; }, get state() { return state; }, pl, start, die, jump, slide, get seed() { return seed; }, get world() { return world; } };
+window.__game = { materials, cam, laneShift, setAuto: (v) => { autopilot = v; }, get state() { return state; }, pl, start, die, jump, runFile, slide, get seed() { return seed; }, get world() { return world; } };

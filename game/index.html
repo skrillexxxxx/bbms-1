@@ -50,6 +50,9 @@
     }
     #hud.show { display: flex; }
     #dist { font-size: 28px; font-weight: 800; }
+    #flag { pointer-events: auto; margin: 0; padding: 6px 14px; font-size: 20px; opacity: 0.55; }
+    #flag.hit { opacity: 1; background: #e5262b; border-color: #e5262b; color: #fff; }
+    #rec { margin-top: 10px; opacity: 0.7; }
     button.small { padding: 10px 14px; margin: 0 0 0 6px; font-size: 15px; letter-spacing: 0; }
     button:disabled { opacity: 0.5; }
     #start .menu { margin-top: 22px; pointer-events: auto; }
@@ -79,7 +82,7 @@
 <body>
   <canvas id="game"></canvas>
 
-  <div id="hud"><div id="dist">0 м</div></div>
+  <div id="hud"><div id="dist">0 м</div><button id="flag" class="ghost small" aria-label="Метка: тут что-то не так">⚑</button></div>
   <div id="debug"></div>
 
   <div id="start" class="screen">
@@ -104,6 +107,7 @@
       <button id="same" class="ghost">Этот же сид</button>
     </div>
     <div><button id="save" class="ghost">Сохранить сид</button><button id="open-seeds-over" class="ghost">Мои города</button></div>
+    <div><button id="rec" class="ghost small">Отправить запись</button></div>
   </div>
 
   <script type="module" src="js/main.js"></script>
