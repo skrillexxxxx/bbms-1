@@ -244,7 +244,7 @@ const frag = /* glsl */ `
     else if (vTint > 5.5 && vTint < 6.5) c3 = col < 0.9 ? col * red * 1.2 : vec3(col); // трамплин
     // высота: всё, что далеко внизу под ярусом, тонет в белой дымке
     float below = uB - y;
-    c3 = mix(c3, vec3(1.0), smoothstep(4.0, 38.0, below) * (0.25 + 0.3 * uHigh));
+    c3 = mix(c3, vec3(1.0), smoothstep(2.0, 30.0, below) * (0.35 + 0.25 * uHigh));
     vec3 c = mix(c3, uFogColor, fog);
     if (uLinearOut > 0.5) c = pow(c, vec3(2.2));
     gl_FragColor = vec4(c, 1.0);
@@ -861,7 +861,8 @@ export function buildInstanceMesh(inst, materials, world) {
       let hgt;
       if (nearPath(r, c) || afterLaunch(r)) {
         // заметно ниже пути — видно обрыв; с небоскрёбов — далеко внизу
-        hgt = sky && !afterLaunch(r) ? [0, 0, 8, 14, 20, 24][Math.floor(hsh * 6)] : [0, 0, 0, 2, 2, 4][Math.floor(hsh * 6)];
+        // на обычных крышах — только улица далеко внизу: низкие крыши рядом выглядели бы как площадка для прыжка
+        hgt = sky && !afterLaunch(r) ? [0, 0, 8, 14, 20, 24][Math.floor(hsh * 6)] : 0;
       } else {
         // дальше от пути — соседние дома; на небоскрёбах — в основном ниже, изредка выше
         hgt = sky
@@ -935,6 +936,9 @@ export function buildInstanceMesh(inst, materials, world) {
     for (let c = 0; c < COLS; c++) {
       const v = row[c];
       if (!walk(v) || lv(v) !== 0 || v === LAUNCH) continue;
+      // узкий проход над пропастью (пропасть с обеих сторон) — красные перила: «сюда»
+      const narrow = row[((c - 1) % COLS + COLS) % COLS] === VOID && row[(c + 1) % COLS] === VOID;
+      b.tint = narrow ? 1 : 0;
       for (const side of [-1, 1]) {
         if (row[((c + side) % COLS + COLS) % COLS] !== VOID) continue;
         const x = side < 0 ? c * CELL + 0.1 : (c + 1) * CELL - 0.1;
@@ -942,6 +946,7 @@ export function buildInstanceMesh(inst, materials, world) {
         b.boxGeo(x - 0.05, x + 0.05, zA, zB, base + 1.14, 4, base + 1.04);
         b.boxGeo(x - 0.025, x + 0.025, zA, zB, base + 0.58, 4, base + 0.52);
       }
+      b.tint = 0;
     }
   }
 
