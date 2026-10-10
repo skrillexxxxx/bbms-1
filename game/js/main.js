@@ -1513,7 +1513,7 @@ function frame(now) {
   materials.main.uniforms.uFogFar.value = LZ * (6.0 - 2.6 * deep);
   // день и ночь: в подземке ночь почти не чувствуется — там свои лампы
   const night = nightAmount() * (1 - 0.6 * deep);
-  const nf = [0.11, 0.13, 0.21]; // ночной туман и небо: светлее башен — вдали светлое «окно», куда бежим
+  const nf = [0.17, 0.135, 0.11]; // ночной туман и небо: тёплая дымка от света города, светлее башен
   const df = [1 - 0.05 * deep, 1 - 0.01 * deep, 1 - 0.02 * deep];
   materials.main.uniforms.uFogColor.value.setRGB(
     df[0] + (nf[0] - df[0]) * night, df[1] + (nf[1] - df[1]) * night, df[2] + (nf[2] - df[2]) * night);
