@@ -1359,6 +1359,8 @@ function frame(now) {
   materials.main.uniforms.uFogColor.value.setRGB(
     df[0] + (nf[0] - df[0]) * night, df[1] + (nf[1] - df[1]) * night, df[2] + (nf[2] - df[2]) * night);
   materials.main.uniforms.uNight.value = night;
+  // фонарь: ночью на улице; в подземке плавно гаснет (deep меняется плавно вместе с камерой)
+  materials.main.uniforms.uLamp.value = nightAmount() * Math.max(0, 1 - deep * 1.5);
   materials.monkey.uniforms.uNight.value = night;
   _sky.copy(materials.main.uniforms.uFogColor.value);
   renderer.setClearColor(useBloom ? _sky.clone().convertSRGBToLinear() : _sky, 1);

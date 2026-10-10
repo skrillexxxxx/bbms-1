@@ -29,6 +29,7 @@ const vert = /* glsl */ `
   varying vec4 vBox;
   varying float vDz;
   varying float vDx;
+  varying vec3 vView;
   varying float vDist;
   varying float vS;
   varying float vWY;
@@ -50,6 +51,7 @@ const vert = /* glsl */ `
     vBox = aBox;
     vDz = f.z;
     vDx = f.x;
+    vView = mv.xyz;
     // дальность по горизонтали (без высоты): с крыш улица внизу не должна тонуть в тумане
     vDist = length(vec2(w.x, w.z - uL));
     // высоту восстанавливаем во фрагментном шейдере как vWY / vS:
@@ -76,6 +78,7 @@ const frag = /* glsl */ `
   uniform float uTime;
   uniform float uHigh;
   uniform float uNight;   // 0 — день, 1 — ночь
+  uniform float uLamp;    // фонарь бегуна: ночью на улице 1, в подземке гаснет
   varying float vTint;
   varying vec3 vPos;
   varying vec3 vN;
@@ -84,6 +87,7 @@ const frag = /* glsl */ `
   varying vec4 vBox;
   varying float vDz;
   varying float vDx;
+  varying vec3 vView;
   varying float vDist;
   varying float vS;
   varying float vWY;
@@ -285,13 +289,22 @@ const frag = /* glsl */ `
       vec3 dark = c3 * vec3(0.13, 0.15, 0.21);
       if (redLit) dark = mix(dark, c3 * vec3(0.75, 0.6, 0.6), near);
       dark += vec3(0.5, 0.56, 0.68) * rimK;
-      // фонарь бегуна: светит вперёд конусом на ~15–20 м — препятствия, стены поворотов и пол перед нами.
-      // Сильнее всего освещены грани, повёрнутые к нам: их-то и надо видеть, чтобы перепрыгнуть или свернуть
-      float dzh = max(vDz, 0.0);
-      float cone = exp(-vDx * vDx / (2.0 * pow(3.0 + dzh * 0.35, 2.0)));
-      float face = n.y > 0.5 ? 0.55 : (n.y < -0.5 ? 0.15 : 0.25 + 0.85 * max(-n.z, 0.0) + 0.35 * abs(n.x));
-      float head = exp(-dzh / 14.0) * smoothstep(-1.0, 1.5, vDz) * cone * face;
-      dark += c3 * vec3(0.95, 0.97, 1.0) * head * 0.85;
+      // фонарь бегуна, как в хоррорах: круглое пятно по центру взгляда (чуть ниже), мягкий ореол
+      // и светлое кольцо по краю. Считаем по направлению от камеры, вблизи ярко, вдаль слабеет
+      if (uLamp > 0.0) {
+        vec2 sp = vView.xy / max(-vView.z, 0.05) - vec2(0.0, -0.1);
+        float r = length(sp);
+        float spot = 1.0 - smoothstep(0.26, 0.36, r);
+        float ring = exp(-pow((r - 0.31) / 0.035, 2.0)) * 0.35;
+        float halo = (1.0 - smoothstep(0.36, 0.95, r)) * 0.28;
+        float dist = length(vView);
+        float att = 1.0 / (1.0 + dist * dist / 160.0);
+        float face = n.y > 0.5 ? 0.75 : (n.y < -0.5 ? 0.3 : 0.45 + 0.55 * max(-n.z, 0.0) + 0.3 * abs(n.x));
+        float fl = 0.94 + 0.06 * step(0.97, fract(sin(floor(uTime * 9.0) * 12.9898) * 43758.5453));
+        dark += c3 * vec3(1.0, 0.97, 0.9) * (spot + ring + halo) * att * face * fl * 1.0 * uLamp;
+        // в воздухе луч не видно, но пол в пятне читается всегда — даже тёмный
+        dark += vec3(0.05) * spot * att * uLamp;
+      }
       c3 = mix(c3, dark + emit, uNight);
     }
     // высота: всё, что далеко внизу под ярусом, тонет в дымке (днём белой, ночью — цвета тумана)
@@ -322,6 +335,7 @@ export function createMaterial({ linearOut }) {
       uTime: { value: 0 },
       uHigh: { value: 0 },
       uNight: { value: 0 },
+      uLamp: { value: 0 },
     },
   });
 }
