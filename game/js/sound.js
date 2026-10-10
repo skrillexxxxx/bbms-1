@@ -4,6 +4,9 @@
 
 const MUSIC_URL = 'audio/ambient.mp3';
 const MUSIC_GAIN = 0.8;
+// шаги: 10 вариантов, нарезаны из записи бега (audio/steps/stepN.mp3)
+const STEP_URLS = Array.from({ length: 10 }, (_, i) => `audio/steps/step${i}.mp3`);
+const STEP_GAIN = 0.55;
 // смерть: музыка уходит «под воду» — срез высоких до MUFFLE_HZ и на 3 дБ тише
 const OPEN_HZ = 20000, MUFFLE_HZ = 350, MUFFLE_GAIN = 0.708; // −3 дБ
 const MUFFLE_IN = 2.2, MUFFLE_OUT = 1.2; // секунды
@@ -27,7 +30,10 @@ export function createSound(enabled) {
   let ctx = null, master = null, lp = null, duck = null, started = false, muffled = false;
   let m = 0, lastT = 0; // m: 0 — чистый звук, 1 — «под водой»
   // файл тянем сразу, а декодируем после первого касания (раньше AudioContext на iOS не создать)
-  const raw = enabled ? fetch(MUSIC_URL).then((r) => r.arrayBuffer()).catch(() => null) : null;
+  const get = (url) => fetch(url).then((r) => r.arrayBuffer()).catch(() => null);
+  const raw = enabled ? get(MUSIC_URL) : null;
+  const stepRaw = enabled ? STEP_URLS.map(get) : [];
+  let steps = [], sfx = null, lastStep = -1; // steps: [{ buf, a }] — a: где начинается звук (без тишины mp3)
 
   function decode(data) {
     // старый Safari знает только колбэчный вариант decodeAudioData
@@ -48,6 +54,32 @@ export function createSound(enabled) {
     src.start(0, a);
   }
 
+  async function loadSteps() {
+    const out = [];
+    for (const pr of stepRaw) {
+      const data = await pr;
+      if (!data) continue;
+      try { const buf = await decode(data); out.push({ buf, a: audibleRange(buf)[0] }); } catch { /* пропускаем */ }
+    }
+    steps = out;
+  }
+
+  // один шаг: случайный вариант (не тот же, что прошлый), чуть разная высота и громкость
+  function playStep(gain) {
+    if (!ctx || !steps.length || ctx.state !== 'running') return;
+    let i = Math.floor(Math.random() * steps.length);
+    if (i === lastStep && steps.length > 1) i = (i + 1) % steps.length;
+    lastStep = i;
+    const st = steps[i];
+    const src = ctx.createBufferSource();
+    src.buffer = st.buf;
+    src.playbackRate.value = 0.94 + Math.random() * 0.12;
+    const g = ctx.createGain();
+    g.gain.value = gain * (0.8 + Math.random() * 0.2);
+    src.connect(g); g.connect(sfx);
+    src.start(0, st.a);
+  }
+
   function build() {
     const AC = window.AudioContext || window.webkitAudioContext;
     if (!AC) return;
@@ -57,6 +89,9 @@ export function createSound(enabled) {
     lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = OPEN_HZ; lp.Q.value = 0.7;
     duck = ctx.createGain(); duck.gain.value = 1;
     master.connect(lp); lp.connect(duck); duck.connect(ctx.destination);
+    // звуки действий — мимо фильтра музыки
+    sfx = ctx.createGain(); sfx.gain.value = STEP_GAIN;
+    sfx.connect(ctx.destination);
     // свернули Safari — музыка замолкает, вернулись — продолжает
     document.addEventListener('visibilitychange', () => {
       if (document.hidden) ctx.suspend(); else ctx.resume();
@@ -69,10 +104,17 @@ export function createSound(enabled) {
       if (!ctx) build();
       if (!ctx) return;
       if (ctx.state === 'suspended') ctx.resume();
-      if (!started) { started = true; startMusic().catch(() => { started = false; }); }
+      if (!started) { started = true; startMusic().catch(() => { started = false; }); loadSteps(); }
     },
     // true — плавно глушим (смерть), false — плавно возвращаем как было (снова играем)
     muffle(on) { muffled = on; },
+    // шаг; k — громкость (1 — обычный бег)
+    step(k = 1) { playStep(k); },
+    // приземление: два шага почти разом, громче — чем сильнее удар, тем громче
+    land(k = 1) {
+      playStep(Math.min(1.6, 0.9 + 0.5 * k));
+      if (ctx) setTimeout(() => playStep(Math.min(1.2, 0.6 + 0.4 * k)), 45 + Math.random() * 25);
+    },
     // зовётся каждый кадр. Переход ведём сами, а не расписанием AudioParam:
     // Safari на iPhone выполняет такие рампы мгновенно — звук срезался рывком.
     // deep: 0 на улице … 1 в подземке; speed — скорость бега; high: 0 … 1 на небоскрёбах.

@@ -200,7 +200,7 @@ const pl = {
   slideChain: 0, slideEndAt: -9,
   wall: 0, wallT: 0, wallCool: 0, wallLast: 0, autoAttach: 0, autoT: 0, grabT: 0, launch: null, glideT: 0, longT: 0, longG: 1, hover: 0, longLane: null,
 };
-const cam = { roll: 0, yaw: 0, pitch: 0, dip: 0, slide: 0, bob: 0, fov: 82, slideSide: 1, lookY: 1.2, vx: 0, lines: 0, base: 0, wall: 0, fly: 0, baseV: 0, lookV: 0 };
+const cam = { roll: 0, yaw: 0, pitch: 0, dip: 0, slide: 0, bob: 0, fov: 82, wallStep: 0, slideSide: 1, lookY: 1.2, vx: 0, lines: 0, base: 0, wall: 0, fly: 0, baseV: 0, lookV: 0 };
 let gameTime = 0;
 let state = 'ready';
 let shake = 0;
@@ -969,6 +969,7 @@ document.addEventListener('touchmove', (e) => { if (!e.target.closest?.('#seed-l
 
 // ---------- запись забега (для отладки) ----------
 let wasGrounded = true;
+let wasGroundedSnd = true, airVy = 0; // для звука приземления: скорость падения перед касанием
 function recordFrame() {
   if (pl.grounded !== wasGrounded) { rec.event(pl.grounded ? 'land' : 'air', { z: pl.z, y: pl.y, vy: pl.vy }); wasGrounded = pl.grounded; }
   rec.frame(gameTime, {
@@ -1050,7 +1051,17 @@ function updateCamera(dt, running) {
   const v = speedNow();
   cam.slide = damp(cam.slide, sliding() ? 1 : 0, 14, dt);
   cam.dip = damp(cam.dip, 0, 9, dt);
-  if (running && pl.grounded && !sliding()) cam.bob += dt * v * 0.85;
+  if (running && pl.grounded && !sliding()) {
+    // шаг — в нижней точке покачивания (|sin| = 0), раз в пол-оборота
+    const before = Math.floor(cam.bob / Math.PI);
+    cam.bob += dt * v * 0.85;
+    if (Math.floor(cam.bob / Math.PI) !== before) sound.step();
+  } else if (running && pl.wall) {
+    // по стене — те же шаги, чуть тише и чаще
+    const before = Math.floor(cam.wallStep / Math.PI);
+    cam.wallStep += dt * v * 1.0;
+    if (Math.floor(cam.wallStep / Math.PI) !== before) sound.step(0.8);
+  }
   const bobY = running && pl.grounded && !sliding() ? Math.abs(Math.sin(cam.bob)) * 0.06 : 0;
   const bobX = running && pl.grounded && !sliding() ? Math.sin(cam.bob) * 0.03 : 0;
 
@@ -1123,6 +1134,9 @@ function frame(now) {
     ensureWorld();
     ui.dist.textContent = `${Math.floor(pl.z)} м`;
     recordFrame();
+    if (pl.grounded && !wasGroundedSnd) sound.land(Math.min(1, Math.max(0, (-airVy - 4) / 16)));
+    if (!pl.grounded) airVy = pl.vy;
+    wasGroundedSnd = pl.grounded;
   } else if (state === 'ready') {
     // медленный «облёт» на стартовом экране
     pl.z = Math.min(pl.z + dt * 2, ROW * 4);
