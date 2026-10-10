@@ -246,9 +246,10 @@ export function createSound(enabled) {
       if (!ctx || !nearL) return;
       const t = ctx.currentTime;
       // −3 дБ (×0.71) к прошлому: эхо и отражения улицы — фоном
-      nearL.gain.setTargetAtTime(0.85 * left, t, 0.12);
-      nearR.gain.setTargetAtTime(0.85 * right, t, 0.12);
-      nearC.gain.setTargetAtTime(0.92 * narrow, t, 0.2);
+      // хвост эха улицы ещё −3 дБ; отдельные отражения (echoL/R) — как были
+      nearL.gain.setTargetAtTime(0.6 * left, t, 0.12);
+      nearR.gain.setTargetAtTime(0.6 * right, t, 0.12);
+      nearC.gain.setTargetAtTime(0.65 * narrow, t, 0.2);
       echoL.gain.setTargetAtTime(0.127 * Math.min(1, left + narrow), t, 0.12);
       echoR.gain.setTargetAtTime(0.127 * Math.min(1, right + narrow), t, 0.12);
     },
