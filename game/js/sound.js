@@ -40,7 +40,7 @@ export function createSound(enabled) {
   const stepRaw = enabled ? STEP_URLS.map(get) : [];
   const slideRaw = enabled ? Object.fromEntries(Object.entries(SLIDE_URLS).map(([k, u]) => [k, get(u)])) : {};
   let slideBuf = {}, slideNow = null, slideBus = null; // slideNow: { srcs, gains } — звучащий подкат
-  let steps = [], sfx = null, lastStep = -1;
+  let steps = [], sfx = null, lastStep = -1, stepBus = null;
   // steps: [{ buf, a }] — a: где начинается звук (без тишины mp3)
   let revWet = null; // сколько шагов уходит в реверб (в подземке — эхо тоннеля)
   let nearL = null, nearR = null, nearC = null, echoL = null, echoR = null; // короткое эхо от стен: слева, справа, отовсюду (узко)
@@ -144,7 +144,7 @@ export function createSound(enabled) {
     src.playbackRate.value = 0.94 + Math.random() * 0.12;
     const g = ctx.createGain();
     g.gain.value = gain * (0.8 + Math.random() * 0.2);
-    src.connect(g); g.connect(sfx);
+    src.connect(g); g.connect(stepBus || sfx);
     src.start(0, st.a);
   }
 
@@ -177,6 +177,9 @@ export function createSound(enabled) {
     // звуки действий — мимо фильтра музыки
     sfx = ctx.createGain(); sfx.gain.value = STEP_GAIN;
     sfx.connect(ctx.destination);
+    // шаги чуть глуше: мягкий срез верхов — без «песочного» шороха
+    stepBus = ctx.createBiquadFilter(); stepBus.type = 'lowpass'; stepBus.frequency.value = 2200; stepBus.Q.value = 0.5;
+    stepBus.connect(sfx);
     // реверб для подземки: один свёрточный ревербератор на все звуки действий.
     // Импульс — затухающий шум ~2 с, сразу мягкий по верхам (бетон и плитка)
     const conv = ctx.createConvolver();

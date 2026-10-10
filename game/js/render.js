@@ -135,7 +135,7 @@ const frag = /* glsl */ `
       col = mix(col, 0.41, g * 0.8);
       col *= vAO * vAO; // контактные тени у основания стен — глубже в углах
       // в стороне от пути (тупики, дворы, углы) пол уходит в тень
-      col *= mix(0.65, 1.0, smoothstep(0.02, 0.3, vLight));
+      col *= mix(mix(0.65, 0.92, uSun), 1.0, smoothstep(0.02, 0.3, vLight));
       // свет с неба падает туда, куда нужно бежать: светлое пятно = путь
       // мягко и ниже порога блума — иначе пятно раздувается на полэкрана
       col = min(col * (1.0 + vLight * 0.3) + vLight * 0.05, 0.84);
@@ -206,8 +206,8 @@ const frag = /* glsl */ `
       if (n.y > 0.5) {
         col = st >= 4 ? 0.8 : 0.95;
         // верх низких предметов у земли — в тени, как стены внизу; крыши высоток светлые
-        col *= mix(0.5, 1.0, pow(smoothstep(-2.0, 50.0, y - uB), 0.6));
-        col *= mix(0.6, 1.0, max(smoothstep(0.02, 0.3, vLight), smoothstep(8.0, 40.0, y - uB)));
+        col *= mix(mix(0.5, 0.88, uSun), 1.0, pow(smoothstep(-2.0, 50.0, y - uB), 0.6));
+        col *= mix(mix(0.6, 0.92, uSun), 1.0, max(smoothstep(0.02, 0.3, vLight), smoothstep(8.0, 40.0, y - uB)));
         // клумба (низкий бортик ~0.75 м): сверху тёмная земля с неровной фактурой
         if (st == 4 && vTop < 1.2) {
           float nn = h21(floor(vPos.xz * 6.0)) * 0.6 + h21(floor(vPos.xz * 1.7)) * 0.4;
@@ -274,7 +274,8 @@ const frag = /* glsl */ `
         float hy = y - uB;
         // три яруса, как в бетонных каньонах: у земли темно (~30%), середина умеренная, верх светлый
         // с тенями солнца градиент слабее — иначе в сумме слишком темно
-        col *= mix(mix(0.42, 0.6, uSun), 1.0, pow(smoothstep(-2.0, 60.0, hy), 0.6));
+        // с солнцем общее затемнение почти уходит — контраст делают свет и тень от солнца
+        col *= mix(mix(0.42, 0.88, uSun), 1.0, pow(smoothstep(-2.0, 60.0, hy), 0.6));
         // контактная тень у земли (кроме мостов — они висят в воздухе)
         if (st < 5) col *= mix(0.8, 1.0, smoothstep(0.0, 2.5, y));
         // свет из прохода ложится на стены проёма (до ~35 м вверх), остальные фасады чуть серее —
@@ -282,7 +283,7 @@ const frag = /* glsl */ `
         float lit = clamp(vLight * 1.8 * (1.0 - smoothstep(4.0, 35.0, y)), 0.0, 1.0);
         col = mix(col * 0.86, min(col * 1.1 + 0.06, 0.87), lit);
         // фасады в стороне от пути у земли — ещё темнее; наверху светлое небо остаётся
-        col *= mix(0.62, 1.0, max(smoothstep(0.02, 0.3, vLight), smoothstep(8.0, 50.0, hy)));
+        col *= mix(mix(0.62, 0.92, uSun), 1.0, max(smoothstep(0.02, 0.3, vLight), smoothstep(8.0, 50.0, hy)));
         // ночью низ домов подсвечен тёплым светом с улицы
         emit += WARM * 0.1 * (1.0 - smoothstep(0.0, 12.0, hy)) * (0.5 + 0.5 * smoothstep(0.02, 0.3, vLight)) * uNight;
       }
@@ -461,7 +462,7 @@ export function createMaterial({ linearOut }) {
       uSunMat: { value: new THREE.Matrix4() },
       uSunShadow: { value: null },
       uSun: { value: 0 },
-      uSunDir: { value: new THREE.Vector3(0.35, 1.7, -0.6).normalize() },
+      uSunDir: { value: new THREE.Vector3(0.55, 1.05, -1.0).normalize() },
     },
   });
 }

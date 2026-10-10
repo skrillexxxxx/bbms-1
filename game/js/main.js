@@ -1219,7 +1219,7 @@ const SUN_RES = 2048;
 const sunRT = new THREE.WebGLRenderTarget(SUN_RES, SUN_RES, { depthBuffer: true });
 sunRT.depthTexture = new THREE.DepthTexture(SUN_RES, SUN_RES);
 sunRT.depthTexture.type = THREE.UnsignedIntType;
-const sunCam = new THREE.OrthographicCamera(-70, 70, 90, -90, 1, 700);
+const sunCam = new THREE.OrthographicCamera(-75, 75, 135, -135, 1, 900);
 const sunDepth = createSunDepthMaterial();
 const _sc = new THREE.Vector3();
 function renderSunShadow(deep) {
@@ -1229,7 +1229,7 @@ function renderSunShadow(deep) {
   if (k <= 0.01) return;
   const d = u.uSunDir.value;
   // центр карты — чуть впереди игрока: туда, что видно
-  _sc.set(0, cam.base + 10, 55);
+  _sc.set(0, cam.base + 10, 100);
   sunCam.position.copy(_sc).addScaledVector(d, 300);
   sunCam.up.set(0, 0, 1);
   sunCam.lookAt(_sc);
