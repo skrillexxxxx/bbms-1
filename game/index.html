@@ -49,7 +49,13 @@
       padding: calc(env(safe-area-inset-top) + 12px) 16px 0; pointer-events: none;
     }
     #hud.show { display: flex; }
-    #dist { font-size: 28px; font-weight: 800; }
+    #hud-left, #dist { font-size: 28px; font-weight: 800; }
+    #monk { display: none; margin-left: 14px; color: #e5262b; }
+    #monk.show { display: inline-block; }
+    #monk::before { content: ''; display: inline-block; width: 0.5em; height: 0.5em; border-radius: 50%; background: currentColor; margin-right: 0.22em; vertical-align: 0.12em; }
+    #monk.pop { animation: monkpop 0.3s ease-out; }
+    @keyframes monkpop { 40% { transform: scale(1.35); } }
+    #seeds { z-index: 5; }
     #flag { pointer-events: auto; margin: 0; padding: 6px 14px; font-size: 20px; opacity: 0.55; }
     #flag.hit { opacity: 1; background: #e5262b; border-color: #e5262b; color: #fff; }
     #rec { margin-top: 10px; opacity: 0.7; }
@@ -82,7 +88,7 @@
 <body>
   <canvas id="game"></canvas>
 
-  <div id="hud"><div id="dist">0 м</div><button id="flag" class="ghost small" aria-label="Метка: тут что-то не так">⚑</button></div>
+  <div id="hud"><div id="hud-left"><span id="dist">0 м</span><span id="monk"></span></div><button id="flag" class="ghost small" aria-label="Метка: тут что-то не так">⚑</button></div>
   <div id="debug"></div>
 
   <div id="start" class="screen">

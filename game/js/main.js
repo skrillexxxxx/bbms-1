@@ -11,6 +11,7 @@ import {
 import { createMaterial, createStarMaterial, buildInstanceMesh } from './render.js';
 import { createSound } from './sound.js';
 import { createRecorder, shareFile } from './recorder.js';
+import { loadMonkey, createMonkeyMaterial, placeMonkeys } from './monkeys.js';
 
 // ---------- параметры игрока (их же учитывает проверка паттернов) ----------
 const P = {
@@ -76,7 +77,11 @@ renderer.setClearColor(0xffffff, 1);
 
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(75, 1, 0.05, 200);
-const materials = { main: createMaterial({ linearOut: useBloom }), star: createStarMaterial({ linearOut: useBloom }) };
+const materials = {
+  main: createMaterial({ linearOut: useBloom }), star: createStarMaterial({ linearOut: useBloom }),
+  monkey: createMonkeyMaterial({ linearOut: useBloom }),
+};
+const monkeyReady = loadMonkey();
 
 // Motion blur: смазывание по лучам от точки схода (весь мир летит из центра)
 // плюс горизонтальное — при резком уходе вбок. В центре кадра чётко.
@@ -242,7 +247,7 @@ for (const t of [250, 1000]) setTimeout(resize, t);
 const $ = (id) => document.getElementById(id);
 const rec = createRecorder();
 const ui = {
-  rec: $('rec'), flag: $('flag'),
+  rec: $('rec'), flag: $('flag'), monk: $('monk'),
   save: $('save'), seeds: $('seeds'), seedList: $('seed-list'),
   start: $('start'), over: $('over'), hud: $('hud'),
   dist: $('dist'), debug: $('debug'), overDist: $('over-dist'),
@@ -254,6 +259,10 @@ try { best = Number(localStorage.getItem('city-best')) || 0; } catch { /* при
 
 // ---------- состояние игры ----------
 let world, meshes, built, seed;
+let monkeys = [];        // { mesh, x, y, z, phase, taken } — обезьянки на построенных паттернах
+let runMonkeys = 0;      // собрано за забег
+let totalMonkeys = 0;    // собрано за всё время
+try { totalMonkeys = Number(localStorage.getItem('sdwg-monkeys')) || 0; } catch { /* приватный режим */ }
 const pl = {
   x: 0, z: 0, y: 0, vx: 0, vy: 0, grounded: true,
   lane: 6, pending: 0, pendT: 0,
@@ -272,6 +281,7 @@ function reset(s) {
   seed = s;
   for (const m of meshes || []) { scene.remove(m); disposeGroup(m); }
   meshes = [];
+  monkeys = [];
   built = 0;
   world = new World(seed);
   Object.assign(pl, {
@@ -288,14 +298,16 @@ function reset(s) {
   history.replaceState(null, '', u);
 }
 
-function disposeGroup(g) { g.traverse((o) => o.geometry && o.geometry.dispose()); }
+function disposeGroup(g) { g.traverse((o) => o.geometry && o.material !== materials.monkey && o.geometry.dispose()); }
 
 function ensureWorld() {
   const need = Math.ceil((pl.z + LZ * 6.5) / ROW) + 4;
   world.ensureRows(need);
   // меш строим, когда уже есть следующий паттерн — нужен для теней на стыке
   while (built < world.instances.length - 1) {
-    const m = buildInstanceMesh(world.instances[built++], materials, world);
+    const inst = world.instances[built++];
+    const m = buildInstanceMesh(inst, materials, world);
+    monkeys.push(...placeMonkeys(world, inst, m, materials.monkey));
     meshes.push(m);
     scene.add(m);
   }
@@ -305,6 +317,7 @@ function ensureWorld() {
     }
     return true;
   });
+  monkeys = monkeys.filter((k) => k.z > pl.z - ROW * 3);
 }
 
 // ---------- физика (всё в плоском мире) ----------
@@ -878,8 +891,8 @@ function die(cause = '?') {
   const info = world.infoAt(pl.z + 1);
   ui.overDist.textContent = `${meters} м`;
   ui.overInfo.textContent = `seed ${seed} · ${info.name} (#${info.inst}) · ряд ${info.local + 1}/${info.total}`;
-  ui.best.textContent = `рекорд ${best} м`;
-  setTimeout(() => { if (state === 'dead') ui.over.classList.add('show'); }, 450);
+  ui.best.textContent = `рекорд ${best} м` + (runMonkeys || totalMonkeys ? ` · обезьянки ${runMonkeys} (всего ${totalMonkeys})` : '');
+  setTimeout(() => { if (state === 'dead' && !ui.seeds.classList.contains('show')) ui.over.classList.add('show'); }, 450);
 }
 
 function start() {
@@ -888,6 +901,8 @@ function start() {
   ui.hud.classList.add('show');
   state = 'run';
   sound.muffle(false);
+  runMonkeys = 0;
+  updateMonkeyHud();
   rec.begin({
     seed, url: location.href, ua: navigator.userAgent,
     screen: `${innerWidth}x${innerHeight}@${devicePixelRatio}`, autopilot,
@@ -1028,6 +1043,43 @@ window.addEventListener('keydown', (e) => {
 document.addEventListener('gesturestart', (e) => e.preventDefault());
 document.addEventListener('touchmove', (e) => { if (!e.target.closest?.('#seed-list')) e.preventDefault(); }, { passive: false });
 
+// ---------- обезьянки ----------
+function updateMonkeyHud() {
+  ui.monk.textContent = String(runMonkeys);
+  ui.monk.classList.toggle('show', runMonkeys > 0);
+}
+// z0 — где игрок был в начале кадра: за кадр на скорости пролетаем больше метра, проверяем весь отрезок
+function collectMonkeys(z0) {
+  const px = wrapX(pl.x), py = pl.y + (sliding() ? 0.5 : 1.0);
+  for (const k of monkeys) {
+    if (k.taken || k.z < z0 - 1.2 || k.z > pl.z + 1.2) continue;
+    let dx = Math.abs(k.x - px); dx = Math.min(dx, W - dx);
+    if (dx > 1.6 || Math.abs(k.y - py) > 1.7) continue;
+    k.taken = gameTime;
+    runMonkeys++; totalMonkeys++;
+    try { localStorage.setItem('sdwg-monkeys', String(totalMonkeys)); } catch { /* приватный режим */ }
+    updateMonkeyHud();
+    ui.monk.classList.remove('pop'); void ui.monk.offsetWidth; ui.monk.classList.add('pop');
+    sound.step(0.6);
+    rec.event('monkey', { z: k.z, x: k.x, n: runMonkeys });
+  }
+}
+function animateMonkeys() {
+  for (const k of monkeys) {
+    if (k.taken) {
+      // подбор: вспышка и быстро растворяется вверх
+      const t = (gameTime - k.taken) / 0.25;
+      if (t >= 1) { k.mesh.visible = false; continue; }
+      k.mesh.scale.setScalar(1 + t * 0.8);
+      k.mesh.position.y = k.y + t * 1.2;
+      k.mesh.rotation.y += 0.4;
+      continue;
+    }
+    k.mesh.rotation.y = gameTime * 2.2 + k.phase;
+    k.mesh.position.y = k.y + Math.sin(gameTime * 3 + k.phase) * 0.12;
+  }
+}
+
 // ---------- запись забега (для отладки) ----------
 let wasGrounded = true;
 let wasGroundedSnd = true, airVy = 0; // для звука приземления: скорость падения перед касанием
@@ -1070,9 +1122,12 @@ function restart(sameSeed) {
 $('again').addEventListener('click', () => { sound.unlock(); restart(false); });
 $('save').addEventListener('click', saveCurrentSeed);
 for (const id of ['open-seeds', 'open-seeds-over']) {
-  $(id).addEventListener('click', (e) => { e.stopPropagation(); renderSeeds(); ui.seeds.classList.add('show'); });
+  $(id).addEventListener('click', (e) => { e.stopPropagation(); renderSeeds(); ui.over.classList.remove('show'); ui.seeds.classList.add('show'); });
 }
-$('close-seeds').addEventListener('click', () => ui.seeds.classList.remove('show'));
+$('close-seeds').addEventListener('click', () => {
+  ui.seeds.classList.remove('show');
+  if (state === 'dead') ui.over.classList.add('show'); // вернулись к экрану после смерти
+});
 $('same').addEventListener('click', () => { sound.unlock(); restart(true); });
 
 // ---------- камера ----------
@@ -1188,6 +1243,7 @@ function frame(now) {
   gameTime += dt;
   last = now;
 
+  const zBefore = pl.z;
   if (state === 'run') {
     // мелкие шаги — чтобы на высокой скорости не проскакивать сквозь стены
     const n = Math.ceil(dt / (1 / 120));
@@ -1195,6 +1251,7 @@ function frame(now) {
     ensureWorld();
     ui.dist.textContent = `${Math.floor(pl.z)} м`;
     recordFrame();
+    collectMonkeys(zBefore);
     if (pl.grounded && !wasGroundedSnd) sound.land(Math.min(1, Math.max(0, (-airVy - 4) / 16)));
     if (!pl.grounded) airVy = pl.vy;
     wasGroundedSnd = pl.grounded;
@@ -1240,6 +1297,12 @@ function frame(now) {
   materials.main.uniforms.uHigh.value = high;
   sound.update(deep, state === 'run' ? speedNow() : 0, high);
   materials.star.uniforms.uB.value = cam.base;
+  {
+    const mu = materials.monkey.uniforms, mm = materials.main.uniforms;
+    mu.uB.value = cam.base; mu.uFogNear.value = mm.uFogNear.value; mu.uFogFar.value = mm.uFogFar.value;
+    mu.uFogColor.value.copy(mm.uFogColor.value);
+    animateMonkeys();
+  }
   updateCamera(dt, state === 'run');
 
   if (blurPass) {
@@ -1274,4 +1337,4 @@ ui.start.classList.add('show');
 requestAnimationFrame(frame);
 
 // для автотестов
-window.__game = { materials, cam, laneShift, setAuto: (v) => { autopilot = v; }, get state() { return state; }, pl, start, die, jump, runFile, slide, get seed() { return seed; }, get world() { return world; } };
+window.__game = { materials, cam, laneShift, setAuto: (v) => { autopilot = v; }, get state() { return state; }, pl, start, die, jump, runFile, get monkeys() { return monkeys; }, slide, get seed() { return seed; }, get world() { return world; } };
