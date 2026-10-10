@@ -199,8 +199,26 @@ if (useBloom) {
 
 const baseFov = () => (window.innerWidth < window.innerHeight ? 82 : 70);
 
+// Размер экрана. Запущенная с главного экрана iPhone (без Safari) страница при старте получает
+// innerHeight без полосы статус-бара — снизу оставалась белая полоса до первого поворота телефона.
+// В режиме приложения берём физический размер экрана (screen на iOS всегда в портретной ориентации).
+const standalone = navigator.standalone === true
+  || matchMedia('(display-mode: standalone)').matches || matchMedia('(display-mode: fullscreen)').matches;
+function viewSize() {
+  let w = window.innerWidth, h = window.innerHeight;
+  if (standalone && screen.width && screen.height) {
+    const portrait = h >= w;
+    const sw = portrait ? Math.min(screen.width, screen.height) : Math.max(screen.width, screen.height);
+    const sh = portrait ? Math.max(screen.width, screen.height) : Math.min(screen.width, screen.height);
+    // только если innerHeight «недобрал» чуть-чуть (статус-бар), а не, скажем, при split view на iPad
+    if (sh > h && sh - h < 80 && Math.abs(sw - w) < 2) h = sh;
+  }
+  return [w, h];
+}
+
 function resize() {
-  const w = window.innerWidth, h = window.innerHeight;
+  const [w, h] = viewSize();
+  document.documentElement.style.setProperty('--app-h', `${h}px`);
   renderer.setSize(w, h, false);
   camera.aspect = w / h;
   camera.fov = baseFov();
@@ -214,7 +232,11 @@ function resize() {
   }
 }
 window.addEventListener('resize', resize);
+window.addEventListener('orientationchange', () => setTimeout(resize, 300));
+window.visualViewport?.addEventListener('resize', resize);
 resize();
+// iOS иногда досчитывает размер уже после загрузки — проверяем ещё раз
+for (const t of [250, 1000]) setTimeout(resize, t);
 
 // ---------- UI ----------
 const $ = (id) => document.getElementById(id);
