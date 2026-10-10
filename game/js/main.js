@@ -461,9 +461,9 @@ function physicsStep(dt) {
       if (pl.wall) endWallRun();
       pl.boost = Math.max(0, pl.boost - 1.5);
       cam.dip = Math.max(cam.dip, 0.25);
-    } else if (hi !== INF && hi - pl.y <= P.grab && lo <= pl.y + 0.5 && !sliding()) {
-      // не допрыгнул или не успел прыгнуть, но край на уровне рук — зацеп и подтягивание:
-      // не смерть, а потеря скорости
+    } else if (!pl.grounded && hi !== INF && hi - pl.y <= P.grab && lo <= pl.y + 0.5 && !sliding()) {
+      // прыгнул, но не долетел — край на уровне рук: зацеп и подтягивание,
+      // не смерть, а потеря скорости. С земли без прыжка — врезаешься, как раньше
       pl.y = hi; pl.vy = 0; pl.grounded = true;
       if (pl.wall) endWallRun();
       pl.boost = 0; pl.hopKeep = false;
