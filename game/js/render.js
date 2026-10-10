@@ -129,14 +129,22 @@ const frag = /* glsl */ `
       // свет с неба падает туда, куда нужно бежать: светлое пятно = путь
       col = col * (1.0 + vLight * 0.6) + vLight * 0.12;
       if (uNight > 0.0) {
-        // маршрут — цепочка круглых пятен прожекторов: по пятну в центре каждой клетки пути,
-        // через ряд; между пятнами темно — глаз читает маршрут по «бусинам», и на поворотах тоже
-        float pz = (fract(vPos.z / (uRow * 2.0)) - 0.5) * uRow * 2.0;
-        float px = (fract(vPos.x / uCell) - 0.5) * uCell;
-        float d2 = px * px + pz * pz;
+        // маршрут — редкие мягкие лужи света вдоль пути: не в каждой клетке, со сдвигом,
+        // соседние сливаются в неровные пятна. Сетки «по лампе на полосу» не видно
         float onPath = smoothstep(0.03, 0.2, vLight);
-        float pool = smoothstep(2.6, 1.2, sqrt(d2)) * 0.8 + exp(-d2 / 9.0) * 0.25;
-        emit += vec3(0.85, 0.92, 1.0) * pool * onPath * uNight;
+        float pool = 0.0;
+        vec2 cellP = vec2(floor(vPos.x / uCell), floor(vPos.z / (uRow * 2.0)));
+        for (int i = -1; i <= 1; i++) {
+          for (int j = -1; j <= 1; j++) {
+            vec2 cid = cellP + vec2(float(i), float(j));
+            float h = h21(cid * 1.37 + 4.1);
+            if (h < 0.55) continue;                     // меньше половины мест — с лужей света
+            vec2 c = (cid + 0.5 + (vec2(h21(cid + 9.3), h21(cid + 2.7)) - 0.5) * 0.6) * vec2(uCell, uRow * 2.0);
+            vec2 d = vPos.xz - c;
+            pool += exp(-dot(d, d) / 7.5) * (0.6 + 0.4 * h);
+          }
+        }
+        emit += vec3(0.82, 0.9, 1.0) * min(pool, 1.0) * 0.42 * onPath * uNight;
         // слабая подсветка между пятнами — чтобы путь не рвался совсем
         emit += vec3(0.78, 0.88, 1.0) * vLight * 0.12 * uNight;
       }
@@ -316,7 +324,7 @@ const frag = /* glsl */ `
           vec2 cuv = sp / (R * 2.4) * 0.5 + 0.5;
           float ck = texture2D(uCookie, clamp(cuv, 0.0, 1.0)).r;
           ck *= step(abs(cuv.x - 0.5), 0.5) * step(abs(cuv.y - 0.5), 0.5);
-          spot = ck * ck * 1.7; ring = 0.0; halo = ck * 0.55;
+          spot = ck * ck * 1.15; ring = 0.0; halo = ck * 0.45;
         }
         float dist = length(vView);
         float att = 1.0 / (1.0 + dist * dist / 220.0);
@@ -337,7 +345,7 @@ const frag = /* glsl */ `
           }
         }
         // свет фонаря не выше порога блума — то, куда бежим, не выжигается в белое
-        dark = min(dark + lampL, vec3(0.93));
+        dark = min(dark + lampL, vec3(0.8));
       }
       c3 = mix(c3, dark + emit, uNight);
     }
