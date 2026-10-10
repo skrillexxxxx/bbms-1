@@ -66,6 +66,8 @@ function createBlurPass() {
       uStrength: { value: 0 },
       uLateral: { value: new THREE.Vector2(0, 0) },
       uAspect: { value: 1 },
+      uLines: { value: 0 },
+      uTime: { value: 0 },
     },
     vertexShader: /* glsl */ `
       varying vec2 vUv;
@@ -77,12 +79,17 @@ function createBlurPass() {
       uniform float uStrength;
       uniform vec2 uLateral;
       uniform float uAspect;
+      uniform float uLines;
+      uniform float uTime;
+      float hash(float n) { return fract(sin(n) * 43758.5453); }
       varying vec2 vUv;
       void main() {
         vec2 d = vUv - uCenter;
         float dist = length(d * vec2(uAspect, 1.0));
         vec2 vel = d * uStrength * smoothstep(0.04, 0.55, dist) + uLateral;
-        if (dot(vel, vel) < 1e-7) { gl_FragColor = texture2D(tDiffuse, vUv); return; }
+        vec4 col;
+        if (dot(vel, vel) < 1e-7) col = texture2D(tDiffuse, vUv);
+        else {
         // 12 выборок со сдвигом-шумом на пиксель: сильный смаз без «лесенки» из копий
         float jitter = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453) / 12.0;
         vec4 acc = vec4(0.0);
@@ -90,7 +97,30 @@ function createBlurPass() {
           float t = (float(i) / 12.0 + jitter) - 0.5;
           acc += texture2D(tDiffuse, vUv - vel * t);
         }
-        gl_FragColor = acc / 12.0;
+        col = acc / 12.0;
+        }
+
+        // аниме-полосы скорости: лучи к точке схода, перерисовка ~18 раз в секунду
+        if (uLines > 0.001) {
+          vec2 dd = d * vec2(uAspect, 1.0);   // угол — с учётом пропорций, чтобы лучи шли равномерно
+          float rr = length(d * 2.0);         // радиус — в долях экрана: 1 = середина края
+          float bins = 160.0;
+          float a = (atan(dd.y, dd.x) / 6.2831853 + 0.5) * bins;
+          float id = floor(a);
+          float fa = fract(a);
+          float frame = floor(uTime * 18.0);
+          float h = hash(id * 1.37 + frame * 17.13);
+          float on = step(1.0 - uLines * 0.5, h);                       // плотность растёт с серией
+          float r0 = mix(0.8, 0.38, uLines) + 0.25 * hash(id * 7.7 + frame * 3.3); // откуда начинается луч
+          float grow = smoothstep(r0, r0 + 0.35, rr);                    // тонкий у центра, толще к краю
+          float w = (0.08 + 0.3 * hash(id * 3.1 + frame)) * grow;
+          float line = 1.0 - smoothstep(w * 0.5, w * 0.5 + 0.06, abs(fa - 0.5));
+          float k = on * line * grow * min(1.0, uLines * 1.4);
+          // половина лучей тёмные, половина светлые — как в манге
+          vec3 ink = hash(id * 5.3 + frame * 1.9) > 0.5 ? vec3(0.04) : vec3(1.0);
+          col.rgb = mix(col.rgb, ink, k * 0.7);
+        }
+        gl_FragColor = col;
       }
     `,
   });
@@ -141,8 +171,10 @@ const pl = {
   x: 0, z: 0, y: 0, vx: 0, vy: 0, grounded: true,
   lane: 6, pending: 0, pendT: 0,
   coyote: 0, jumpBuf: 0, slideT: 0, slideQueued: false, boost: 0, hopKeep: false,
+  slideChain: 0, slideEndAt: -9,
 };
-const cam = { roll: 0, yaw: 0, pitch: 0, dip: 0, slide: 0, bob: 0, fov: 82, slideSide: 1, lookY: 1.2, vx: 0 };
+const cam = { roll: 0, yaw: 0, pitch: 0, dip: 0, slide: 0, bob: 0, fov: 82, slideSide: 1, lookY: 1.2, vx: 0, lines: 0 };
+let gameTime = 0;
 let state = 'ready';
 let shake = 0;
 
@@ -157,9 +189,10 @@ function reset(s) {
   Object.assign(pl, {
     x: 6 * CELL + CELL / 2, z: ROW * 0.5, y: 0, vx: 0, vy: 0, grounded: true,
     coyote: 0, jumpBuf: 0, slideT: 0, slideQueued: false, boost: 0, hopKeep: false,
+    slideChain: 0, slideEndAt: -9,
   });
   Object.assign(pl, { lane: 6, pending: 0, pendT: 0 });
-  Object.assign(cam, { roll: 0, yaw: 0, pitch: 0, dip: 0, slide: 0, bob: 0, lookY: 1.2, vx: 0 });
+  Object.assign(cam, { roll: 0, yaw: 0, pitch: 0, dip: 0, slide: 0, bob: 0, lookY: 1.2, vx: 0, lines: 0 });
   shake = 0;
   ensureWorld();
   const u = new URL(location.href);
@@ -302,8 +335,11 @@ function physicsStep(dt) {
     if (pl.slideT <= 0) {
       const over = solidAt(pl.x, pl.z) || solidAt(pl.x, pl.z + r);
       if (blocksBody(over, pl.y, P.bodyStand)) pl.slideT = 0.05;
+      else pl.slideEndAt = gameTime;
     }
   }
+  // серия подкатов рвётся, если долго не подкатывались
+  if (!sliding() && gameTime - pl.slideEndAt > 0.6) pl.slideChain = 0;
 
   // инерция разгона: тает на земле, держится в воздухе после прыжка из подката
   if (!(pl.hopKeep && !pl.grounded) && !sliding()) pl.boost = Math.max(0, pl.boost - P.boostDecay * dt);
@@ -324,6 +360,8 @@ function physicsStep(dt) {
 }
 
 function startSlide() {
+  // серия: новый подкат во время предыдущего или сразу после — копится; от 2 подряд — полосы скорости
+  pl.slideChain = sliding() || gameTime - pl.slideEndAt < 0.45 ? pl.slideChain + 1 : 1;
   if (pl.slideT <= 0) cam.slideSide = pl.vx > 2 ? -1 : pl.vx < -2 ? 1 : (Math.random() < 0.5 ? -1 : 1);
   pl.slideT = P.slideTime;
   pl.boost = Math.min(P.boostMax, pl.boost + P.slideBoost);
@@ -527,6 +565,7 @@ let fpsAcc = 0, fpsN = 0, fps = 0;
 function frame(now) {
   requestAnimationFrame(frame);
   const dt = Math.min(0.05, (now - last) / 1000);
+  gameTime += dt;
   last = now;
 
   if (state === 'run') {
@@ -563,6 +602,9 @@ function frame(now) {
     // сильнее на разгоне, в подкате и при бусте после подката
     blurPass.uniforms.uStrength.value = run * (0.04 + sp * 0.11 + cam.slide * 0.05 + pl.boost * 0.006);
     blurPass.uniforms.uLateral.value.set(run * -cam.vx * 0.0012, 0);
+    cam.lines = damp(cam.lines, run * Math.min(1, Math.max(0, (pl.slideChain - 1) / 3)), pl.slideChain > 1 ? 6 : 2.5, dt);
+    blurPass.uniforms.uLines.value = cam.lines;
+    blurPass.uniforms.uTime.value = gameTime;
   }
   if (composer) composer.render(); else renderer.render(scene, camera);
 
