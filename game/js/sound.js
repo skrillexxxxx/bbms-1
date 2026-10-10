@@ -270,6 +270,8 @@ export function createSound(enabled) {
       lp.frequency.setTargetAtTime(f, t, 0.03);
       // эхо: в подземке громкое, на улице его нет
       if (revWet) revWet.gain.setTargetAtTime(1.2 * deep, t, 0.4);
+      // в подземке шаги звонкие (верха открыты — плитка и бетон), на улице — глуше
+      if (stepBus) stepBus.frequency.setTargetAtTime(2200 + 15800 * deep, t, 0.4);
       duck.gain.setTargetAtTime(1 + (MUFFLE_GAIN - 1) * e, t, 0.03);
     },
   };
