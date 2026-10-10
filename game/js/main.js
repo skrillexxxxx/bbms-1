@@ -1072,6 +1072,30 @@ window.addEventListener('keydown', (e) => {
 document.addEventListener('gesturestart', (e) => e.preventDefault());
 document.addEventListener('touchmove', (e) => { if (!e.target.closest?.('#seed-list')) e.preventDefault(); }, { passive: false });
 
+// ---------- акустика улицы: стены рядом ----------
+// Короткое эхо со стороны стены (бежим вдоль башни или по красной стене) и отовсюду в узком месте.
+// В подземке своё длинное эхо, там это не нужно.
+const spaceS = { l: 0, r: 0 };
+function wallNear(side) {
+  // стена вплотную (соседняя полоса) — 1, через полосу — 0.35; смотрим чуть вперёд и назад
+  let best = 0;
+  for (const dz of [-2, 2, 6]) {
+    for (const [k, w] of [[1, 1], [2, 0.35]]) {
+      const c = world.cellAt(wrapX(laneX(pl.lane + side * k)), pl.z + dz);
+      if (c === WALL || c === RUNWALL) { best = Math.max(best, w); break; }
+      if (c !== VOID && c !== POOL && lv(c) >= 2) { best = Math.max(best, w * 0.6); break; } // высокий предмет
+    }
+  }
+  return best;
+}
+function updateSpace(dt, deep) {
+  const on = state === 'run' ? 1 - deep : 0;
+  spaceS.l = damp(spaceS.l, wallNear(-1) * on, 6, dt);
+  spaceS.r = damp(spaceS.r, wallNear(1) * on, 6, dt);
+  const narrow = Math.min(spaceS.l, spaceS.r);
+  sound.space(spaceS.l - narrow * 0.6, spaceS.r - narrow * 0.6, narrow);
+}
+
 // ---------- обезьянки ----------
 function updateMonkeyHud() {
   ui.monk.textContent = String(runMonkeys);
@@ -1342,6 +1366,7 @@ function frame(now) {
   const high = Math.min(1, Math.max(0, (cam.base - 10) / 25));
   materials.main.uniforms.uHigh.value = high;
   sound.update(deep, state === 'run' ? speedNow() : 0, high);
+  updateSpace(dt, deep);
   materials.star.uniforms.uB.value = cam.base;
   {
     const mu = materials.monkey.uniforms, mm = materials.main.uniforms;

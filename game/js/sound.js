@@ -41,7 +41,9 @@ export function createSound(enabled) {
   const slideRaw = enabled ? Object.fromEntries(Object.entries(SLIDE_URLS).map(([k, u]) => [k, get(u)])) : {};
   let slideBuf = {}, slideNow = null, slideBus = null; // slideNow: { srcs, gains } — звучащий подкат
   let steps = [], sfx = null, lastStep = -1;
-  let revWet = null; // сколько шагов уходит в реверб (в подземке — эхо тоннеля) // steps: [{ buf, a }] — a: где начинается звук (без тишины mp3)
+  // steps: [{ buf, a }] — a: где начинается звук (без тишины mp3)
+  let revWet = null; // сколько шагов уходит в реверб (в подземке — эхо тоннеля)
+  let nearL = null, nearR = null, nearC = null; // короткое эхо от стен: слева, справа, отовсюду (узко)
 
   function decode(data) {
     // старый Safari знает только колбэчный вариант decodeAudioData
@@ -181,6 +183,17 @@ export function createSound(enabled) {
     conv.buffer = impulse(2.2, 2.6);
     revWet = ctx.createGain(); revWet.gain.value = 0;
     sfx.connect(conv); conv.connect(revWet); revWet.connect(ctx.destination);
+    // короткое эхо от стен рядом (~0.4 с): отражение слышно с той стороны, где стена
+    const near = ctx.createConvolver();
+    near.buffer = impulse(0.45, 3.2);
+    sfx.connect(near);
+    const pan = (p) => {
+      if (!ctx.createStereoPanner) return ctx.destination;
+      const sp = ctx.createStereoPanner(); sp.pan.value = p; sp.connect(ctx.destination); return sp;
+    };
+    nearL = ctx.createGain(); nearL.gain.value = 0; near.connect(nearL); nearL.connect(pan(-0.85));
+    nearR = ctx.createGain(); nearR.gain.value = 0; near.connect(nearR); nearR.connect(pan(0.85));
+    nearC = ctx.createGain(); nearC.gain.value = 0; near.connect(nearC); nearC.connect(ctx.destination);
     // скольжение — через срез высоких. Один фильтр, а не два подряд: с крутым срезом
     // на динамике телефона не оставалось почти ничего
     slideBus = ctx.createGain();
@@ -214,6 +227,14 @@ export function createSound(enabled) {
     },
     // зовётся каждый кадр. Переход ведём сами, а не расписанием AudioParam:
     // Safari на iPhone выполняет такие рампы мгновенно — звук срезался рывком.
+    // стены рядом (0…1): left/right — с какой стороны, narrow — узкое место (стены с обеих сторон)
+    space(left, right, narrow) {
+      if (!ctx || !nearL) return;
+      const t = ctx.currentTime;
+      nearL.gain.setTargetAtTime(0.55 * left, t, 0.12);
+      nearR.gain.setTargetAtTime(0.55 * right, t, 0.12);
+      nearC.gain.setTargetAtTime(0.6 * narrow, t, 0.2);
+    },
     // deep: 0 на улице … 1 в подземке; speed — скорость бега; high: 0 … 1 на небоскрёбах.
     update(deep, speed, high = 0) {
       if (!ctx) return;
