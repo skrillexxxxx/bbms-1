@@ -286,7 +286,7 @@ let gameTime = 0;
 let runStartT = 0; // gameTime в начале забега — от него считаем день и ночь
 const _sky = new THREE.Color();
 // День → сумерки → ночь → рассвет → день… Забег всегда начинается днём.
-const DAY = 70, DUSK = 18, NIGHT = 80; // секунды
+const DAY = 35, DUSK = 15, NIGHT = 80; // секунды
 const forceNight = params.has('night') ? Number(params.get('night') || 1) : null; // для проверки: ?night=1
 function nightAmount() {
   if (forceNight !== null) return forceNight;
