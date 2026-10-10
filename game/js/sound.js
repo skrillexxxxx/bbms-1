@@ -43,7 +43,7 @@ export function createSound(enabled) {
   let steps = [], sfx = null, lastStep = -1;
   // steps: [{ buf, a }] — a: где начинается звук (без тишины mp3)
   let revWet = null; // сколько шагов уходит в реверб (в подземке — эхо тоннеля)
-  let nearL = null, nearR = null, nearC = null; // короткое эхо от стен: слева, справа, отовсюду (узко)
+  let nearL = null, nearR = null, nearC = null, echoL = null, echoR = null; // короткое эхо от стен: слева, справа, отовсюду (узко)
 
   function decode(data) {
     // старый Safari знает только колбэчный вариант decodeAudioData
@@ -183,9 +183,9 @@ export function createSound(enabled) {
     conv.buffer = impulse(2.2, 2.6);
     revWet = ctx.createGain(); revWet.gain.value = 0;
     sfx.connect(conv); conv.connect(revWet); revWet.connect(ctx.destination);
-    // короткое эхо от стен рядом (~0.4 с): отражение слышно с той стороны, где стена
+    // эхо улицы от стен рядом (~0.9 с): отражение слышно с той стороны, где стена
     const near = ctx.createConvolver();
-    near.buffer = impulse(0.45, 3.2);
+    near.buffer = impulse(0.9, 3.0);
     sfx.connect(near);
     const pan = (p) => {
       if (!ctx.createStereoPanner) return ctx.destination;
@@ -194,6 +194,20 @@ export function createSound(enabled) {
     nearL = ctx.createGain(); nearL.gain.value = 0; near.connect(nearL); nearL.connect(pan(-0.85));
     nearR = ctx.createGain(); nearR.gain.value = 0; near.connect(nearR); nearR.connect(pan(0.85));
     nearC = ctx.createGain(); nearC.gain.value = 0; near.connect(nearC); nearC.connect(ctx.destination);
+    // отдельные отражения «чух-чух-чух»: пинг-понг между левой и правой стеной.
+    // Каждое отражение тише и глуше предыдущего
+    const mkDelay = (sec) => { const d = ctx.createDelay(1); d.delayTime.value = sec; return d; };
+    echoL = ctx.createGain(); echoL.gain.value = 0;
+    echoR = ctx.createGain(); echoR.gain.value = 0;
+    const dL = mkDelay(0.085), dR = mkDelay(0.11);
+    const tone = () => { const f = ctx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 2600; return f; };
+    const fL = tone(), fR = tone();
+    const fbLR = ctx.createGain(), fbRL = ctx.createGain(); fbLR.gain.value = 0.42; fbRL.gain.value = 0.42;
+    sfx.connect(echoL); echoL.connect(dL); dL.connect(fL);
+    sfx.connect(echoR); echoR.connect(dR); dR.connect(fR);
+    fL.connect(pan(-0.9)); fR.connect(pan(0.9));
+    fL.connect(fbLR); fbLR.connect(dR); // отразилось слева — летит к правой стене
+    fR.connect(fbRL); fbRL.connect(dL);
     // скольжение — через срез высоких. Один фильтр, а не два подряд: с крутым срезом
     // на динамике телефона не оставалось почти ничего
     slideBus = ctx.createGain();
@@ -234,6 +248,8 @@ export function createSound(enabled) {
       nearL.gain.setTargetAtTime(1.2 * left, t, 0.12);
       nearR.gain.setTargetAtTime(1.2 * right, t, 0.12);
       nearC.gain.setTargetAtTime(1.3 * narrow, t, 0.2);
+      echoL.gain.setTargetAtTime(0.5 * Math.min(1, left + narrow), t, 0.12);
+      echoR.gain.setTargetAtTime(0.5 * Math.min(1, right + narrow), t, 0.12);
     },
     // deep: 0 на улице … 1 в подземке; speed — скорость бега; high: 0 … 1 на небоскрёбах.
     update(deep, speed, high = 0) {

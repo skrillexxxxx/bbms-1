@@ -28,6 +28,7 @@ const vert = /* glsl */ `
   varying float vTop;
   varying vec4 vBox;
   varying float vDz;
+  varying float vDx;
   varying float vDist;
   varying float vS;
   varying float vWY;
@@ -48,6 +49,7 @@ const vert = /* glsl */ `
     vTop = aTop;
     vBox = aBox;
     vDz = f.z;
+    vDx = f.x;
     // дальность по горизонтали (без высоты): с крыш улица внизу не должна тонуть в тумане
     vDist = length(vec2(w.x, w.z - uL));
     // высоту восстанавливаем во фрагментном шейдере как vWY / vS:
@@ -81,6 +83,7 @@ const frag = /* glsl */ `
   varying float vTop;
   varying vec4 vBox;
   varying float vDz;
+  varying float vDx;
   varying float vDist;
   varying float vS;
   varying float vWY;
@@ -282,6 +285,13 @@ const frag = /* glsl */ `
       vec3 dark = c3 * vec3(0.13, 0.15, 0.21);
       if (redLit) dark = mix(dark, c3 * vec3(0.75, 0.6, 0.6), near);
       dark += vec3(0.5, 0.56, 0.68) * rimK;
+      // фонарь бегуна: светит вперёд конусом на ~15–20 м — препятствия, стены поворотов и пол перед нами.
+      // Сильнее всего освещены грани, повёрнутые к нам: их-то и надо видеть, чтобы перепрыгнуть или свернуть
+      float dzh = max(vDz, 0.0);
+      float cone = exp(-vDx * vDx / (2.0 * pow(3.0 + dzh * 0.35, 2.0)));
+      float face = n.y > 0.5 ? 0.55 : (n.y < -0.5 ? 0.15 : 0.25 + 0.85 * max(-n.z, 0.0) + 0.35 * abs(n.x));
+      float head = exp(-dzh / 14.0) * smoothstep(-1.0, 1.5, vDz) * cone * face;
+      dark += c3 * vec3(0.95, 0.97, 1.0) * head * 0.85;
       c3 = mix(c3, dark + emit, uNight);
     }
     // высота: всё, что далеко внизу под ярусом, тонет в дымке (днём белой, ночью — цвета тумана)
