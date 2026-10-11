@@ -1189,6 +1189,7 @@ function resumeGame() {
   if (state !== 'paused') return;
   state = 'run';
   sound.muffle(false);
+  tut.muf = false; // если обучение сейчас замедляет время — звук снова уйдёт «под воду»
   $('pause-menu').classList.remove('show');
   $('gfx').classList.remove('show');
   setPauseIcon();
@@ -1254,7 +1255,7 @@ const TUT_TEXT = {
   kick: ['На стену напротив', 'свайп %s — от стены', '%k — от стены'],
   done: ['Готово! Дальше — сам', '', ''],
 };
-const tut = { step: null, t: 0, shown: null, k: 1, kTo: 1, wallD: 0, doneT: 0 };
+const tut = { step: null, t: 0, shown: null, k: 1, kTo: 1, wallD: 0, doneT: 0, muf: false };
 function tutSaved() { try { return localStorage.getItem('sdwg-tut') || ''; } catch { return 'done'; } }
 // новый забег начнётся с первых шагов обучения — нужен прямой проспект (и после смерти)
 function tutWantsAvenue() { return !autopilot && params.get('tut') !== '0' && !['done', 'wall'].includes(tutSaved()); }
@@ -1265,7 +1266,8 @@ function tutStart() {
   const saved = tutSaved();
   if (autopilot || params.get('tut') === '0' || saved === 'done') { tut.step = null; return false; }
   tut.step = saved === 'wall' ? 'wall' : 'jump';
-  tut.t = 0;
+  tut.t = 0; tut.muf = false;
+  $('tut-skip').style.display = '';
   $('tut').classList.add('show');
   return tut.step === 'jump';
 }
@@ -1287,6 +1289,7 @@ function tutEnd(skipped) {
   if (skipped) { tutHide(); tut.step = null; $('tut').classList.remove('show'); leaveAvenue(); return; }
   tutNext('done');
   tutShow('done', 'none');
+  $('tut-skip').style.display = 'none'; // обучение пройдено — «Пропустить» больше не нужна
 }
 // действие игрока: засчитываем, только если сейчас о нём и просили
 function tutEvent(a) {
@@ -1314,6 +1317,9 @@ function tutUpdate(dt) {
   // замедление и «стоп-кадр» — плавно, без рывка
   tut.k += (tut.kTo - tut.k) * Math.min(1, dt * 8);
   if (Math.abs(tut.k - tut.kTo) < 0.01) tut.k = tut.kTo;
+  // замедление и стоп-кадр — звук «под воду», как в меню и при смерти; вернулось время — вернулся звук
+  const muf = state === 'run' && tut.kTo < 1;
+  if (muf !== tut.muf) { if (state === 'run') sound.muffle(muf); tut.muf = muf; }
   if (!tut.step) return;
   $('tut').style.visibility = state === 'run' ? '' : 'hidden';
   if (state !== 'run') return;
@@ -1350,7 +1356,7 @@ function tutUpdate(dt) {
       } else tutEnd(false); // со стены сошли — бег по стене освоен
       break;
     }
-    case 'done': if (tut.t > 2.2) { tutHide(); tut.step = null; } break;
+    case 'done': if (tut.t > 2.2) { tutHide(); tut.step = null; $('tut').classList.remove('show'); } break;
   }
 }
 $('tut-card-ok').addEventListener('click', (e) => {
