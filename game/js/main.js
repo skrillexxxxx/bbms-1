@@ -41,8 +41,9 @@ const P = {
   slideBoost: 4,       // подкат разгоняет…
   boostMax: 8,
   boostDecay: 2.5,     // …и разгон тает, но не в воздухе после slide-hop
-  pumpGain: 1.2,       // свайп вниз в подкате на земле: +скорость, копится без предела
-  pumpDecay: 0.6,      // перестал качать — накачка тает (доля в секунду, но не медленнее 2 м/с²)
+  pumpGain: 0.9,       // быстрый свайп вниз в подкате на земле: +скорость, копится без предела
+  pumpWindow: 0.4,     // …если с прошлого свайпа прошло меньше этого (с); чем быстрее, тем больше
+  pumpDecay: 0.8,      // перестал качать — накачка тает (доля в секунду, но не медленнее 2 м/с²)
   coyote: 0.1,
   jumpBuffer: 0.15,
   // бег по стене (как в VHOLUME): касание стены даёт разгон, держаться можно недолго —
@@ -296,7 +297,7 @@ try { totalMonkeys = Number(localStorage.getItem('sdwg-monkeys')) || 0; } catch 
 const pl = {
   x: 0, z: 0, y: 0, vx: 0, vy: 0, grounded: true,
   lane: 6, pending: 0, pendT: 0,
-  coyote: 0, jumpBuf: 0, slideT: 0, slideQueued: false, boost: 0, pump: 0, hopKeep: false,
+  coyote: 0, jumpBuf: 0, slideT: 0, slideQueued: false, boost: 0, pump: 0, pumpT: -9, hopKeep: false,
   slideChain: 0, slideEndAt: -9,
   wall: 0, wallT: 0, wallCool: 0, wallLast: 0, autoAttach: 0, autoT: 0, grabT: 0, launch: null, glideT: 0, longT: 0, longG: 1, hover: 0, longLane: null,
 };
@@ -334,7 +335,7 @@ function reset(s) {
   if (params.get('under')) world.featOverride = Object.fromEntries(params.get('under').split(',').map((k) => [k, true]));
   Object.assign(pl, {
     x: 6 * CELL + CELL / 2, z: ROW * 0.5, y: 0, vx: 0, vy: 0, grounded: true,
-    coyote: 0, jumpBuf: 0, slideT: 0, slideQueued: false, boost: 0, pump: 0, hopKeep: false,
+    coyote: 0, jumpBuf: 0, slideT: 0, slideQueued: false, boost: 0, pump: 0, pumpT: -9, hopKeep: false,
     slideChain: 0, slideEndAt: -9, wall: 0, wallT: 0, wallCool: 0, wallLast: 0, autoAttach: 0, autoT: 0, grabT: 0, launch: null, glideT: 0, longT: 0, hover: 0, longLane: null, fromLong: false,
   });
   Object.assign(pl, { lane: 6, pending: 0, pendT: 0 });
@@ -873,7 +874,10 @@ function startSlide() {
   pl.slideChain = sliding() || gameTime - pl.slideEndAt < 0.45 ? pl.slideChain + 1 : 1;
   if (pl.slideT <= 0) cam.slideSide = pl.vx > 2 ? -1 : pl.vx < -2 ? 1 : (Math.random() < 0.5 ? -1 : 1);
   // подкат прямо из подката на земле — «накачка»: каждый свайп вниз добавляет скорость, без предела
-  if (sliding() && pl.grounded) pl.pump += P.pumpGain;
+  // считается только быстрая серия: чем чаще свайпы, тем больше прибавка; редкие — ничего
+  const gap = gameTime - pl.pumpT;
+  pl.pumpT = gameTime;
+  if (sliding() && pl.grounded && gap < P.pumpWindow) pl.pump += P.pumpGain * (1 - gap / P.pumpWindow);
   pl.slideT = P.slideTime;
   pl.boost = Math.min(P.boostMax, pl.boost + P.slideBoost);
 }
@@ -1650,10 +1654,10 @@ function frame(now) {
   materials.main.uniforms.uFogFar.value = LZ * (6.0 - 2.6 * deep) * (1 - 0.62 * fogW);
   // день и ночь: в подземке ночь почти не чувствуется — там свои лампы
   const night = nightAmount() * (1 - 0.6 * deep);
-  const nf = [0.17, 0.135, 0.11]; // ночной туман и небо: тёплая дымка от света города, светлее башен
+  const nf = [0.12, 0.13, 0.155]; // ночной туман и небо: прохладная дымка, чуть подсвеченная городом, светлее башен
   const df = [1 - 0.05 * deep, 1 - 0.01 * deep, 1 - 0.02 * deep];
-  // в тумане днём — белёсо-серая дымка, ночью — плотная тёплая, подсвеченная городом
-  const fd = [0.84, 0.855, 0.87], fn = [0.24, 0.2, 0.17];
+  // в тумане днём — белёсо-серая дымка, ночью — плотная серо-синяя, подсвеченная городом
+  const fd = [0.84, 0.855, 0.87], fn = [0.2, 0.21, 0.235];
   for (let i = 0; i < 3; i++) { df[i] += (fd[i] - df[i]) * fogW; nf[i] += (fn[i] - nf[i]) * fogW; }
   // тёмный переход: дымка почти чёрная (свет не работает)
   const feat = state === 'ready' ? null : world.featAt(pl.z + 4);

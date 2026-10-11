@@ -122,7 +122,7 @@ const frag = /* glsl */ `
   }
 
   float h21(vec2 p) { vec3 p3 = fract(vec3(p.xyx) * 0.1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
-  const vec3 WARM = vec3(1.0, 0.78, 0.48);
+  const vec3 WARM = vec3(1.0, 0.85, 0.66); // ночной свет: тёплый, но не жёлтый
 
   // палитра шариков: насыщенные, как в детском бассейне
   vec3 PALETTE(float h) {
@@ -428,7 +428,7 @@ const frag = /* glsl */ `
       // вдали от пути — глубокая темнота, у пути чуть светлее: ночь неравномерная, путь контрастный
       float nearPath = smoothstep(0.02, 0.35, vLight);
       // ночной свет тёплый — от тысяч жёлтых окон
-      vec3 dark = c3 * vec3(0.19, 0.155, 0.12) * mix(0.38, 1.0, nearPath);
+      vec3 dark = c3 * vec3(0.155, 0.16, 0.185) * mix(0.38, 1.0, nearPath);
       if (redLit) dark = mix(dark, c3 * vec3(0.75, 0.6, 0.6), near);
       // красные акценты ночью горят как неон: ярче порога блума — с ореолом, видно издалека
       float redness = clamp((c3.r - max(c3.g, c3.b)) * 2.2, 0.0, 1.0);
@@ -1352,8 +1352,8 @@ export function buildInstanceMesh(inst, materials, world) {
   const streetLamps = [];
   for (let r = 0; r < nRows; r++) {
     const row = rows[r], ri = inst.rowStart + r;
-    if (row.cover || row.b0 !== 0 || row.b1 !== 0 || ri % 3 !== 0) continue;
-    const side = (ri / 3) % 2 === 0 ? -1 : 1; // по очереди: то слева, то справа
+    if (row.cover || row.b0 !== 0 || row.b1 !== 0 || ri % 5 !== 0 || hash2(ri, 77) < 0.55) continue;
+    const side = hash2(ri, 78) < 0.5 ? -1 : 1; // сторона — случайная, но своя у каждого ряда
     const at = (c) => row[((c % COLS) + COLS) % COLS];
     let cc = -1;
     for (let k = 0; k < COLS; k++) {
