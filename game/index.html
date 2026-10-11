@@ -119,9 +119,10 @@
       background: radial-gradient(circle closest-side, rgba(255,255,255,0.900) 0.0%, rgba(255,255,255,0.895) 4.2%, rgba(255,255,255,0.882) 8.3%, rgba(255,255,255,0.859) 12.5%, rgba(255,255,255,0.828) 16.7%, rgba(255,255,255,0.790) 20.8%, rgba(255,255,255,0.744) 25.0%, rgba(255,255,255,0.693) 29.2%, rgba(255,255,255,0.637) 33.3%, rgba(255,255,255,0.578) 37.5%, rgba(255,255,255,0.516) 41.7%, rgba(255,255,255,0.454) 45.8%, rgba(255,255,255,0.392) 50.0%, rgba(255,255,255,0.331) 54.2%, rgba(255,255,255,0.273) 58.3%, rgba(255,255,255,0.220) 62.5%, rgba(255,255,255,0.171) 66.7%, rgba(255,255,255,0.127) 70.8%, rgba(255,255,255,0.090) 75.0%, rgba(255,255,255,0.059) 79.2%, rgba(255,255,255,0.035) 83.3%, rgba(255,255,255,0.018) 87.5%, rgba(255,255,255,0.007) 91.7%, rgba(255,255,255,0.001) 95.8%, rgba(255,255,255,0.000) 100.0%);
       transition: width 0.8s cubic-bezier(.2,.7,.2,1), height 0.8s cubic-bezier(.2,.7,.2,1), opacity 0.5s ease;
     }
-    body:has(#start.show, #over.show, #pause-menu.show, #seeds.show) #halo { opacity: 1; width: max(175vmin, 140vw); height: max(175vmin, 140vw); }
-    body:has(#over.show, #pause-menu.show) #halo { width: max(150vmin, 115vw); height: max(150vmin, 115vw); }
-    body:has(#gfx.show) #halo { opacity: 1; width: max(210vmin, 175vw); height: max(210vmin, 175vw); }
+    body:has(#start.show, #over.show, #pause-menu.show, #seeds.show) #halo { opacity: 1; width: max(175vmin, 140vw, 125vmax); height: max(175vmin, 140vw, 125vmax); }
+    body:has(#over.show, #pause-menu.show) #halo { width: max(150vmin, 115vw, 125vmax); height: max(150vmin, 115vw, 125vmax); }
+    body:has(#install.show) #halo { opacity: 1; width: max(190vmin, 150vw, 125vmax); height: max(190vmin, 150vw, 125vmax); }
+    body:has(#gfx.show) #halo { opacity: 1; width: max(210vmin, 175vw, 125vmax); height: max(210vmin, 175vw, 125vmax); }
     /* настройки графики — в стиле главного меню: по центру, на ореоле, прозрачные кнопки */
     #gfx { z-index: 4; pointer-events: auto; justify-content: flex-start; touch-action: pan-y; padding-top: calc(env(safe-area-inset-top) + 48px); }
     /* здесь колонки шире заголовка меню — и круг больше, во всю ширину */
@@ -161,22 +162,21 @@
       .screen, #seeds, #gfx { padding-top: calc(env(safe-area-inset-top) + 88px); }
     }
 
-    /* установка на экран «Домой» */
-    #install { z-index: 8; pointer-events: auto; background: rgba(255,255,255,0.94); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); touch-action: pan-y; }
-    #install .card { max-width: 440px; text-align: left; }
-    #install h2 { font-size: 26px; font-weight: 800; margin: 0 0 6px; text-align: center; }
-    #install .why { font-size: 14px; opacity: 0.7; text-align: center; margin-bottom: 14px; line-height: 1.45; }
-    #install ol { list-style: none; padding: 0; margin: 0; counter-reset: st; }
-    #install li { display: flex; align-items: center; gap: 12px; padding: 9px 12px; margin: 6px 0; border-radius: 14px; font-size: 16px; line-height: 1.35;
-      animation: step 4.5s infinite; }
-    #install li:nth-child(2) { animation-delay: 1.5s; }
-    #install li:nth-child(3) { animation-delay: 3s; }
-    @keyframes step { 0%, 30% { background: rgba(229,38,43,0.12); } 34%, 100% { background: transparent; } }
-    #install li .ic { flex: none; width: 40px; height: 40px; border-radius: 10px; background: #111; color: #fff; display: flex; align-items: center; justify-content: center; }
-    #install li .ic svg { width: 24px; height: 24px; }
+    /* установка на экран «Домой» — в стиле главного меню: без подложки, на ореоле,
+       крупный заголовок, шаги с иконками в обводке; без анимации — просто информация */
+    #install { z-index: 8; pointer-events: auto; touch-action: pan-y; }
+    body:has(#install.show) #start { visibility: hidden; }
+    #install .card { max-width: 560px; }
+    #install h2 { font-size: clamp(30px, 8vw, 52px); font-weight: 800; line-height: 1.05; letter-spacing: 0.02em; margin: 0 0 10px; }
+    #install .why { font-size: 15px; opacity: 0.75; margin-bottom: 14px; line-height: 1.5; }
+    #install ol { list-style: none; padding: 0; margin: 0 auto; display: inline-block; text-align: left; }
+    #install li { display: flex; align-items: center; gap: 14px; margin: 8px 0; font-size: 16px; line-height: 1.35; }
+    #install li .ic { flex: none; width: 42px; height: 42px; border-radius: 50%; border: 2px solid var(--ink); box-sizing: border-box;
+      display: flex; align-items: center; justify-content: center; font-weight: 800; }
+    #install li .ic svg { width: 22px; height: 22px; }
     #install li small { display: block; font-size: 12px; opacity: 0.6; }
-    #install .note { font-size: 12px; opacity: 0.6; margin: 12px 0 4px; line-height: 1.4; text-align: center; }
-    #install .row { text-align: center; margin-top: 10px; }
+    #install .note { font-size: 12px; opacity: 0.6; margin: 14px 0 4px; line-height: 1.45; }
+    #install .row { margin-top: 10px; }
     #help { z-index: 8; pointer-events: auto; background: rgba(255,255,255,0.9); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); }
     #help .card { max-width: 460px; text-align: left; }
     #help h2 { font-size: 26px; font-weight: 800; margin: 0 0 10px; text-align: center; }
@@ -185,10 +185,12 @@
     @media (max-height: 500px) { #help h2 { font-size: 20px; margin-bottom: 4px; } #help ul { font-size: 14px; line-height: 1.45; } }
     #install-open { border-color: #e5262b; color: #e5262b; }
     @media (max-height: 500px) {
-      #install h2 { font-size: 20px; }
-      #install .why { margin-bottom: 6px; }
-      #install li { padding: 5px 10px; margin: 3px 0; font-size: 14px; }
-      #install li .ic { width: 32px; height: 32px; }
+      #install h2 { font-size: 30px; margin-bottom: 4px; }
+      #install .why { margin-bottom: 6px; font-size: 13px; line-height: 1.4; }
+      #install li { margin: 4px 0; font-size: 14px; }
+      #install li .ic { width: 34px; height: 34px; }
+      #install .note { margin-top: 6px; }
+      #install .row { margin-top: 4px; }
     }
     /* «включи звук»: стрелка на переключатель «Бесшумно» на боку iPhone */
     #soundhint {
