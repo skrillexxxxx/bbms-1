@@ -769,6 +769,8 @@ function startLaunch() {
   pl.slideT = 0; pl.pending = 0; pl.autoAttach = 0;
   const y1 = land.b0;
   rec.event('launch', { z: pl.z, y: pl.y });
+  sound.sfx('springboard');
+  airLaunch = true;
   pl.launch = { z0: pl.z, z1: (ri + LAUNCH_ROWS) * ROW + 1.5, y0: pl.y, y1, yc: Math.max(pl.y, y1) + 12 };
   pl.grounded = false;
   pl.boost = Math.min(P.boostMax, pl.boost + 3);
@@ -1098,6 +1100,7 @@ function renderSeeds() {
 function die(cause = '?') {
   if (state !== 'run') return;
   rec.event('die', { cause, z: pl.z, x: pl.x, y: pl.y, lane: pl.lane });
+  sound.sfx('dead');
   if (slideSnd) { slideSnd = false; sound.slide(false, true); }
   state = 'dead';
   shake = 0.6;
@@ -1187,6 +1190,7 @@ function start() {
   ui.hud.classList.add('show');
   state = 'run';
   runStartT = gameTime;
+  wasGroundedSnd = true; airPeak = pl.y; airLaunch = false; // умерли в полёте — новый забег без «приземления»
   // из меню: проспект кончается, дальше генератор как обычно; метры — от этого места
   if (world.menu) {
     world.menu = false;
@@ -1692,7 +1696,7 @@ function collectMonkeys(z0) {
     try { localStorage.setItem('sdwg-monkeys', String(totalMonkeys)); } catch { /* приватный режим */ }
     updateMonkeyHud();
     ui.monk.classList.remove('pop'); void ui.monk.offsetWidth; ui.monk.classList.add('pop');
-    sound.step(0.6);
+    sound.sfx('monkey');
     rec.event('monkey', { z: k.z, x: k.x, n: runMonkeys });
   }
 }
@@ -1715,6 +1719,10 @@ function animateMonkeys() {
 // ---------- запись забега (для отладки) ----------
 let wasGrounded = true;
 let wasGroundedSnd = true, airVy = 0; // для звука приземления: скорость падения перед касанием
+// падение: от верхней точки полёта до места приземления. Обычный прыжок (пик ≈ 2.9) — только шаги;
+// спрыгнули на уровень ниже и больше — мягкое падение; с крыши на улицу и выше — жёсткое
+let airPeak = 0, airLaunch = false;
+const SOFT_FALL = 4.4, HARD_FALL = 7.5; // крыша (8) → улица — жёсткое, даже если просто сбежали с края
 let slideSnd = false, slideOffT = 0;  // звучит ли скольжение и сколько мы уже не скользим
 function recordFrame() {
   if (pl.grounded !== wasGrounded) { rec.event(pl.grounded ? 'land' : 'air', { z: pl.z, y: pl.y, vy: pl.vy }); wasGrounded = pl.grounded; }
@@ -1901,8 +1909,14 @@ function frame(now) {
     ui.spd.textContent = `${sp} км/ч`;
     recordFrame();
     collectMonkeys(zBefore);
-    if (pl.grounded && !wasGroundedSnd) sound.land(Math.min(1, Math.max(0, (-airVy - 4) / 16)));
-    if (!pl.grounded) airVy = pl.vy;
+    if (pl.grounded && !wasGroundedSnd) {
+      sound.land(Math.min(1, Math.max(0, (-airVy - 4) / 16)));
+      const drop = airPeak - pl.y;
+      if (airLaunch || (drop >= SOFT_FALL && drop < HARD_FALL)) sound.sfx('softFall'); // после трамплина — мягко на крышу
+      else if (drop >= HARD_FALL) sound.sfx('hardFall');
+      airLaunch = false;
+    }
+    if (!pl.grounded) { airVy = pl.vy; airPeak = Math.max(airPeak, pl.y); } else airPeak = pl.y;
     wasGroundedSnd = pl.grounded;
     // звук скольжения — только подкат по полу (на стене — шаги). Подкат сразу за подкатом
     // не обрывает звук: выход звучит, только если не скользим ~0.12 с

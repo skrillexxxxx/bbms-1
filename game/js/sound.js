@@ -10,6 +10,15 @@ const STEP_GAIN = 0.55;
 // подкат по полу: вход → луп, пока скользим → выход (audio/slide/*.mp3), глухо — только низ
 const SLIDE_URLS = { start: 'audio/slide/start.mp3', loop: 'audio/slide/loop.mp3', end: 'audio/slide/end.mp3' };
 const SLIDE_GAIN = 1.8;
+// разовые звуки (audio/sfx/*.mp3). space: true — как шаги, через эхо улицы и реверб подземки;
+// false — напрямую, без пространства (смерть)
+const SFX = {
+  softFall: { url: 'audio/sfx/soft_fall.mp3', gain: 1.4, space: true },
+  hardFall: { url: 'audio/sfx/hard_fall.mp3', gain: 1.5, space: true },
+  springboard: { url: 'audio/sfx/springboard.mp3', gain: 1.4, space: true },
+  monkey: { url: 'audio/sfx/pick_up_monkey.mp3', gain: 1.3, space: true },
+  dead: { url: 'audio/sfx/dead.mp3', gain: 0.8, space: false },
+};
 const SLIDE_LP = 600; // Гц: скольжение глухое, но слышно и на динамике телефона (ниже ~300 Гц он почти не играет)
 const SLIDE_TO_LOOP = 0.45; // через сколько секунд вход перетекает в луп (дальше у входа ровный «шорох»)
 // смерть: музыка уходит «под воду» — срез высоких до MUFFLE_HZ и на 3 дБ тише
@@ -39,8 +48,10 @@ export function createSound(enabled) {
   const raw = enabled ? get(MUSIC_URL) : null;
   const stepRaw = enabled ? STEP_URLS.map(get) : [];
   const slideRaw = enabled ? Object.fromEntries(Object.entries(SLIDE_URLS).map(([k, u]) => [k, get(u)])) : {};
+  const sfxRaw = enabled ? Object.fromEntries(Object.entries(SFX).map(([k, s]) => [k, get(s.url)])) : {};
+  const sfxBuf = {};
   let slideBuf = {}, slideNow = null, slideBus = null; // slideNow: { srcs, gains } — звучащий подкат
-  let steps = [], sfx = null, lastStep = -1, stepBus = null;
+  let steps = [], sfx = null, sfxDry = null, lastStep = -1, stepBus = null;
   // steps: [{ buf, a }] — a: где начинается звук (без тишины mp3)
   let revWet = null; // сколько шагов уходит в реверб (в подземке — эхо тоннеля)
   let rainG = null; // шум дождя
@@ -81,6 +92,21 @@ export function createSound(enabled) {
       if (!data) continue;
       try { const buf = await decode(data); const [a, b] = audibleRange(buf); slideBuf[k] = { buf, a, b }; } catch { /* пропускаем */ }
     }
+  }
+
+  async function loadSfx() {
+    for (const [k, pr] of Object.entries(sfxRaw)) {
+      const data = await pr;
+      if (!data) continue;
+      try { const buf = await decode(data); sfxBuf[k] = { buf, a: audibleRange(buf)[0] }; } catch { /* пропускаем */ }
+    }
+  }
+  function playSfx(name, k = 1) {
+    const st = sfxBuf[name];
+    if (!ctx || ctx.state !== 'running' || !st) return;
+    const s = SFX[name];
+    // через sfx (там громкость шагов) — значит, делим на неё, чтобы gain был «как есть»
+    oneShot(st, s.gain * k * (s.space ? 1 : 1 / STEP_GAIN), 0, s.space ? sfx : sfxDry, 0.97 + Math.random() * 0.06);
   }
 
   function oneShot(st, gain, when = 0, bus = sfx, rate = 1) {
@@ -179,6 +205,7 @@ export function createSound(enabled) {
     // звуки действий — мимо фильтра музыки
     sfx = ctx.createGain(); sfx.gain.value = STEP_GAIN;
     sfx.connect(ctx.destination);
+    sfxDry = ctx.createGain(); sfxDry.gain.value = STEP_GAIN; sfxDry.connect(ctx.destination);
     // шаги чуть глуше: мягкий срез верхов — без «песочного» шороха
     // сами шаги везде одинаковые и полные (они прямо под нами — пространство их не глушит);
     // «песок» убираем мягкой полкой −5 дБ выше 4 кГц, а не срезом — уши не закладывает
@@ -253,13 +280,15 @@ export function createSound(enabled) {
       if (!ctx) build();
       if (!ctx) return;
       if (ctx.state === 'suspended') ctx.resume();
-      if (!started) { started = true; startMusic().catch(() => { started = false; }); loadSteps(); loadSlide(); }
+      if (!started) { started = true; startMusic().catch(() => { started = false; }); loadSteps(); loadSlide(); loadSfx(); }
     },
     // true — плавно глушим (смерть), false — плавно возвращаем как было (снова играем)
     muffle(on) { muffled = on; },
     // скольжение (подкат по полу): true — началось, false — закончилось;
     // quiet — без звука выхода (смерть, рестарт)
     slide(on, quiet = false) { if (on) slideStart(); else slideStop(quiet); },
+    // разовый звук из SFX: softFall, hardFall, springboard, monkey, dead
+    sfx(name, k = 1) { playSfx(name, k); },
     // шаг; k — громкость (1 — обычный бег)
     step(k = 1) { playStep(k); },
     // приземление: два шага почти разом, громче — чем сильнее удар, тем громче
