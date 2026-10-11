@@ -144,8 +144,11 @@
     @keyframes arc { 0%, 15% { opacity: 1; } 40%, 100% { opacity: 0; } }
     #hud.show ~ #rotate { width: 40px; height: 40px; opacity: 0.8; top: calc(env(safe-area-inset-top) + 8px); }
     @media (orientation: portrait) and (pointer: coarse) { #rotate { display: block; } }
-    /* на iPhone в портрете стартовый экран — заголовок ниже значка */
-    @media (orientation: portrait) and (pointer: coarse) { #start { padding-top: calc(env(safe-area-inset-top) + 90px); } }
+    /* в портрете все экраны начинаются ниже значка — он не наезжает на заголовки
+       (стартовый, «Мои города», пауза, «Графика», конец забега) */
+    @media (orientation: portrait) and (pointer: coarse) {
+      .screen, #seeds, #gfx { padding-top: calc(env(safe-area-inset-top) + 88px); }
+    }
 
     /* установка на экран «Домой» */
     #install { z-index: 8; pointer-events: auto; background: rgba(255,255,255,0.94); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); touch-action: pan-y; }
