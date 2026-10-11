@@ -177,7 +177,10 @@
     /* при запуске в портрете — крупно, по центру экрана и поверх всего (окна установки, ника…);
        первый тап или поворот — значок плавно уезжает на своё место наверху */
     #rotate { transition: top 0.5s cubic-bezier(.2,.7,.2,1), width 0.5s cubic-bezier(.2,.7,.2,1), height 0.5s cubic-bezier(.2,.7,.2,1), transform 0.5s cubic-bezier(.2,.7,.2,1), opacity 0.45s ease; }
-    body.rot-first #rotate, body.rot-first #hud.show ~ #rotate { z-index: 4000; top: 50%; width: 136px; height: 136px; opacity: 1; transform: translate(-50%, -50%); box-shadow: 0 6px 30px rgba(0,0,0,0.3); }
+    /* крупный — сверху по центру, над содержимым экрана запуска (а оно сдвинуто ниже), ничего не закрывает */
+    body.rot-first #rotate, body.rot-first #hud.show ~ #rotate { z-index: 4000; top: calc(env(safe-area-inset-top) + 36px); width: 112px; height: 112px; opacity: 1; box-shadow: 0 6px 30px rgba(0,0,0,0.25); }
+    body.rot-first #boot { padding-top: calc(env(safe-area-inset-top) + 150px); box-sizing: border-box; }
+    body.rot-first #boot #install { padding-top: calc(env(safe-area-inset-top) + 164px); }
     /* в портрете все экраны начинаются ниже значка — он не наезжает на заголовки
        (стартовый, «Мои города», пауза, «Графика», конец забега) */
     @media (orientation: portrait) and (pointer: coarse) {
