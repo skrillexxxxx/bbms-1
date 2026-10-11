@@ -163,6 +163,12 @@
     #install li small { display: block; font-size: 12px; opacity: 0.6; }
     #install .note { font-size: 12px; opacity: 0.6; margin: 12px 0 4px; line-height: 1.4; text-align: center; }
     #install .row { text-align: center; margin-top: 10px; }
+    #help { z-index: 8; pointer-events: auto; background: rgba(255,255,255,0.9); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); }
+    #help .card { max-width: 460px; text-align: left; }
+    #help h2 { font-size: 26px; font-weight: 800; margin: 0 0 10px; text-align: center; }
+    #help ul { margin: 0; padding-left: 20px; font-size: 16px; line-height: 1.55; }
+    #help .row { text-align: center; margin-top: 14px; }
+    @media (max-height: 500px) { #help h2 { font-size: 20px; margin-bottom: 4px; } #help ul { font-size: 14px; line-height: 1.45; } }
     #install-open { border-color: #e5262b; color: #e5262b; }
     @media (max-height: 500px) {
       #install h2 { font-size: 20px; }
@@ -198,9 +204,8 @@
 
   <div id="start" class="screen">
     <h1>SDWG GAME</h1>
-    <div class="hint">Свайп влево-вправо — сменить полосу<br>Свайп вверх или тап — прыжок<br>Свайп вниз — подкат (под мостами и трубами)<br>Свайп в красную стену — бег по стене, свайп от неё — прыжок на стену напротив<br>Не врезайся в здания</div>
     <div class="pulse">Тапни, чтобы бежать</div>
-    <div class="menu"><button id="install-open" class="ghost small" style="display:none">Установить приложение</button><button id="open-seeds" class="ghost">Мои города</button><button id="save-progress" class="ghost small">Сохранить прогресс</button><button id="load-progress" class="ghost small">Загрузить</button><br><button id="shadows" class="ghost small">Тени фонаря: выкл</button><button id="sun" class="ghost small">Тени солнца: выкл</button><button id="ps1" class="ghost small">PS1: выкл</button><br><button id="autoexp" class="ghost small">Автоэкспозиция: вкл</button><button id="gfx-open-start" class="ghost small">Графика</button></div>
+    <div class="menu"><button id="install-open" class="ghost small" style="display:none">Установить приложение</button><button id="open-seeds" class="ghost">Мои города</button><button id="help-open" class="ghost small">Инструкция</button><button id="save-progress" class="ghost small">Сохранить прогресс</button><button id="load-progress" class="ghost small">Загрузить</button><br><button id="shadows" class="ghost small">Тени фонаря: выкл</button><button id="sun" class="ghost small">Тени солнца: выкл</button><button id="ps1" class="ghost small">PS1: выкл</button><br><button id="autoexp" class="ghost small">Автоэкспозиция: вкл</button><button id="gfx-open-start" class="ghost small">Графика</button></div>
   </div>
 
   <div id="seeds" class="screen">
@@ -253,6 +258,19 @@
     </div>
   </div>
 
+  <div id="help" class="screen">
+    <div class="card">
+      <h2>Как играть</h2>
+      <ul>
+        <li><b>Свайп влево-вправо</b> — сменить полосу</li>
+        <li><b>Свайп вверх или тап</b> — прыжок</li>
+        <li><b>Свайп вниз</b> — подкат (под мостами и трубами)</li>
+        <li><b>Свайп в красную стену</b> — бег по стене, <b>свайп от неё</b> — прыжок на стену напротив</li>
+        <li>Не врезайся в здания</li>
+      </ul>
+      <div class="row"><button id="help-ok" class="ghost">Понятно</button></div>
+    </div>
+  </div>
   <div id="install" class="screen">
     <div class="card">
       <h2>Установи игру на экран «Домой»</h2>

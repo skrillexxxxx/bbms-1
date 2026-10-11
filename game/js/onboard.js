@@ -113,3 +113,8 @@ $('load-file').addEventListener('change', (e) => {
   e.target.value = '';
   if (f) importProgress(f);
 });
+
+// ---------- инструкция «как играть» (кнопка в главном меню) ----------
+$('help-open').addEventListener('click', (e) => { e.stopPropagation(); $('help').classList.add('show'); });
+$('help-ok').addEventListener('click', (e) => { e.stopPropagation(); $('help').classList.remove('show'); });
+for (const ev of ['pointerdown', 'click']) $('help').addEventListener(ev, (e) => e.stopPropagation());
