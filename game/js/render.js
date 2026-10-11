@@ -247,6 +247,11 @@ const frag = /* glsl */ `
       col = 1.0;
       ballCol = PALETTE(fract(vTop * 0.618));
       ballShade = 0.55 + 0.45 * max(dot(n, normalize(vec3(-0.3, 0.6, -0.7))), 0.0) + 0.35 * pow(max(dot(n, normalize(vec3(-0.4, 0.5, -0.75))), 0.0), 18.0);
+    } else if (st == 29) {
+      // кора поваленного дерева: серо-коричневая, светлее живых стволов — читается как бревно, а не балка
+      col = 0.42 * (0.78 + 0.22 * abs(n.y)) * (0.9 + 0.1 * sin(vPos.y * 9.0 + vPos.x * 3.0 + vPos.z * 3.0));
+    } else if (st == 28) {
+      col = 0.05; // выбоина в краю провала — тёмная
     } else if (st == 27) {
       // бетонные обломки: серые, пятнами, сколы светлее
       col = 0.52 * (0.82 + 0.18 * abs(n.y));
@@ -517,7 +522,7 @@ const frag = /* glsl */ `
       if (st == 24) dark += c3 * WARM * (0.3 + 0.5 * smoothstep(3.0, 7.0, y - uB));
       // препятствия у земли (то, через что прыгаем и под чем катимся) ночью не проваливаются в черноту:
       // тёплый свет с улицы, ярче на гранях к нам и сверху — видно издалека, ещё до фонаря
-      bool obstacle = (st == 4 || st == 5 || (st >= 11 && st <= 13) || st == 26 || st == 27) && vTop - uB < 4.0;
+      bool obstacle = (st == 4 || st == 5 || (st >= 11 && st <= 13) || st == 26 || st == 27 || st == 29) && vTop - uB < 4.0;
       if (obstacle) {
         float of = n.y > 0.5 ? 0.9 : (n.y < -0.5 ? 0.25 : 0.45 + 0.55 * max(-n.z, 0.0));
         dark += (c3 * 0.42 + 0.07) * WARM * of; // + ровная добавка — тёмные части (стекло, решётки) тоже видно
@@ -1105,6 +1110,19 @@ class Builder {
     this.quad4(P(bb, -1, -1), P(bb, 1, -1), P(bb, -1, 1), P(bb, 1, 1), 1, 1, d, style, 0, [0, 0, 0, 0]);
   }
 
+  // свая / стальная балка: толстая, ржавая, торчит из бетона и чуть гнётся на конце
+  pile(p, dir, len, rr) {
+    const l = Math.hypot(dir[0], dir[1], dir[2]) || 1;
+    const u = [dir[0] / l, dir[1] / l, dir[2] / l];
+    const m = [p[0] + u[0] * len * 0.7, p[1] + u[1] * len * 0.7, p[2] + u[2] * len * 0.7];
+    const e = [m[0] + u[0] * len * 0.3 + (rr() - 0.5) * 0.4, m[1] + u[1] * len * 0.3 - len * 0.12, m[2] + u[2] * len * 0.3 + (rr() - 0.5) * 0.4];
+    const tint = this.tint;
+    this.tint = 7;
+    this.slab([p[0] - u[0] * 0.4, p[1] - u[1] * 0.4, p[2] - u[2] * 0.4], m, 0.28, 0.28, 22);
+    this.slab(m, e, 0.26, 0.26, 22);
+    this.tint = tint;
+  }
+
   // гнутый прут арматуры: от p в сторону dir, конец загнут вниз
   rebar(p, dir, len, rr) {
     const m = [p[0] + dir[0] * len * 0.6, p[1] + dir[1] * len * 0.6, p[2] + dir[2] * len * 0.6];
@@ -1185,40 +1203,84 @@ class Builder {
 // сбоку — кривая балка перекрытия. Всё выше пути: на бег не влияет.
 function ruinTower(b, x0, x1, z0, z1, H, style, minTop, seed) {
   const rr = mulberry32(seed);
+  const w = x1 - x0, d = z1 - z0;
+  const kind = rr();
+  // три вида разрухи, всё — крупно, силуэтом:
+  if (kind < 0.3 && w > 3 && d > 3) {
+    // 1) каркас: стены осыпались, остались колонны и перекрытия. Низ (у пути) — сплошной,
+    //    чтобы не казалось, что сквозь дом можно пробежать
+    const podium = minTop + 6;
+    b.boxGeo(x0, x1, z0, z1, podium, style);
+    const top = Math.max(podium + 12, H * (0.5 + rr() * 0.4));
+    const nx = Math.max(2, Math.round(w / 4)), nz = Math.max(2, Math.round(d / 4));
+    for (let i = 0; i <= nx; i++) for (let k = 0; k <= nz; k++) {
+      if (i > 0 && i < nx && k > 0 && k < nz) continue; // колонны — по периметру
+      const cx = x0 + 0.35 + (w - 0.7) * (i / nx), cz = z0 + 0.35 + (d - 0.7) * (k / nz);
+      const h = top - rr() * rr() * (top - podium) * 0.8; // колонны обломаны на разной высоте
+      b.boxGeo(cx - 0.35, cx + 0.35, cz - 0.35, cz + 0.35, h, 27, podium - 0.2, { bottom: false });
+      if (h < top - 2) b.pile([cx, h, cz], [(rr() - 0.5) * 0.6, 1, (rr() - 0.5) * 0.6], 1.5 + rr() * 2, rr);
+    }
+    // перекрытия через этаж; часть обвалилась — край рваный, свисает плитой
+    for (let y = podium + 6.6; y < top - 1; y += 6.6) {
+      if (rr() < 0.25) continue;
+      const cutX = rr() < 0.5, frac = 0.45 + rr() * 0.5;
+      const ax1 = cutX ? x0 + w * frac : x1, az1 = cutX ? z1 : z0 + d * frac;
+      b.boxGeo(x0, ax1, z0, az1, y + 0.45, 27, y);
+      if (rr() < 0.6) {
+        const e = cutX ? [ax1, y + 0.2, z0 + d / 2] : [x0 + w / 2, y + 0.2, az1];
+        const dir = cutX ? [1, 0, 0] : [0, 0, 1];
+        b.slab(e, [e[0] + dir[0] * 2.5, y - 2.5, e[2] + dir[2] * 2.5], cutX ? d * 0.6 : w * 0.6, 0.4, 27);
+      }
+    }
+    return;
+  }
+  if (kind < 0.7 && H > minTop + 22) {
+    // 2) пробоина: в доме вырван кусок на несколько этажей, насквозь видно небо;
+    //    верх держится на толстых колоннах, из краёв торчат сваи, плиты свисают в дыру
+    const h1 = minTop + 7 + rr() * Math.min(10, (H - minTop) * 0.25);
+    const h2 = h1 + 7 + rr() * 6;
+    b.boxGeo(x0, x1, z0, z1, h1, style);
+    b.boxGeo(x0, x1, z0, z1, Math.max(h2 + 6, H * (0.75 + rr() * 0.25)), style, h2);
+    for (const [cx, cz] of [[x0 + 0.5, z0 + 0.5], [x1 - 0.5, z0 + 0.5], [x0 + 0.5, z1 - 0.5], [x1 - 0.5, z1 - 0.5], [x0 + w / 2, z0 + 0.5], [x0 + w / 2, z1 - 0.5]]) {
+      if (rr() < 0.25) {
+        // колонна переломлена: обрубок снизу и сверху, между ними — пусто
+        b.boxGeo(cx - 0.45, cx + 0.45, cz - 0.45, cz + 0.45, h1 + 1 + rr() * 2, 27, h1 - 0.2, { bottom: false });
+        b.boxGeo(cx - 0.45, cx + 0.45, cz - 0.45, cz + 0.45, h2 + 0.2, 27, h2 - 1 - rr() * 2);
+      } else b.boxGeo(cx - 0.45, cx + 0.45, cz - 0.45, cz + 0.45, h2 + 0.2, 27, h1 - 0.2, { bottom: false, top: false });
+    }
+    // с верхнего края дыры — свисающая плита и сваи
+    for (let k = 0; k < 2; k++) {
+      const side = rr() < 0.5 ? -1 : 1, onX = rr() < 0.5;
+      const e = onX ? [side < 0 ? x0 : x1, h2, z0 + d * (0.25 + rr() * 0.5)] : [x0 + w * (0.25 + rr() * 0.5), h2, side < 0 ? z0 : z1];
+      const out = onX ? [side, 0, 0] : [0, 0, side];
+      if (k === 0) b.slab([e[0] - out[0] * 1.5, h2 - 0.2, e[2] - out[2] * 1.5], [e[0] + out[0] * 1.2, h2 - 3 - rr() * 2, e[2] + out[2] * 1.2], 3 + rr() * 2, 0.45, 27);
+      b.pile([e[0], h1 + 0.3, e[2]], [out[0], 0.25, out[2]], 2 + rr() * 2, rr);
+      b.pile([e[0], h2 - 0.3, e[2]], [out[0], -0.35, out[2]], 2 + rr() * 2.5, rr);
+    }
+    return;
+  }
+  // 3) обломанный верх: неровные куски стен, сваи, завалившаяся верхушка, свисающая плита
   const cut = Math.max(minTop + 12, H * (0.4 + rr() * 0.35));
   b.boxGeo(x0, x1, z0, z1, cut, style);
-  const w = x1 - x0, d = z1 - z0;
-  const n = 2 + Math.floor(rr() * 3);
+  const n = 2 + Math.floor(rr() * 2);
   for (let i = 0; i < n; i++) {
-    const cw = w * (0.22 + rr() * 0.45), cd = d * (0.22 + rr() * 0.45);
+    const cw = w * (0.3 + rr() * 0.4), cd = d * (0.3 + rr() * 0.4);
     const ax = rr() < 0.5 ? x0 : x1 - cw, az = rr() < 0.5 ? z0 : z1 - cd;
-    const top = cut + Math.max(3, (H - cut) * (0.15 + rr() * 0.7));
+    const top = cut + Math.max(4, (H - cut) * (0.2 + rr() * 0.7));
     // низ куска утоплен в основной объём — без совпадающих граней (мерцали бы)
     b.boxGeo(ax + 0.02, ax + cw - 0.02, az + 0.02, az + cd - 0.02, top, style, cut - 0.3, { bottom: false });
-    b.tint = 7;
-    for (let k = 0; k < 4; k++) {
-      const px = ax + rr() * cw, pz = az + rr() * cd;
-      b.prism([px, top, pz], [px + (rr() - 0.5) * 1.2, top + 0.8 + rr() * 1.8, pz + (rr() - 0.5) * 1.2], 0.03, 0.025, 4, 22);
-    }
-    b.tint = 0;
+    b.pile([ax + cw * (0.3 + rr() * 0.4), top, az + cd * (0.3 + rr() * 0.4)], [(rr() - 0.5) * 0.5, 1, (rr() - 0.5) * 0.5], 2 + rr() * 2.5, rr);
   }
-  // крупно: верхняя часть дома обломилась и завалилась набок, опираясь на излом
-  if (rr() < 0.45) {
+  if (rr() < 0.5) {
     const cx = x0 + w * 0.5, cz = z0 + d * 0.5;
-    const L = 8 + rr() * 14, ang = 0.18 + rr() * 0.3, dir = rr() * Math.PI * 2;
+    const L = 10 + rr() * 14, ang = 0.2 + rr() * 0.3, dir = rr() * Math.PI * 2;
     b.slab([cx, cut - 2, cz], [cx + Math.cos(dir) * Math.sin(ang) * L, cut - 2 + Math.cos(ang) * L, cz + Math.sin(dir) * Math.sin(ang) * L],
-      w * 0.7, d * 0.7, 27);
+      w * 0.75, d * 0.75, 27);
   }
-  // плита перекрытия свисает с края излома
   if (rr() < 0.7) {
     const left = rr() < 0.5, sx = left ? x0 : x1, dir = left ? -1 : 1;
     const zc = z0 + d * (0.2 + rr() * 0.6), yb = cut - 0.3;
-    b.slab([sx - dir * 1.5, yb, zc], [sx + dir * (1.2 + rr() * 1.8), yb - 0.6 - rr() * 2.2, zc + (rr() - 0.5) * 1.5], 1.6 + rr() * 1.5, 0.3, 27);
-  }
-  // кривая балка торчит вверх из излома
-  if (rr() < 0.5) {
-    const px = x0 + w * (0.2 + rr() * 0.6), pz = z0 + d * (0.2 + rr() * 0.6);
-    b.slab([px, cut - 1, pz], [px + (rr() - 0.5) * 4, cut + 3 + rr() * 4, pz + (rr() - 0.5) * 4], 0.35, 0.35, 27);
+    b.slab([sx - dir * 1.5, yb, zc], [sx + dir * (1.5 + rr() * 2), yb - 1.5 - rr() * 3, zc + (rr() - 0.5) * 1.5], 2.5 + rr() * 2, 0.45, 27);
   }
 }
 
@@ -1453,7 +1515,17 @@ export function buildInstanceMesh(inst, materials, world) {
     const x0 = c * CELL, x1 = (c + w) * CELL, zA = r * ROW, zB = (r + h) * ROW;
     const pick = hash2(inst.seed + 41, r * 13 + c);
     b.tint = inst.vision ? 4 : 0;
-    if (lvl === 1 && base > 0) cabinets(b, x0, x1, zA, zB, base, base + 2, true);
+    if (lvl === 1 && base === 0 && inst.ruin && !inst.vision) {
+      // разруха: поваленные стволы поперёк улицы — перепрыгнуть (верх — как у препятствия, 2 м)
+      const tr = mulberry32(inst.seed ^ (r * 131 + c * 7));
+      for (let zz = zA + 1.0; zz < zB - 0.5; zz += 2.0) {
+        const tilt = (tr() - 0.5) * 0.5;
+        b.prism([x0 - 0.2, 1.0, zz - tilt], [x1 + 0.2, 0.95, zz + tilt], 1.0, 0.9, 8, 29);
+        // обломанные сучья торчат вверх
+        const px = x0 + (x1 - x0) * (0.2 + tr() * 0.6);
+        b.prism([px, 1.7, zz], [px + (tr() - 0.5) * 1.5, 2.9 + tr() * 0.6, zz + (tr() - 0.5)], 0.14, 0.06, 5, 29);
+      }
+    } else if (lvl === 1 && base > 0) cabinets(b, x0, x1, zA, zB, base, base + 2, true);
     else if (lvl === 1) {
       if (pick < 0.3) kiosk(b, x0, x1, zA, zB, base);
       else if (pick < 0.55) cabinets(b, x0, x1, zA, zB, base, base + 2, false);
@@ -1489,6 +1561,19 @@ export function buildInstanceMesh(inst, materials, world) {
         }
         b.tint = 0;
         for (let x = x0 + 1; x < x1; x += 2) b.boxGeo(x - 0.04, x + 0.04, zm - 0.9, zm + 0.9, base + CEIL_H, 5, base + 2.2);
+      } else if (inst.ruin) {
+        // разруха: вместо моста — упавшее дерево, застрявшее между домами: под стволом — подкатом
+        const zm = zA + ROW / 2, tr = mulberry32(inst.seed ^ (r * 977 + c));
+        const left = tr() < 0.5;
+        const xa = left ? x0 - 0.6 : x1 + 0.6, xb = left ? x1 + 0.6 : x0 - 0.6;
+        b.prism([xa, base + 2.5, zm - 0.5], [xb, base + 2.0, zm + 0.5], 0.78, 0.55, 8, 29);
+        // вывороченный корень с землёй — у одного дома, крона — у другого
+        b.prism([xa - (left ? 0.3 : -0.3), base + 2.5, zm - 0.5], [xa + (left ? 0.3 : -0.3), base + 2.5, zm - 0.5], 1.7, 1.5, 9, 27);
+        for (let k = 0; k < 4; k++) {
+          const t = 0.55 + tr() * 0.4, px = xa + (xb - xa) * t;
+          b.prism([px, base + 2.4, zm], [px + (tr() - 0.5) * 2, base + 3.4 + tr() * 0.5, zm + (tr() - 0.5) * 2.5], 0.18, 0.08, 5, 29);
+        }
+        b.leaves([xb - (left ? 1.2 : -1.2), base + 3.2, zm], 1.9, 34, 0.9, tr);
       } else {
         // пешеходный мост: пролёт, балка снизу и перила
         b.boxGeo(x0 - 0.2, x1 + 0.2, zA + 0.6, zA + ROW - 0.6, base + BRIDGE_TOP, 5, base + BRIDGE_TOP - 0.7);
@@ -1657,8 +1742,33 @@ export function buildInstanceMesh(inst, materials, world) {
 
   // 7з. разруха: рваные края у провалов (куски плиты, арматура, трубы), обрушенные мосты над улицей,
   //     обломки в закутках. Всё — ниже уровня пола у краёв или высоко над головой: бегу не мешает
+  const ruinSparks = [];
   if (inst.ruin) {
     const rr = mulberry32(inst.seed ^ 0x7f4a7c15);
+    // край провала — не по линейке, а будто земля раскололась: ломаная линия, где-то кусок пола
+    // выступает над провалом (с толщиной плиты снизу), где-то край выкрошился внутрь тёмной выбоиной
+    const crackEdge = (p0, along, out, len, fy, box) => {
+      const pts = [[0, 0]];
+      for (let s = 0.4 + rr() * 0.4; s < len - 0.3; s += 0.45 + rr() * 0.55) pts.push([s, -0.45 + rr() * 1.2]);
+      pts.push([len, 0]);
+      const P = (s, o, y) => [p0[0] + along[0] * s + out[0] * o, y, p0[2] + along[2] * s + out[2] * o];
+      const piece = (sa, oa, sb, ob) => {
+        if (Math.abs(oa) + Math.abs(ob) < 0.02) return;
+        if (oa + ob > 0) {
+          const y = fy + 0.004;
+          b.quad4(P(sa, 0, y), P(sb, 0, y), P(sa, oa, y), P(sb, ob, y), 1, 1, [0, 1, 0], 0, fy, box);
+          b.quad4(P(sa, oa, y), P(sb, ob, y), P(sa, oa, fy - 0.55), P(sb, ob, fy - 0.55), 1, 1, out, 27, fy, [0, 0, 0, 0]);
+        } else {
+          const y = fy + 0.012;
+          b.quad4(P(sa, 0, y), P(sb, 0, y), P(sa, oa, y), P(sb, ob, y), 1, 1, [0, 1, 0], 28, fy, [0, 0, 0, 0]);
+        }
+      };
+      for (let i = 0; i + 1 < pts.length; i++) {
+        const [s0, o0] = pts[i], [s1, o1] = pts[i + 1];
+        if (o0 * o1 >= 0) piece(s0, o0, s1, o1);
+        else { const sc = s0 + (s1 - s0) * (o0 / (o0 - o1)); piece(s0, o0, sc, 0); piece(sc, 0, s1, o1); }
+      }
+    };
     const at = (r, c) => { const rw = rows[r] || world.rows[R0 + r]; return rw ? rw[((c % COLS) + COLS) % COLS] : undefined; };
     const hole = (v) => v === VOID || v === POOL;
     for (let r = 0; r < nRows; r++) {
@@ -1680,19 +1790,18 @@ export function buildInstanceMesh(inst, materials, world) {
         for (const [nv, p0, out, along] of edges) {
           if (!hole(nv)) continue;
           const len = along[0] ? CELL : ROW;
-          // крупно: на край — один обломившийся кусок плиты, свесившийся в провал, и пучок арматуры
-          if (rr() < 0.6) {
-            const s = len * (0.25 + rr() * 0.5), wl = len * (0.35 + rr() * 0.3);
-            const a = [p0[0] + along[0] * s - out[0] * 0.15, fy - 0.35, p0[2] + along[2] * s - out[2] * 0.15];
-            const ow = 1.2 + rr() * 1.4;
-            b.slab(a, [a[0] + out[0] * ow * 0.6, a[1] - ow, a[2] + out[2] * ow * 0.6], wl, 0.35, 27);
-            for (let k = 0; k < 4; k++) {
-              const q = [a[0] + along[0] * (rr() - 0.5) * wl, fy - 0.2, a[2] + along[2] * (rr() - 0.5) * wl];
-              b.rebar(q, [out[0], -0.1, out[2]], 1.0 + rr() * 1.4, rr);
-            }
+          crackEdge(p0, along, out, len, fy, [x0, zA, x0 + CELL, zA + ROW]);
+          // крупно: иногда край обломился целиком — большая плита свесилась в провал, из излома торчат сваи
+          if (rr() < 0.3) {
+            const wl = len * 0.75, s = len / 2;
+            const a = [p0[0] + along[0] * s - out[0] * 0.3, fy - 0.45, p0[2] + along[2] * s - out[2] * 0.3];
+            const ow = 2.2 + rr() * 1.4;
+            const tip = [a[0] + out[0] * ow * 0.55, a[1] - ow, a[2] + out[2] * ow * 0.55];
+            b.slab(a, tip, wl, 0.5, 27);
+            for (const k of [-0.25, 0.25]) b.pile([tip[0] + along[0] * wl * k, tip[1] + 0.2, tip[2] + along[2] * wl * k], [out[0] * 0.5, -1, out[2] * 0.5], 1.2 + rr(), rr);
           }
           // разорванная труба из-под плиты
-          if (rr() < 0.2) {
+          if (rr() < 0.12) {
             const s = 0.5 + rr() * (len - 1);
             const a = [p0[0] + along[0] * s - out[0] * 0.4, fy - 0.9, p0[2] + along[2] * s - out[2] * 0.4];
             b.prism(a, [a[0] + out[0] * (0.8 + rr() * 1.2), a[1] - 0.3 - rr() * 0.8, a[2] + out[2] * (0.8 + rr() * 1.2)], 0.13, 0.13, 8, 22);
@@ -1715,7 +1824,7 @@ export function buildInstanceMesh(inst, materials, world) {
         // обломанный край: висящий кусок пролёта и арматура
         const xe = xw + dir * l;
         b.slab([xe - dir * 0.2, yb - 0.3, zc + (rr() - 0.5)], [xe + dir * (0.6 + rr()), yb - 1.5 - rr() * 2.5, zc + (rr() - 0.5) * 1.5], 1.4 + rr(), 0.35, 27);
-        for (let k = 0; k < 5; k++) b.rebar([xe, yb - 0.3, zc - 1 + rr() * 2], [dir, -0.2, 0], 0.8 + rr() * 1.5, rr);
+        for (const k of [-0.7, 0.7]) b.pile([xe, yb - 0.3, zc + k], [dir, -0.3, 0], 1.5 + rr() * 1.5, rr);
         for (const zr of [zc - 1.2, zc + 1.2]) b.boxGeo(Math.min(xw, xe), Math.max(xw, xe), zr - 0.05, zr + 0.05, yb + 1.05, 4, yb + 0.95);
       }
     }
@@ -1732,7 +1841,25 @@ export function buildInstanceMesh(inst, materials, world) {
         const x = c * CELL + CELL / 2, z = r * ROW + ROW / 2;
         const side = row[((c - 1) % COLS + COLS) % COLS] === WALL ? -1 : row[(c + 1) % COLS] === WALL ? 1 : (rr() < 0.5 ? -1 : 1);
         b.slab([x - side * 1.2, -0.4, z], [x + side * 1.5, 2.5 + rr() * 2.5, z + (rr() - 0.5) * 1.5], 2.6 + rr() * 0.8, 0.45, 27);
-        for (let k = 0; k < 3; k++) b.rebar([x + side * 1.4, 2.4 + rr() * 2, z + (rr() - 0.5) * 2], [side * 0.3, 0.6, (rr() - 0.5)], 0.8 + rr(), rr);
+        b.pile([x + side * 1.4, 2.6 + rr() * 1.5, z], [side * 0.3, 0.8, (rr() - 0.5) * 0.5], 1.4 + rr(), rr);
+      }
+    }
+    // оборванные провода свисают со стены дома и искрят на конце (выше головы)
+    for (let r = 1; r < nRows - 1 && ruinSparks.length < 2; r++) {
+      const row = rows[r];
+      if (row.cover || row.b0 !== 0 || row.b1 !== 0 || rr() > 0.18) continue;
+      for (let c = 0; c < COLS; c++) {
+        const v = row[c];
+        if (!walk(v) || lv(v) !== 0) continue;
+        const side = row[((c - 1) % COLS + COLS) % COLS] === WALL ? -1 : row[(c + 1) % COLS] === WALL ? 1 : 0;
+        if (!side) continue;
+        const xw = side < 0 ? c * CELL + 0.2 : (c + 1) * CELL - 0.2, z = r * ROW + 1 + rr() * 2;
+        const a = [xw, 8.5, z], m = [xw - side * 0.6, 6.2, z + 0.5], e = [xw - side * 0.9, 4.6, z + 0.7];
+        b.prism(a, m, 0.04, 0.04, 4, 24);
+        b.prism(m, e, 0.04, 0.035, 4, 24);
+        b.prism([xw, 8.3, z - 0.6], [xw - side * 0.4, 7.0, z - 0.4], 0.035, 0.03, 4, 24); // второй, короткий
+        ruinSparks.push(e);
+        break;
       }
     }
   }
@@ -1847,7 +1974,7 @@ export function buildInstanceMesh(inst, materials, world) {
     stars.renderOrder = 1;
     group.add(stars);
   }
-  for (const p of sparkAt) {
+  for (const p of [...sparkAt, ...ruinSparks]) {
     const sp = sparkPoints(p, materials.spark);
     if (sp) group.add(sp);
   }
