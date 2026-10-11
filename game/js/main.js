@@ -2265,7 +2265,8 @@ function frame(now) {
   {
     const run = state === 'run';
     const sp = Math.min(1, Math.max(0, (speedNow() - 16) / 15));
-    const fall = !pl.grounded && !pl.wall ? Math.min(1, Math.max(0, (-pl.vy - 13) / 14)) // обычный прыжок (~−13 м/с) — ещё без ветра : 0;
+    // обычный прыжок падает до ~−13 м/с — от него ветра ещё нет
+    const fall = !pl.grounded && !pl.wall ? Math.min(1, Math.max(0, (-pl.vy - 13) / 14)) : 0;
     sound.wind(run ? Math.max(sp * sp * (3 - 2 * sp), fall) : 0);
   }
   sound.rain(weather.r * (1 - 0.85 * deep));
