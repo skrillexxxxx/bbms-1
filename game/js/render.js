@@ -467,13 +467,16 @@ const frag = /* glsl */ `
     float redWave = 0.0;
     if (vTint > 0.5 && vTint < 1.5 || vTint > 3.5 && vTint < 6.5) {
       float red0 = clamp((c3.r - max(c3.g, c3.b)) * 2.2, 0.0, 1.0);
-      float ph = fract((vDz + uRunZ) / 14.0 - uTime * 2.4);
-      float wave = pow(smoothstep(0.0, 0.72, ph) * (1.0 - smoothstep(0.72, 1.0, ph)), 1.6);
+      // плавная волна: синус без резких фронтов, длинная и неторопливая
+      float ph = (vDz + uRunZ) / 20.0 - uTime * 1.1;
+      float wave = 0.5 - 0.5 * cos(6.2831853 * ph);
+      wave = wave * wave * (3.0 - 2.0 * wave);
       redWave = wave;
-      // контрастная карта: между волнами — бледный, почти неинтенсивный красный,
-      // на гребне — насыщенный и пересвеченный (ярче порога блума — лёгкое свечение и днём)
-      vec3 lowR = mix(vec3(col * 0.95), c3, 0.38);
-      vec3 highR = vec3(3.0, 0.32, 0.22) * max(col, 0.7);
+      // ночью — контрастно: бледный красный ↔ насыщенный пересвеченный (с блумом);
+      // днём — спокойно: красный лишь мягко «дышит», без вспышек
+      float amp = mix(0.3, 1.0, uNight);
+      vec3 lowR = mix(c3, mix(vec3(col * 0.95), c3, 0.38), amp);
+      vec3 highR = mix(c3 * 1.12, vec3(3.0, 0.32, 0.22) * max(col, 0.7), amp);
       c3 = mix(c3, mix(lowR, highR, wave), red0);
     }
     vec3 alb = c3; // цвет поверхности до ночи и темноты — от него считается свет фонаря
