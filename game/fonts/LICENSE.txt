@@ -1,0 +1,3 @@
+Inter Tight — Copyright 2022 The Inter Project Authors (https://github.com/rsms/inter-tight)
+IBM Plex Mono — Copyright 2017 IBM Corp.
+Both are licensed under the SIL Open Font License, Version 1.1: https://openfontlicense.org
