@@ -57,8 +57,13 @@ const vert = /* glsl */ `
       vec2 grid = vec2(uPs1 * uAspectV, uPs1);
       gl_Position.xy = floor(gl_Position.xy / gl_Position.w * grid + 0.5) / grid * gl_Position.w;
     }
-    vLampPos = uLampMat * vec4(w, 1.0);
-    vSunPos = uSunMat * vec4(f.xyz, 1.0); // солнце светит в плоском мире, до изгиба
+    // тень фонаря: точку проверки сдвигаем по нормали (на ~полтора текселя карты на этой дальности) —
+    // иначе поверхность затеняет сама себя: полосы-дуги на полу и крапинки на стенах и окнах
+    vec3 nW = vec3(normal.x * cos(phi) + normal.z * sin(phi), normal.y, -normal.x * sin(phi) + normal.z * cos(phi));
+    float ldist = length(mv.xyz);
+    vLampPos = uLampMat * vec4(w + nW * (0.03 + 0.004 * ldist), 1.0);
+    // солнце светит в плоском мире, до изгиба; точка проверки сдвинута по нормали на ~текселя — без самозатенения
+    vSunPos = uSunMat * vec4(f.xyz + normal * 0.15, 1.0);
     vPos = position;
     vN = normal;
     vStyle = aStyle;
@@ -429,7 +434,7 @@ const frag = /* glsl */ `
       float sl = 0.0;
       vec3 sp3 = vSunPos.xyz / vSunPos.w * 0.5 + 0.5;
       if (sp3.x > 0.0 && sp3.x < 1.0 && sp3.y > 0.0 && sp3.y < 1.0 && sp3.z < 1.0) {
-        float o = 1.0 / 2048.0, bias = 0.0004 + 0.0012 * (1.0 - abs(facing));
+        float o = 1.0 / 2048.0, bias = 0.0003 + 0.0006 * (1.0 - abs(facing));
         sl += step(sp3.z - bias, texture2D(uSunShadow, sp3.xy + vec2(-o, -o)).r);
         sl += step(sp3.z - bias, texture2D(uSunShadow, sp3.xy + vec2(o, -o)).r);
         sl += step(sp3.z - bias, texture2D(uSunShadow, sp3.xy + vec2(-o, o)).r);
@@ -571,7 +576,7 @@ const frag = /* glsl */ `
         // тень: 4 выборки вокруг — мягкий край
         vec3 lp = vLampPos.xyz / vLampPos.w * 0.5 + 0.5;
         if (vLampPos.w > 0.0 && lp.x > 0.0 && lp.x < 1.0 && lp.y > 0.0 && lp.y < 1.0 && lp.z < 1.0) {
-          float lit = 0.0, o = 1.5 / 1024.0, bias = 0.0006 + 0.002 * (1.0 - abs(n.y));
+          float lit = 0.0, o = 1.5 / 1024.0, bias = 0.0004;
           lit += step(lp.z - bias, texture2D(uShadow, lp.xy + vec2(-o, -o)).r);
           lit += step(lp.z - bias, texture2D(uShadow, lp.xy + vec2(o, -o)).r);
           lit += step(lp.z - bias, texture2D(uShadow, lp.xy + vec2(-o, o)).r);
