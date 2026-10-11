@@ -1173,6 +1173,31 @@ function updateWeather(dt) {
 }
 resetWeather();
 
+// ---------- уличные фонари: 12 ближайших впереди — в шейдер, светят пятном вниз ----------
+const streetBuf = [];
+function updateStreetLamps(night) {
+  const u = materials.main.uniforms.uStreetL.value;
+  streetBuf.length = 0;
+  if (night > 0) {
+    for (const m of meshes) {
+      const ls = m.userData.lamps;
+      if (!ls) continue;
+      for (const l of ls) {
+        const rz = m.userData.zStart - pl.z + l[1];
+        if (rz < -15 || rz > 140) continue;
+        let rx = l[0] - pl.x;
+        rx = ((rx + W / 2) % W + W) % W - W / 2;
+        streetBuf.push([rx, rz, l[2]]);
+      }
+    }
+    streetBuf.sort((a, b) => Math.abs(a[1]) - Math.abs(b[1]));
+  }
+  for (let i = 0; i < u.length; i++) {
+    const l = streetBuf[i];
+    if (l) u[i].set(l[0], l[2], l[1]); else u[i].set(0, -99, 0);
+  }
+}
+
 // ---------- фонарь: луч трясётся на бегу ----------
 // Фонарь «в руке»: качается в такт шагам (cam.bob), вздрагивает при приземлении и толчках (cam.dip),
 // в полёте плывёт, на стене уходит в сторону стены. Пятно крупнее на широком экране.
@@ -1639,6 +1664,7 @@ function frame(now) {
   materials.star.uniforms.uFogNear.value = materials.main.uniforms.uFogNear.value;
   materials.star.uniforms.uFogFar.value = materials.main.uniforms.uFogFar.value;
   materials.main.uniforms.uNight.value = night;
+  updateStreetLamps(night);
   // ночью блум слабее и с порогом повыше: светятся только окна и красное, без пересвета
   if (bloom) { bloom.strength = 0.27 - 0.06 * night; bloom.threshold = 0.9 + 0.05 * night; }
   // фонарь: ночью на улице; в подземке плавно гаснет (deep меняется плавно вместе с камерой)

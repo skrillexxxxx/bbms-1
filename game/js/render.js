@@ -87,6 +87,7 @@ const frag = /* glsl */ `
   uniform float uTime;
   uniform float uHigh;
   uniform float uNight;   // 0 — день, 1 — ночь
+  uniform vec3 uStreetL[12]; // уличные фонари рядом: x, z относительно игрока, y — высота плафона
   varying float vDark;    // тёмный переход: свет не работает
   uniform float uLamp;    // фонарь бегуна: ночью на улице 1, в подземке гаснет
   uniform vec3 uLampP;    // смещение луча (тряска на бегу) xy и радиус пятна z
@@ -140,6 +141,21 @@ const frag = /* glsl */ `
     float rimK = 0.0;
     int st = int(vStyle + 0.5);
     float y = vWY / vS;
+    // уличные фонари «Г»: конус тёплого света вниз — пятно на полу и на том, что под ним
+    float streetL = 0.0;
+    if (uNight > 0.0) {
+      for (int i = 0; i < 12; i++) {
+        vec3 L = uStreetL[i];
+        if (L.y < -50.0) continue;
+        vec2 d = vec2(vDx - L.x, vDz - L.z);
+        float hh = L.y - y;
+        if (hh < 0.0) continue;
+        // чем ниже, тем шире пятно; к краю конуса мягко гаснет
+        float rr = 0.6 + hh * 0.5;
+        streetL += exp(-dot(d, d) / (rr * rr)) * (n.y > 0.5 ? 1.0 : 0.55);
+      }
+      streetL = min(streetL, 1.4);
+    }
 
     if (st == 0) {
       // пол: земля в «каньоне» между башнями — в тени; сетка по клеткам — чтобы чувствовалась скорость
@@ -198,6 +214,12 @@ const frag = /* glsl */ `
       col = 1.0;
       ballCol = PALETTE(fract(vTop * 0.618));
       ballShade = 0.55 + 0.45 * max(dot(n, normalize(vec3(-0.3, 0.6, -0.7))), 0.0) + 0.35 * pow(max(dot(n, normalize(vec3(-0.4, 0.5, -0.75))), 0.0), 18.0);
+    } else if (st == 24) {
+      col = 0.3; // столб фонаря — тёмный металл
+    } else if (st == 25) {
+      // плафон: снизу — стекло, ночью горит
+      col = 0.55;
+      if (n.y < -0.5) { col = mix(0.4, 0.8, uNight); emit += vec3(1.0, 0.85, 0.6) * 2.2 * uNight; }
     } else if (st == 22) {
       col = 0.62 + 0.15 * abs(n.y); // хромированная проволока тележки
     } else if (st == 23) {
@@ -412,6 +434,7 @@ const frag = /* glsl */ `
       float redness = clamp((c3.r - max(c3.g, c3.b)) * 2.2, 0.0, 1.0);
       if (redLit) dark += vec3(1.0, 0.1, 0.07) * redness * 1.45;
       dark += vec3(0.3, 0.33, 0.4) * rimK;
+      dark += c3 * WARM * streetL * 1.15; // пятно от уличного фонаря
       // препятствия у земли (то, через что прыгаем и под чем катимся) ночью не проваливаются в черноту:
       // тёплый свет с улицы, ярче на гранях к нам и сверху — видно издалека, ещё до фонаря
       bool obstacle = (st == 4 || st == 5 || (st >= 11 && st <= 13)) && vTop - uB < 4.0;
@@ -496,6 +519,7 @@ export function createMaterial({ linearOut }) {
       uTime: { value: 0 },
       uHigh: { value: 0 },
       uNight: { value: 0 },
+      uStreetL: { value: Array.from({ length: 12 }, () => new THREE.Vector3(0, -99, 0)) },
       uLamp: { value: 0 },
       uLampP: { value: new THREE.Vector3(0, -0.1, 0.32) },
       uCookie: { value: null },
@@ -1324,6 +1348,29 @@ export function buildInstanceMesh(inst, materials, world) {
     }
   }
 
+  // 7е. уличные фонари «Г» вдоль улицы: столб у стены дома, консоль над дорожкой, плафон светит вниз
+  const streetLamps = [];
+  for (let r = 0; r < nRows; r++) {
+    const row = rows[r], ri = inst.rowStart + r;
+    if (row.cover || row.b0 !== 0 || row.b1 !== 0 || ri % 3 !== 0) continue;
+    const side = (ri / 3) % 2 === 0 ? -1 : 1; // по очереди: то слева, то справа
+    const at = (c) => row[((c % COLS) + COLS) % COLS];
+    let cc = -1;
+    for (let k = 0; k < COLS; k++) {
+      const c = side < 0 ? k : COLS - 1 - k;
+      const v = row[c];
+      if (walk(v) && lv(v) === 0 && v !== BRIDGE && v !== LAUNCH && at(c + side) === WALL) { cc = c; break; }
+    }
+    if (cc < 0) continue;
+    const z = r * ROW + 2;
+    const xp = side < 0 ? cc * CELL + 0.3 : (cc + 1) * CELL - 0.3; // столб — вплотную к стене
+    const xh = xp - side * 1.7, top = 7.2;
+    b.prism([xp, 0, z], [xp, top, z], 0.11, 0.08, 6, 24);
+    b.prism([xp, top - 0.05, z], [xh, top, z], 0.06, 0.06, 4, 24);
+    b.boxGeo(Math.min(xh, xh - side * 0.5) - 0.0, Math.max(xh, xh - side * 0.5), z - 0.2, z + 0.2, top + 0.05, 25, top - 0.18);
+    streetLamps.push([xh - side * 0.25, z, top - 0.2]);
+  }
+
   // 7г. ограждения по бокам крыш, вдоль пропастей: стойки и два поручня
   for (let r = 0; r < nRows; r++) {
     const row = rows[r];
@@ -1439,6 +1486,7 @@ export function buildInstanceMesh(inst, materials, world) {
     if (sp) group.add(sp);
   }
   group.userData.zStart = inst.rowStart * ROW;
+  group.userData.lamps = streetLamps;
   group.userData.zEnd = (inst.rowStart + nRows) * ROW;
   return group;
 }
