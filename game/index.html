@@ -93,6 +93,10 @@
     #seed-list { width: 100%; max-width: 520px; overflow-y: auto; flex: 0 1 auto; min-height: 0; touch-action: pan-y; }
     /* горизонтальный экран: всё компактнее, чтобы влезало по высоте */
     @media (max-height: 500px) {
+      h1 { font-size: 52px; margin-bottom: 4px; }
+      .hint { font-size: 14px; line-height: 1.45; }
+      .pulse { margin-top: 12px; }
+      #start .menu { margin-top: 10px; }
       #seeds { padding-top: calc(env(safe-area-inset-top) + 14px); }
       #seeds h2 { font-size: 22px; margin-bottom: 8px; }
       #over-dist { font-size: 44px; }
@@ -126,6 +130,46 @@
       #gfx input[type=range] { height: 22px; margin: 2px 0 0; }
       #gfx .sub { margin-top: 6px; }
     }
+    /* «поверни телефон»: только на телефоне в портрете. В меню — крупный значок сверху,
+       в забеге (HUD показан) — маленький, чтобы не мешал */
+    #rotate {
+      display: none; position: fixed; z-index: 7; left: 50%; transform: translateX(-50%);
+      top: calc(env(safe-area-inset-top) + 10px); width: 64px; height: 64px; border-radius: 50%;
+      background: #111; color: #fff; pointer-events: none; box-shadow: 0 2px 10px rgba(0,0,0,0.25);
+    }
+    #rotate svg { width: 100%; height: 100%; }
+    #rotate .ph { transform-box: view-box; transform-origin: 32px 34px; animation: rot 2.4s ease-in-out infinite; }
+    #rotate .arc { animation: arc 2.4s ease-in-out infinite; }
+    @keyframes rot { 0%, 25% { transform: rotate(0deg); } 50%, 85% { transform: rotate(-90deg); } 100% { transform: rotate(0deg); } }
+    @keyframes arc { 0%, 15% { opacity: 1; } 40%, 100% { opacity: 0; } }
+    #hud.show ~ #rotate { width: 40px; height: 40px; opacity: 0.8; top: calc(env(safe-area-inset-top) + 8px); }
+    @media (orientation: portrait) and (pointer: coarse) { #rotate { display: block; } }
+    /* на iPhone в портрете стартовый экран — заголовок ниже значка */
+    @media (orientation: portrait) and (pointer: coarse) { #start { padding-top: calc(env(safe-area-inset-top) + 90px); } }
+
+    /* установка на экран «Домой» */
+    #install { z-index: 8; pointer-events: auto; background: rgba(255,255,255,0.94); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); touch-action: pan-y; }
+    #install .card { max-width: 440px; text-align: left; }
+    #install h2 { font-size: 26px; font-weight: 800; margin: 0 0 6px; text-align: center; }
+    #install .why { font-size: 14px; opacity: 0.7; text-align: center; margin-bottom: 14px; line-height: 1.45; }
+    #install ol { list-style: none; padding: 0; margin: 0; counter-reset: st; }
+    #install li { display: flex; align-items: center; gap: 12px; padding: 9px 12px; margin: 6px 0; border-radius: 14px; font-size: 16px; line-height: 1.35;
+      animation: step 4.5s infinite; }
+    #install li:nth-child(2) { animation-delay: 1.5s; }
+    #install li:nth-child(3) { animation-delay: 3s; }
+    @keyframes step { 0%, 30% { background: rgba(229,38,43,0.12); } 34%, 100% { background: transparent; } }
+    #install li .ic { flex: none; width: 40px; height: 40px; border-radius: 10px; background: #111; color: #fff; display: flex; align-items: center; justify-content: center; }
+    #install li .ic svg { width: 24px; height: 24px; }
+    #install li small { display: block; font-size: 12px; opacity: 0.6; }
+    #install .note { font-size: 12px; opacity: 0.6; margin: 12px 0 4px; line-height: 1.4; text-align: center; }
+    #install .row { text-align: center; margin-top: 10px; }
+    #install-open { border-color: #e5262b; color: #e5262b; }
+    @media (max-height: 500px) {
+      #install h2 { font-size: 20px; }
+      #install .why { margin-bottom: 6px; }
+      #install li { padding: 5px 10px; margin: 3px 0; font-size: 14px; }
+      #install li .ic { width: 32px; height: 32px; }
+    }
     #debug {
       position: fixed; left: 16px; top: calc(var(--app-h, 100dvh) - env(safe-area-inset-bottom) - 10px); transform: translateY(-100%);
       font: 11px ui-monospace, Menlo, monospace; opacity: 0.45; pointer-events: none;
@@ -144,6 +188,11 @@
   <canvas id="game"></canvas>
 
   <div id="hud"><div id="hud-left"><span id="dist">0 м</span><span id="spd"></span><span id="monk"></span></div><div id="hud-right"><button id="flag" class="ghost small" aria-label="Метка: тут что-то не так">⚑</button><button id="pause" class="ghost small" aria-label="Пауза">❚❚</button></div></div>
+  <div id="rotate" title="Поверни телефон горизонтально"><svg viewBox="0 0 64 64" aria-hidden="true">
+      <path class="arc" d="M50 20a22 22 0 0 0-30-8" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>
+      <path class="arc" d="M18 6l2 6.5-6.5 1.5" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+      <g class="ph"><rect x="23" y="18" width="18" height="32" rx="4" fill="none" stroke="currentColor" stroke-width="3"/><path d="M29.5 45h5" stroke="currentColor" stroke-width="3" stroke-linecap="round"/></g>
+    </svg></div>
   <div id="debug"></div>
   <div id="fps"></div>
 
@@ -151,7 +200,7 @@
     <h1>SDWG GAME</h1>
     <div class="hint">Свайп влево-вправо — сменить полосу<br>Свайп вверх или тап — прыжок<br>Свайп вниз — подкат (под мостами и трубами)<br>Свайп в красную стену — бег по стене, свайп от неё — прыжок на стену напротив<br>Не врезайся в здания</div>
     <div class="pulse">Тапни, чтобы бежать</div>
-    <div class="menu"><button id="open-seeds" class="ghost">Мои города</button><br><button id="shadows" class="ghost small">Тени фонаря: выкл</button><button id="sun" class="ghost small">Тени солнца: выкл</button><button id="ps1" class="ghost small">PS1: выкл</button><br><button id="autoexp" class="ghost small">Автоэкспозиция: вкл</button><button id="gfx-open-start" class="ghost small">Графика</button></div>
+    <div class="menu"><button id="install-open" class="ghost small" style="display:none">Установить приложение</button><button id="open-seeds" class="ghost">Мои города</button><button id="save-progress" class="ghost small">Сохранить прогресс</button><button id="load-progress" class="ghost small">Загрузить</button><br><button id="shadows" class="ghost small">Тени фонаря: выкл</button><button id="sun" class="ghost small">Тени солнца: выкл</button><button id="ps1" class="ghost small">PS1: выкл</button><br><button id="autoexp" class="ghost small">Автоэкспозиция: вкл</button><button id="gfx-open-start" class="ghost small">Графика</button></div>
   </div>
 
   <div id="seeds" class="screen">
@@ -203,6 +252,26 @@
       <div class="row"><button id="gfx-reset" class="ghost small">Сбросить</button><button id="gfx-close" class="small">Назад</button></div>
     </div>
   </div>
+
+  <div id="install" class="screen">
+    <div class="card">
+      <h2>Установи игру на экран «Домой»</h2>
+      <div class="why">Так она откроется на весь экран, без панелей браузера,<br>и свайпы не будут дёргать страницу.</div>
+      <ol id="install-ios">
+        <li><span class="ic"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12M7.5 7.5 12 3l4.5 4.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M8 10H6.5A1.5 1.5 0 0 0 5 11.5v8A1.5 1.5 0 0 0 6.5 21h11a1.5 1.5 0 0 0 1.5-1.5v-8A1.5 1.5 0 0 0 17.5 10H16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></span><span>Нажми «Поделиться» в Safari<small>в новых iOS: кнопка ••• → «Поделиться»</small></span></li>
+        <li><span class="ic"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="3.5" width="17" height="17" rx="4" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 8v8M8 12h8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></span><span>Выбери «На экран „Домой“»<small>если не видно — пролистай список вниз</small></span></li>
+        <li><span class="ic"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5 10 17.5 19 7" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg></span><span>Нажми «Добавить» и запускай с иконки SDWG</span></li>
+      </ol>
+      <ol id="install-other">
+        <li><span class="ic">⋮</span><span>Открой меню браузера</span></li>
+        <li><span class="ic"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="3.5" width="17" height="17" rx="4" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 8v8M8 12h8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></span><span>«Установить приложение» или «Добавить на главный экран»</span></li>
+        <li><span class="ic"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5 10 17.5 19 7" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg></span><span>Запускай с иконки SDWG</span></li>
+      </ol>
+      <div class="note">Прогресс браузера и приложения хранится отдельно — перенеси его кнопками<br>«Сохранить прогресс» и «Загрузить» в главном меню.</div>
+      <div class="row"><button id="install-native" style="display:none">Установить</button><button id="install-ok" class="ghost">Понятно</button></div>
+    </div>
+  </div>
+  <input type="file" id="load-file" style="display:none">
 
   <script type="module" src="js/main.js"></script>
 </body>

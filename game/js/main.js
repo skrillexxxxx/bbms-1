@@ -9,6 +9,7 @@ import {
   World, CELL, ROW, W, L, LZ, COLS, WALL, BRIDGE, VOID, RUNWALL, POOL, LAUNCH, LAUNCH_ROWS, LEVEL, BRIDGE_BOTTOM, BRIDGE_TOP, CEIL_H,
   canStep, canJumpOver, aliveBackward, walk, lv,
 } from './world.js';
+import './onboard.js';
 import { createMaterial, createStarMaterial, createDepthMaterial, createSunDepthMaterial, createSparkMaterial, createConeMaterial, buildInstanceMesh } from './render.js';
 import { createSound } from './sound.js';
 import { createRecorder, shareFile } from './recorder.js';
@@ -1328,7 +1329,7 @@ window.addEventListener('keydown', (e) => {
 
 // iOS: не даём странице зумиться и скроллиться
 document.addEventListener('gesturestart', (e) => e.preventDefault());
-document.addEventListener('touchmove', (e) => { if (!e.target.closest?.('#seed-list, #gfx .panel')) e.preventDefault(); }, { passive: false });
+document.addEventListener('touchmove', (e) => { if (!e.target.closest?.('#seed-list, #gfx .panel, #install')) e.preventDefault(); }, { passive: false });
 
 // ---------- погода ----------
 // Виды погоды по очереди и случайно: «ясно», «туман», «дождь».
