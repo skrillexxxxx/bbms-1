@@ -85,6 +85,7 @@ const frag = /* glsl */ `
   uniform float uCell;
   uniform float uRow;
   uniform float uTime;
+  uniform float uRunZ;
   uniform float uHigh;
   uniform float uNight;   // 0 — день, 1 — ночь
   uniform vec3 uStreetL[12]; // уличные фонари рядом: x, z относительно игрока, y — высота плафона
@@ -421,6 +422,16 @@ const frag = /* glsl */ `
     else if (vTint > 1.5 && vTint < 2.5) c3 = col * vec3(0.8, 0.97, 1.04);     // бирюзовая плитка
     else if (vTint > 2.5 && vTint < 3.5) c3 = col * vec3(0.62, 0.9, 1.0);      // вода
     else if (vTint > 5.5 && vTint < 6.5) c3 = col < 0.9 ? col * red * 1.2 : vec3(col); // трамплин
+    // красные подсказки «переливаются»: по ним бегут вперёд волны — показывают, куда бежать
+    float redWave = 0.0;
+    if (vTint > 0.5 && vTint < 1.5 || vTint > 3.5 && vTint < 6.5) {
+      float red0 = clamp((c3.r - max(c3.g, c3.b)) * 2.2, 0.0, 1.0);
+      float ph = fract((vDz + uRunZ) / 14.0 - uTime * 2.4);
+      float wave = pow(smoothstep(0.0, 0.75, ph) * (1.0 - smoothstep(0.75, 1.0, ph)), 2.0);
+      redWave = wave;
+      // гребень волны — светлее и «горячее» (к розово-белому), иначе на насыщенном красном не видно
+      c3 = mix(c3, vec3(1.0, 0.62, 0.56) * max(c3.r, 0.5), wave * red0 * 0.65);
+    }
     vec3 alb = c3; // цвет поверхности до ночи и темноты — от него считается свет фонаря
     // ночь: всё темнеет и синеет; кромки чуть светятся (видно, куда прыгать), красное горит
     if (uNight > 0.0) {
@@ -432,7 +443,7 @@ const frag = /* glsl */ `
       if (redLit) dark = mix(dark, c3 * vec3(0.75, 0.6, 0.6), near);
       // красные акценты ночью горят как неон: ярче порога блума — с ореолом, видно издалека
       float redness = clamp((c3.r - max(c3.g, c3.b)) * 2.2, 0.0, 1.0);
-      if (redLit) dark += vec3(1.0, 0.1, 0.07) * redness * 1.45;
+      if (redLit) dark += vec3(1.0, 0.1, 0.07) * redness * (1.3 + 0.9 * redWave);
       dark += vec3(0.3, 0.33, 0.4) * rimK;
       dark += c3 * WARM * streetL * 1.15; // пятно от уличного фонаря
       // препятствия у земли (то, через что прыгаем и под чем катимся) ночью не проваливаются в черноту:
@@ -517,6 +528,7 @@ export function createMaterial({ linearOut }) {
       uCell: { value: CELL },
       uRow: { value: ROW },
       uTime: { value: 0 },
+      uRunZ: { value: 0 },
       uHigh: { value: 0 },
       uNight: { value: 0 },
       uStreetL: { value: Array.from({ length: 12 }, () => new THREE.Vector3(0, -99, 0)) },

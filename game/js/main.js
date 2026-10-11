@@ -1259,8 +1259,9 @@ function updateLamp(dt) {
 // ---------- тени от фонаря (экспериментально, кнопкой) ----------
 // Город ещё раз рисуется в карту глубины с точки зрения фонаря (в руке: правее и ниже глаз),
 // основной шейдер сравнивает глубину — что закрыто, в тень. Стоит ещё одного прохода по сцене.
-let shadowsOn = false;
-try { shadowsOn = localStorage.getItem('sdwg-shadows') === '1'; } catch { /* приватный режим */ }
+// по умолчанию включены (новый ключ — чтобы старое «выкл» из эксперимента не мешало)
+let shadowsOn = true;
+try { shadowsOn = localStorage.getItem('sdwg-shadows2') !== '0'; } catch { /* приватный режим */ }
 const SHADOW_RES = 1024;
 const shadowRT = new THREE.WebGLRenderTarget(SHADOW_RES, SHADOW_RES, { depthBuffer: true });
 shadowRT.depthTexture = new THREE.DepthTexture(SHADOW_RES, SHADOW_RES);
@@ -1299,7 +1300,7 @@ for (const id of ['shadows', 'shadows-over']) {
   $(id).addEventListener('click', (e) => {
     e.stopPropagation();
     shadowsOn = !shadowsOn;
-    try { localStorage.setItem('sdwg-shadows', shadowsOn ? '1' : '0'); } catch { /* приватный режим */ }
+    try { localStorage.setItem('sdwg-shadows2', shadowsOn ? '1' : '0'); } catch { /* приватный режим */ }
     updateShadowButtons();
   });
 }
@@ -1309,8 +1310,8 @@ updateShadowButtons();
 // Солнце сзади-сбоку и высоко: резкие тени домов ложатся вперёд по улице и на соседние фасады.
 // Карта глубины строится в плоском мире (до изгиба) ортогональной камерой вокруг игрока.
 // Мир — круг: рисуем ещё две копии, сдвинутые на круг, чтобы тень переходила через «шов».
-let sunOn = false;
-try { sunOn = localStorage.getItem('sdwg-sun') === '1'; } catch { /* приватный режим */ }
+let sunOn = true;
+try { sunOn = localStorage.getItem('sdwg-sun2') !== '0'; } catch { /* приватный режим */ }
 const SUN_RES = 2048;
 const sunRT = new THREE.WebGLRenderTarget(SUN_RES, SUN_RES, { depthBuffer: true });
 sunRT.depthTexture = new THREE.DepthTexture(SUN_RES, SUN_RES);
@@ -1350,7 +1351,7 @@ for (const id of ['sun', 'sun-over']) {
   $(id).addEventListener('click', (e) => {
     e.stopPropagation();
     sunOn = !sunOn;
-    try { localStorage.setItem('sdwg-sun', sunOn ? '1' : '0'); } catch { /* приватный режим */ }
+    try { localStorage.setItem('sdwg-sun2', sunOn ? '1' : '0'); } catch { /* приватный режим */ }
     updateSunButtons();
   });
 }
@@ -1646,6 +1647,7 @@ function frame(now) {
   }
   materials.main.uniforms.uB.value = cam.base;
   materials.main.uniforms.uTime.value = gameTime;
+  materials.main.uniforms.uRunZ.value = pl.z % 840; // для бегущей по красному волны (кратно её длине)
   // в подземке дымка ближе — пустые коридоры тонут в молочном свете
   const deep = Math.min(1, Math.max(0, -cam.base / 5));
   // погода: туман на улице — видимость втрое ближе (в подземке своя дымка, туман туда не заходит)
