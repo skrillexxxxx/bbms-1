@@ -137,6 +137,7 @@ if (wantSoundHint) {
   let hideT = 0;
   const hide = () => { el.classList.remove('show'); clearTimeout(hideT); };
   const tryShow = () => {
+    if ($('hud').classList.contains('show')) return; // забег уже идёт — не показываем
     if ($('install').classList.contains('show')) { setTimeout(tryShow, 400); return; } // сначала — установка
     placeSoundHint();
     el.classList.add('show');

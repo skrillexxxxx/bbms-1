@@ -1175,6 +1175,7 @@ $('restart-new').addEventListener('click', (e) => { e.stopPropagation(); sound.u
 document.addEventListener('visibilitychange', () => { if (document.hidden) pauseGame(); });
 
 function start() {
+  $('soundhint').classList.remove('show'); // подсказка «включи звук» — только до забега
   $('pause-menu').classList.remove('show');
   $('gfx').classList.remove('show');
   ui.start.classList.remove('show');
