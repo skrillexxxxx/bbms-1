@@ -122,7 +122,7 @@ function createBlurPass() {
       uLines: { value: 0 },
       uTime: { value: 0 },
       uGrain: { value: useFx ? 0.045 : 0 },  // цифровой шум
-      uCA: { value: useFx ? 0.006 : 0 },     // хроматическая аберрация у краёв (доля экрана в углу)
+      uCA: { value: useFx ? 0.004 : 0 },     // хроматическая аберрация у краёв (доля экрана в углу)
       uPx: { value: 1 },                     // размер «зерна» шума в пикселях экрана
       uVig: { value: 0 },                    // ночная виньетка: края экрана в темноту
       uRain: { value: 0 },                   // дождь: косые струи поверх кадра
@@ -219,9 +219,12 @@ function createBlurPass() {
         if (uCA > 0.0) {
           vec2 c = vUv - 0.5;
           vec2 o = c * dot(c, c) * 4.0 * uCA;   // растёт квадратично к краям
-          vec3 base = texture2D(tDiffuse, vUv).rgb;
-          col.r += texture2D(tDiffuse, vUv + o).r - base.r;
-          col.b += texture2D(tDiffuse, vUv - o).b - base.b;
+          // считаем на уже обрезанных до 1 значениях: в пересвете (пятна света, > 1) каналы иначе
+          // обрезались бы по-разному — и светлые пятна шли розово-зелёно-фиолетовыми разводами
+          col.rgb = min(col.rgb, vec3(1.0));
+          vec3 base = min(texture2D(tDiffuse, vUv).rgb, vec3(1.0));
+          col.r = clamp(col.r + min(texture2D(tDiffuse, vUv + o).r, 1.0) - base.r, 0.0, 1.0);
+          col.b = clamp(col.b + min(texture2D(tDiffuse, vUv - o).b, 1.0) - base.b, 0.0, 1.0);
         }
 
         // ночью края кадра темнеют — взгляд тянется в центр, туда, куда бежим
@@ -239,7 +242,7 @@ function createBlurPass() {
           float n = hash13(vec3(p, f)) - 0.5;
           vec3 nc = vec3(hash13(vec3(p, f + 101.0)), hash13(vec3(p, f + 211.0)), hash13(vec3(p, f + 307.0))) - 0.5;
           vec3 g = pow(clamp(col.rgb, 0.0, 1.0), vec3(1.0 / 2.2));
-          g += uGrain * (n * 0.8 + nc * 0.35);
+          g += uGrain * (n * 0.85 + nc * 0.12); // шум почти без цвета: цветные крапинки давали оттенки
           col.rgb = pow(clamp(g, 0.0, 1.0), vec3(2.2));
         }
         gl_FragColor = col;
