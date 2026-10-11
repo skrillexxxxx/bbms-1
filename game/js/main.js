@@ -1271,13 +1271,14 @@ document.addEventListener('touchmove', (e) => { if (!e.target.closest?.('#seed-l
 // Виды погоды по очереди и случайно: «ясно», «туман», «дождь».
 // Каждая держится 45–90 с, смена плавная (~8 с). Забег начинается с ясной погоды.
 // ?weather=fog / ?weather=rain — сразу эта погода (для проверки).
-const WEATHERS = ['clear', 'fog', 'rain'];
+// дождь пока отключён (переделаем); ?weather=rain всё ещё включает его для проверки
+const WEATHERS = ['clear', 'fog'];
 const forceWeather = params.get('weather');
 // w — сила дымки (туман — 1, в дождь — серая морось 0.45), r — сила дождя
 const weather = { kind: 'clear', w: 0, r: 0, until: 0 };
 const weatherFog = (k) => (k === 'fog' ? 1 : k === 'rain' ? 0.45 : 0);
 function resetWeather() {
-  weather.kind = forceWeather && WEATHERS.includes(forceWeather) ? forceWeather : 'clear';
+  weather.kind = forceWeather && (WEATHERS.includes(forceWeather) || forceWeather === 'rain') ? forceWeather : 'clear';
   weather.w = weatherFog(weather.kind);
   weather.r = weather.kind === 'rain' ? 1 : 0;
   weather.until = gameTime + 45 + Math.random() * 45;
@@ -1899,7 +1900,9 @@ function frame(now) {
     blurPass.uniforms.uStrength.value = run * (0.04 + sp * 0.11 + cam.slide * 0.05 + pl.boost * 0.006);
     blurPass.uniforms.uLateral.value.set(run * -cam.vx * 0.0012, 0);
     // полосы копятся медленно: на всю силу — только на длинной серии подкатов
-    const linesT = Math.max(Math.min(1, Math.max(0, (pl.slideChain - 1) / 6)), pl.wall ? 0.3 : 0, pl.launch ? 0.45 : 0);
+    // полосы скорости — от скорости: появляются выше обычного бега (~13 м/с), на ~32 м/с — во всю силу
+    const vNow = speedNow();
+    const linesT = Math.max(Math.min(1, Math.max(0, (vNow - 13) / 19)), pl.launch ? 0.45 : 0);
     cam.lines = damp(cam.lines, run * linesT, linesT > 0 ? 6 : 2.5, dt);
     blurPass.uniforms.uLines.value = cam.lines;
     blurPass.uniforms.uTime.value = gameTime;
