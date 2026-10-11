@@ -10,7 +10,7 @@ import {
   canStep, canJumpOver, aliveBackward, walk, lv,
 } from './world.js';
 import './onboard.js';
-import { openBoard, submitBest } from './leaderboard.js';
+import { openBoard, syncProgress } from './leaderboard.js';
 import { createMaterial, createStarMaterial, createDepthMaterial, createSunDepthMaterial, createSparkMaterial, createConeMaterial, buildInstanceMesh } from './render.js';
 import { createSound } from './sound.js';
 import { createRecorder, shareFile } from './recorder.js';
@@ -413,6 +413,14 @@ let monkeys = [];        // { mesh, x, y, z, phase, taken } — обезьянк
 let runMonkeys = 0;      // собрано за забег
 let totalMonkeys = 0;    // собрано за всё время
 try { totalMonkeys = Number(localStorage.getItem('sdwg-monkeys')) || 0; } catch { /* приватный режим */ }
+// пришёл прогресс с сервера (другие устройства) — перечитать рекорды и счёт обезьянок
+window.addEventListener('sdwg-progress', () => {
+  try {
+    best = Math.max(best, Number(localStorage.getItem('city-best')) || 0);
+    bestSpeed = Math.max(bestSpeed, Number(localStorage.getItem('city-best-speed')) || 0);
+    totalMonkeys = Math.max(totalMonkeys, Number(localStorage.getItem('sdwg-monkeys')) || 0);
+  } catch { /* приватный режим */ }
+});
 const pl = {
   x: 0, z: 0, y: 0, vx: 0, vy: 0, grounded: true,
   lane: 6, pending: 0, pendT: 0,
@@ -1133,7 +1141,7 @@ function die(cause = '?') {
   ui.overInfo.textContent = `seed ${seed} · ${info.name} (#${info.inst}) · ряд ${info.local + 1}/${info.total}`;
   ui.best.textContent = `рекорд ${best} м` + (runMonkeys || totalMonkeys ? ` · обезьянки ${runMonkeys} (всего ${totalMonkeys})` : '');
   ui.speedRec.textContent = `макс. скорость ${runMaxSpeed} км/ч · рекорд ${bestSpeed} км/ч` + (newSpeedRecord ? ' — новый!' : '');
-  if (!autopilot) submitBest(); // в общую таблицу (если есть ник)
+  if (!autopilot) syncProgress(); // прогресс и рекорды — на сервер (если вошёл в аккаунт)
   setTimeout(() => { if (state === 'dead' && !ui.seeds.classList.contains('show')) ui.over.classList.add('show'); }, 450);
 }
 

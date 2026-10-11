@@ -199,44 +199,52 @@
     body:has(#nick.show) #halo { opacity: 1; width: max(190vmin, 150vw, 125vmax); height: max(190vmin, 150vw, 125vmax); }
     #lb { overflow: hidden; }
     body:has(#lb.show, #nick.show) #hud { visibility: hidden; } /* с экрана смерти: метры и ⚑ ❚❚ не наезжают на заголовок */
-    @media (max-width: 440px) { #lb .tabs button { padding: 8px 11px; margin: 0 2px; font-size: 13px; } }
     #lb h2, #nick h2 { font-size: clamp(30px, 8vw, 52px); font-weight: 800; letter-spacing: 0.02em; line-height: 1.05; margin: 0 0 10px; }
-    #lb .tabs { margin-bottom: 6px; flex-shrink: 0; }
-    #lb-list { width: min(520px, 100%); overflow-y: auto; flex: 0 1 auto; min-height: 0; touch-action: pan-y; }
-    .lb-row { display: flex; align-items: baseline; gap: 12px; padding: 8px 4px; border-bottom: 1px solid rgba(0,0,0,0.12); text-align: left; }
-    .lb-place { width: 2.4em; flex: none; text-align: right; font: 700 13px ui-monospace, Menlo, monospace; opacity: 0.55; }
-    .lb-name { flex: 1; min-width: 0; font-weight: 700; font-size: 17px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .lb-val { font-weight: 800; font-size: 17px; font-variant-numeric: tabular-nums; }
-    .lb-val.monk::before { content: ''; display: inline-block; width: 1.15em; height: 1.15em; background: url(monkey-icon.png) center / contain no-repeat; margin-right: 0.2em; vertical-align: -0.22em; }
-    .lb-row:nth-child(-n+3) .lb-place { opacity: 1; }
-    .lb-row.me { color: #e5262b; }
-    .lb-row.me .lb-place { opacity: 1; }
-    .lb-gap { opacity: 0.4; padding: 2px 0; letter-spacing: 0.2em; }
-    .lb-note { opacity: 0.6; font-size: 15px; padding: 18px 0; }
+    /* таблица: место, ник, метры, км/ч, обезьянки; тап по заголовку — сортировка по колонке */
+    #lb-scroll { position: relative; width: min(600px, 100%); border-radius: 6px; overflow-y: auto; flex: 0 1 auto; min-height: 0; touch-action: pan-y; }
+    #lb table { width: 100%; border-collapse: collapse; }
+    #lb th { position: sticky; top: 0; z-index: 1; font-size: 11px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase;
+      padding: 6px 6px 7px; border-bottom: 2px solid var(--ink); white-space: nowrap; background: #fff; color: rgba(17,17,17,0.5); }
+    #lb th[data-by] { cursor: pointer; }
+    #lb th:not([data-by]) { color: var(--ink); }
+    #lb th[data-by]::after { content: ' ▾'; opacity: 0; }
+    #lb th.on { color: var(--ink); }
+    #lb th.on::after { opacity: 1; }
+    #lb td { padding: 7px 6px; border-bottom: 1px solid rgba(0,0,0,0.12); font-size: 16px; white-space: nowrap; }
+    #lb th, #lb td { text-align: right; }
+    #lb th.name, #lb td.name { text-align: left; width: 100%; max-width: 0; overflow: hidden; text-overflow: ellipsis; font-weight: 700; }
+    #lb td.place { font: 700 13px ui-monospace, Menlo, monospace; opacity: 0.55; width: 2.4em; }
+    #lb td.num { font-variant-numeric: tabular-nums; opacity: 0.6; }
+    #lb td.num.on { opacity: 1; font-weight: 800; }
+    #lb tr:nth-child(-n+3) td.place { opacity: 1; }
+    #lb tr.me td { color: #e5262b; opacity: 1; }
+    #lb tr.gap td { opacity: 0.4; border-bottom: 0; padding: 0 6px; text-align: center; }
+    #lb .monk-ic { display: inline-block; width: 1.5em; height: 1.5em; background: url(monkey-icon.png) center / contain no-repeat; vertical-align: -0.45em; }
+    #lb-note { opacity: 0.6; font-size: 15px; padding: 18px 0; }
     #lb-me { margin-top: 10px; font-size: 14px; flex-shrink: 0; }
     #lb-me span { opacity: 0.7; margin-right: 4px; }
     #lb > div:last-child { flex-shrink: 0; }
     button.red, #lb-open, #lb-open-over { border-color: #e5262b; color: #e5262b; }
-    button.red:not(.ghost) { background: #e5262b; color: #fff; }
+    #nick .fields { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; }
+    #nick-swap { border: 0; background: none; color: var(--ink); text-decoration: underline; text-underline-offset: 3px; font-weight: 600; letter-spacing: 0; opacity: 0.7; padding: 6px 10px; margin: 4px 0 0; font-size: 14px; }
     #nick .card { max-width: 520px; }
     #nick .why { font-size: 15px; opacity: 0.75; margin-bottom: 16px; line-height: 1.5; }
-    #nick-input {
+    #nick input {
       font: inherit; font-size: 22px; font-weight: 800; text-align: center; letter-spacing: 0.04em;
-      width: min(340px, 100%); box-sizing: border-box; padding: 12px 22px; border-radius: 999px;
+      width: min(280px, 100%); box-sizing: border-box; padding: 12px 22px; border-radius: 999px;
       border: 2px solid var(--ink); background: rgba(255,255,255,0.6); color: var(--ink); outline: none;
       -webkit-user-select: text; user-select: text; touch-action: manipulation;
     }
-    #nick-input:focus { border-color: #e5262b; }
+    #nick input:focus { border-color: #e5262b; }
+    #nick input::placeholder { font-weight: 600; opacity: 0.45; letter-spacing: 0; font-size: 0.8em; }
     #nick-err { min-height: 1.4em; margin-top: 8px; font-size: 14px; font-weight: 600; color: #e5262b; }
-    #nick .note { font-size: 12px; opacity: 0.6; margin: 6px 0 4px; line-height: 1.45; }
     @media (max-height: 500px) {
       #lb h2, #nick h2 { font-size: 26px; margin-bottom: 4px; }
-      #lb .tabs { margin-bottom: 2px; }
-      .lb-row { padding: 5px 4px; }
-      .lb-name, .lb-val { font-size: 15px; }
+      #lb td { padding: 4px 6px; font-size: 15px; }
+      #lb th { padding: 3px 6px 4px; }
       #lb-me { margin-top: 4px; }
       #nick .why { margin-bottom: 8px; font-size: 13px; }
-      #nick-input { font-size: 18px; padding: 8px 18px; }
+      #nick input { font-size: 18px; padding: 8px 18px; }
       #nick-err { margin-top: 4px; }
     }
     /* «включи звук»: стрелка на переключатель «Бесшумно» на боку iPhone */
@@ -359,19 +367,24 @@
   </div>
   <div id="lb" class="screen">
     <h2>Рекорды</h2>
-    <div class="tabs"><button class="small" data-by="dist">Дистанция</button><button class="ghost small" data-by="speed">Скорость</button><button class="ghost small" data-by="monkeys">Обезьянки</button></div>
-    <div id="lb-list"></div>
+    <div id="lb-scroll"><table>
+      <thead><tr><th>#</th><th class="name">Игрок</th><th data-by="dist">Метры</th><th data-by="speed">км/ч</th><th data-by="monkeys" aria-label="Обезьянки"><span class="monk-ic"></span></th></tr></thead>
+      <tbody id="lb-body"></tbody>
+    </table><div id="lb-note"></div></div>
     <div id="lb-me"></div>
     <div style="margin-top: 8px"><button id="lb-close" class="ghost">Назад</button></div>
   </div>
   <div id="nick" class="screen">
     <div class="card">
-      <h2>Как тебя зовут?</h2>
-      <div class="why">Придумай ник — под ним твои рекорды попадут<br>в общую таблицу игроков.</div>
-      <input id="nick-input" type="text" maxlength="16" autocomplete="nickname" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="done" placeholder="Ник">
+      <h2 id="nick-h">Как тебя зовут?</h2>
+      <div class="why" id="nick-why"></div>
+      <div class="fields">
+        <input id="nick-input" type="text" maxlength="16" autocomplete="username" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="next" placeholder="Ник">
+        <input id="nick-pass" type="password" maxlength="64" autocomplete="new-password" enterkeyhint="done" placeholder="Пароль">
+      </div>
       <div id="nick-err"></div>
-      <div class="note">Ник закрепляется за этим устройством: похожий на чужой занять нельзя.<br>На другое устройство его переносит «Сохранить прогресс» → «Загрузить».</div>
       <div class="row"><button id="nick-ok">Готово</button><button id="nick-skip" class="ghost">Позже</button></div>
+      <button id="nick-swap">Уже есть аккаунт? Войти</button>
     </div>
   </div>
   <div id="install" class="screen">

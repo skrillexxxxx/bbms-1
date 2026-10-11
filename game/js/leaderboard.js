@@ -1,30 +1,27 @@
-// Общая таблица рекордов (сервер — functions/api/leaderboard.js).
-// Вход — ником: при первом запуске игра просит придумать ник; устройство получает секретный токен
-// (sdwg-lb-token), им и подтверждается, что ник твой. Токен и ник лежат в sdwg-* — переезжают
-// вместе с «Сохранить прогресс» / «Загрузить» (Safari → приложение, новый телефон).
-// В таблицу уходят лучшие результаты устройства (city-best, city-best-speed) и сколько всего
-// собрано обезьянок (sdwg-monkeys); сервер хранит максимум.
+// Аккаунт и общая таблица рекордов (сервер — functions/api/leaderboard.js).
+// Аккаунт — ник + пароль: при первом запуске игра предлагает его завести, на другом устройстве —
+// «Войти». Устройство хранит свой секретный токен (sdwg-lb-token) и ник (sdwg-lb-name).
+// Прогресс (рекорды, обезьянки, «Мои города», настройки — ключи city-* и sdwg-*) синхронизируется
+// с сервером при запуске и после каждого забега; сервер объединяет его между устройствами.
 
 const $ = (id) => document.getElementById(id);
 const params = new URLSearchParams(location.search);
 const API = 'api/leaderboard';
-const K_TOKEN = 'sdwg-lb-token', K_NAME = 'sdwg-lb-name', K_SENT = 'sdwg-lb-sent', K_ASKED = 'sdwg-lb-asked';
+const K_TOKEN = 'sdwg-lb-token', K_NAME = 'sdwg-lb-name', K_ASKED = 'sdwg-lb-asked';
+const NAME_RULE = 'Ник: от 2 до 16 символов — буквы, цифры, пробел, _ . -';
 
 const get = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
 const set = (k, v) => { try { localStorage.setItem(k, v); } catch { /* приватный режим */ } };
+const del = (k) => { try { localStorage.removeItem(k); } catch { /* приватный режим */ } };
 const sget = (k) => { try { return sessionStorage.getItem(k); } catch { return null; } };
 const sset = (k, v) => { try { sessionStorage.setItem(k, v); } catch { /* приватный режим */ } };
 
-function token() {
-  let t = get(K_TOKEN);
-  if (!t) {
-    const b = crypto.getRandomValues(new Uint8Array(24));
-    t = [...b].map((x) => x.toString(16).padStart(2, '0')).join('');
-    set(K_TOKEN, t);
-  }
-  return t;
-}
 export const playerName = () => get(K_NAME) || '';
+const loggedIn = () => !!(playerName() && get(K_TOKEN));
+function newToken() {
+  const b = crypto.getRandomValues(new Uint8Array(24));
+  return [...b].map((x) => x.toString(16).padStart(2, '0')).join('');
+}
 
 async function api(body, query = '') {
   const r = await fetch(API + query, {
@@ -38,67 +35,124 @@ async function api(body, query = '') {
   return data;
 }
 
-// ---------- отправка рекордов ----------
-// Отправляем только если с прошлого раза что-то выросло; не дошло (нет сети) — повторим
-// при следующей смерти или запуске.
-let sending = false;
-export async function submitBest() {
-  if (sending || !playerName() || params.has('auto')) return;
-  const dist = Number(get('city-best')) || 0, speed = Number(get('city-best-speed')) || 0;
-  const monkeys = Number(get('sdwg-monkeys')) || 0;
-  const key = `${dist}|${speed}|${monkeys}`;
-  if (get(K_SENT) === key || (!dist && !speed && !monkeys)) return;
-  sending = true;
+// ---------- прогресс ----------
+const OURS = (k) => (k.startsWith('city-') || k.startsWith('sdwg-')) && !k.startsWith('sdwg-lb-');
+function collect() {
+  const data = {};
   try {
-    const r = await api({ action: 'score', token: token(), dist, speed, monkeys });
-    if (r.ok) set(K_SENT, key);
-    else if (r.error === 'noplayer') set(K_NAME, ''); // запись на сервере пропала — попросим ник заново
-  } catch { /* нет сети — в следующий раз */ }
-  sending = false;
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (OURS(k)) data[k] = localStorage.getItem(k);
+    }
+  } catch { /* приватный режим */ }
+  return data;
 }
-
-// ---------- экран «ник» ----------
-const nick = $('nick'), input = $('nick-input'), err = $('nick-err'), ok = $('nick-ok');
-let afterNick = null;
-
-export function openNick(then) {
-  afterNick = then || null;
-  input.value = playerName();
-  err.textContent = '';
-  $('nick-skip').textContent = playerName() ? 'Отмена' : 'Позже';
-  nick.classList.add('show');
-}
-function closeNick() {
-  nick.classList.remove('show');
-  input.blur();
-  const f = afterNick; afterNick = null;
-  if (f) f();
-}
-
-async function saveNick() {
-  const name = input.value.normalize('NFKC').replace(/\s+/g, ' ').trim();
-  if (name.length < 2 || name.length > 16 || !/^[\p{L}\p{N} _.\-]+$/u.test(name)) {
-    err.textContent = 'От 2 до 16 символов: буквы, цифры, пробел, _ . -';
-    return;
+function apply(data) {
+  let changed = false;
+  for (const [k, v] of Object.entries(data || {})) {
+    if (OURS(k) && typeof v === 'string' && get(k) !== v) { set(k, v); changed = true; }
   }
-  if (name === playerName()) { closeNick(); return; }
+  if (changed) window.dispatchEvent(new Event('sdwg-progress')); // main.js перечитает рекорды
+}
+function clearLocal() {
+  for (const k of Object.keys(collect())) del(k);
+}
+
+// Отправить прогресс и забрать объединённый (с других устройств). Нет сети — в следующий раз.
+let syncing = null;
+export function syncProgress() {
+  if (!loggedIn() || params.has('auto')) return Promise.resolve();
+  if (!syncing) {
+    syncing = (async () => {
+      try {
+        const r = await api({ action: 'sync', token: get(K_TOKEN), data: collect() });
+        if (r.ok) {
+          apply(r.data);
+          if (r.name && r.name !== playerName()) set(K_NAME, r.name); // сменили ник на другом устройстве
+        } else if (r.error === 'noplayer') { del(K_NAME); del(K_TOKEN); } // вход сброшен — войти заново
+      } catch { /* нет сети */ }
+    })().finally(() => { syncing = null; });
+  }
+  return syncing;
+}
+
+// ---------- экран аккаунта: новый ник / вход / настройки ----------
+const acc = $('nick'), nameIn = $('nick-input'), passIn = $('nick-pass'), err = $('nick-err'), ok = $('nick-ok');
+const skip = $('nick-skip'), swap = $('nick-swap');
+let mode = 'new', afterAcc = null;
+
+const TEXT = {
+  new: {
+    h: 'Как тебя зовут?', ok: 'Готово', skip: 'Позже', swap: 'Уже есть аккаунт? Войти', pass: 'Пароль',
+    why: 'Ник и пароль — твой аккаунт: рекорды попадут в общую таблицу,<br>прогресс сохранится, а войти можно с любого устройства.',
+  },
+  login: {
+    h: 'Вход', ok: 'Войти', skip: 'Назад', swap: 'Новый игрок? Завести ник', pass: 'Пароль',
+    why: 'Введи свой ник и пароль — прогресс подтянется с сервера.',
+  },
+  edit: {
+    h: 'Аккаунт', ok: 'Сохранить', skip: 'Отмена', swap: 'Выйти из аккаунта', pass: 'Новый пароль',
+    why: 'Здесь можно сменить ник или пароль (пустой пароль — оставить старый).',
+  },
+};
+function setMode(m) {
+  mode = m;
+  const t = TEXT[m];
+  $('nick-h').textContent = t.h;
+  $('nick-why').innerHTML = t.why;
+  ok.textContent = t.ok;
+  skip.textContent = t.skip;
+  swap.textContent = t.swap;
+  passIn.placeholder = t.pass;
+  passIn.autocomplete = m === 'login' ? 'current-password' : 'new-password';
+  nameIn.value = m === 'edit' ? playerName() : (m === 'login' ? nameIn.value : '');
+  passIn.value = '';
+  err.textContent = '';
+}
+export function openAccount(then) {
+  afterAcc = then || null;
+  setMode(loggedIn() ? 'edit' : 'new');
+  acc.classList.add('show');
+}
+function closeAccount() {
+  acc.classList.remove('show');
+  nameIn.blur(); passIn.blur();
+  const f = afterAcc; afterAcc = null;
+  if (f) f();
+  if (lb.classList.contains('show')) loadBoard();
+}
+
+function cleanName(v) { return v.normalize('NFKC').replace(/\s+/g, ' ').trim(); }
+function nameOk(name) { return name.length >= 2 && name.length <= 16 && /^[\p{L}\p{N} _.\-]+$/u.test(name); }
+function serverError(r, name) {
+  if (r.error === 'taken') {
+    return r.name && r.name !== name ? `Слишком похоже на занятый ник «${r.name}» — придумай другой` : 'Этот ник уже занят — придумай другой';
+  }
+  if (r.error === 'weak') return 'Пароль — от 4 до 64 символов';
+  if (r.error === 'wrong') return r.left > 0 && r.left <= 3 ? `Неверный ник или пароль (осталось попыток: ${r.left})` : 'Неверный ник или пароль';
+  if (r.error === 'locked') return `Слишком много попыток — попробуй через ${Math.ceil(r.wait / 60)} мин`;
+  if (r.error === 'nodb') return 'Сервер рекордов пока не подключён';
+  return NAME_RULE;
+}
+
+async function submit() {
+  const name = cleanName(nameIn.value), pass = passIn.value;
+  if (!nameOk(name)) { err.textContent = NAME_RULE; return; }
+  if ((mode !== 'edit' || pass) && (pass.length < 4 || pass.length > 64)) { err.textContent = 'Пароль — от 4 до 64 символов'; return; }
+  if (mode === 'edit' && name === playerName() && !pass) { closeAccount(); return; }
   ok.disabled = true;
   err.textContent = '';
   try {
-    const r = await api({ action: 'register', token: token(), name });
-    if (r.ok) {
-      set(K_NAME, r.name);
-      set(K_SENT, ''); // новый игрок на сервере — отправим рекорды заново
-      closeNick();
-      submitBest();
-      if (lb.classList.contains('show')) loadBoard();
-    } else if (r.error === 'taken') {
-      err.textContent = r.name && r.name !== name ? `Слишком похоже на занятый ник «${r.name}» — придумай другой`
-        : 'Этот ник уже занят — придумай другой';
-    } else if (r.error === 'nodb') {
-      err.textContent = 'Таблица рекордов пока не подключена';
-    } else {
-      err.textContent = 'Такой ник не подходит — только буквы, цифры, пробел, _ . -';
+    if (mode === 'login') await login(name, pass);
+    else {
+      const tok = mode === 'edit' ? get(K_TOKEN) : newToken();
+      const r = await api({ action: 'register', token: tok, name, password: pass || undefined });
+      if (r.ok) {
+        set(K_TOKEN, tok);
+        set(K_NAME, r.name);
+        closeAccount();
+        syncProgress(); // прогресс этого устройства — в новый аккаунт
+      } else err.textContent = serverError(r, name);
     }
   } catch {
     err.textContent = 'Нет связи с сервером — попробуй позже';
@@ -106,100 +160,138 @@ async function saveNick() {
   ok.disabled = false;
 }
 
-ok.addEventListener('click', (e) => { e.stopPropagation(); saveNick(); });
-input.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') saveNick(); });
-$('nick-skip').addEventListener('click', (e) => { e.stopPropagation(); closeNick(); });
+async function login(name, pass) {
+  // на устройстве уже другой аккаунт — его прогресс не смешиваем с чужим
+  const other = loggedIn() && playerName().toLowerCase() !== name.toLowerCase();
+  if (other && !confirm(`Сейчас здесь аккаунт «${playerName()}». Прогресс этого устройства заменится прогрессом «${name}». Продолжить?`)) return;
+  const r = await api({ action: 'login', name, password: pass });
+  if (!r.ok) { err.textContent = serverError(r, name); return; }
+  if (other) clearLocal();
+  set(K_TOKEN, r.token);
+  set(K_NAME, r.name);
+  apply(r.data);
+  await syncProgress(); // гость: его прогресс объединится с аккаунтом
+  location.reload(); // настройки, рекорды, города — всё заново из хранилища
+}
 
-// первый запуск без ника: спросить один раз за запуск, после окна установки и до старта забега
-if (!playerName() && !params.has('auto') && params.get('nick') !== '0') {
+async function logout() {
+  if (!confirm('Выйти из аккаунта? Прогресс сохранён на сервере, а с этого устройства сотрётся.')) return;
+  await syncProgress();
+  try { await api({ action: 'logout', token: get(K_TOKEN) }); } catch { /* нет сети — токен просто забудем */ }
+  clearLocal();
+  del(K_TOKEN); del(K_NAME);
+  location.reload();
+}
+
+ok.addEventListener('click', (e) => { e.stopPropagation(); submit(); });
+for (const el of [nameIn, passIn]) {
+  el.addEventListener('keydown', (e) => {
+    e.stopPropagation();
+    if (e.key !== 'Enter') return;
+    if (el === nameIn) passIn.focus(); else submit();
+  });
+}
+skip.addEventListener('click', (e) => {
+  e.stopPropagation();
+  if (mode === 'login' && !loggedIn()) setMode('new'); else closeAccount();
+});
+swap.addEventListener('click', (e) => {
+  e.stopPropagation();
+  if (mode === 'edit') logout(); else setMode(mode === 'login' ? 'new' : 'login');
+});
+
+// первый запуск без аккаунта: спросить один раз за запуск, после окна установки и до старта забега
+if (!loggedIn() && !params.has('auto') && params.get('nick') !== '0') {
   const tryAsk = () => {
     if ($('hud').classList.contains('show') || sget(K_ASKED)) return; // забег уже идёт
     if ($('install').classList.contains('show')) { setTimeout(tryAsk, 400); return; }
     sset(K_ASKED, '1');
-    openNick();
+    openAccount();
   };
   setTimeout(tryAsk, 700);
 } else {
-  setTimeout(submitBest, 1500);
+  setTimeout(syncProgress, 1500);
 }
 
-// ---------- экран «Рекорды» ----------
-const lb = $('lb'), list = $('lb-list'), meEl = $('lb-me');
+// ---------- экран «Рекорды»: таблица, сортировка — по заголовку колонки ----------
+const lb = $('lb'), body = $('lb-body'), meEl = $('lb-me'), noteEl = $('lb-note');
 let by = 'dist', back = null, reqN = 0;
 
-function row(place, name, value, mine) {
-  const r = document.createElement('div');
-  r.className = 'lb-row' + (mine ? ' me' : '');
-  const p = document.createElement('span'); p.className = 'lb-place'; p.textContent = place;
-  const n = document.createElement('span'); n.className = 'lb-name'; n.textContent = name;
-  const v = document.createElement('span'); v.className = 'lb-val'; v.textContent = value;
-  if (by === 'monkeys') v.classList.add('monk');
-  r.append(p, n, v);
-  return r;
+function cell(text, cls) {
+  const td = document.createElement('td');
+  td.textContent = text;
+  if (cls) td.className = cls;
+  return td;
 }
-const fmt = (x) => (by === 'speed' ? `${x.speed} км/ч` : by === 'monkeys' ? `${x.monkeys}` : `${x.dist} м`);
+function row(place, x, mine) {
+  const tr = document.createElement('tr');
+  if (mine) tr.className = 'me';
+  tr.append(cell(place ?? '—', 'place'), cell(x.name, 'name'), cell(x.dist, 'num'), cell(x.speed, 'num'), cell(x.monkeys || 0, 'num'));
+  tr.children[{ dist: 2, speed: 3, monkeys: 4 }[by]].classList.add('on');
+  return tr;
+}
 function note(text) {
-  list.textContent = '';
-  const d = document.createElement('div');
-  d.className = 'lb-note';
-  d.textContent = text;
-  list.append(d);
+  body.textContent = '';
+  noteEl.textContent = text;
+  noteEl.style.display = text ? '' : 'none';
 }
 
 function renderMe() {
   meEl.textContent = '';
-  const name = playerName();
   const b = document.createElement('button');
   b.className = 'ghost small';
-  if (name) {
-    const s = document.createElement('span');
-    s.textContent = `Ты — ${name}`;
-    b.textContent = 'Сменить ник';
-    meEl.append(s, b);
+  const s = document.createElement('span');
+  if (loggedIn()) {
+    s.textContent = `Ты — ${playerName()}`;
+    b.textContent = 'Аккаунт';
   } else {
-    b.textContent = 'Записать ник';
+    s.textContent = 'Без аккаунта твои рекорды не попадут в таблицу';
+    b.textContent = 'Войти или завести ник';
     b.classList.add('red');
-    const s = document.createElement('span');
-    s.textContent = 'Без ника твои рекорды не попадут в таблицу';
-    meEl.append(s, b);
   }
-  b.addEventListener('click', (e) => { e.stopPropagation(); openNick(); });
+  meEl.append(s, b);
+  b.addEventListener('click', (e) => { e.stopPropagation(); openAccount(); });
 }
 
 async function loadBoard() {
   renderMe();
-  for (const t of document.querySelectorAll('#lb .tabs button')) t.classList.toggle('ghost', t.dataset.by !== by);
+  for (const th of document.querySelectorAll('#lb th[data-by]')) th.classList.toggle('on', th.dataset.by === by);
   const n = ++reqN;
-  if (!list.children.length || list.querySelector('.lb-note')) note('Загрузка…');
-  await submitBest();
+  if (!body.children.length) note('Загрузка…');
+  await syncProgress();
   let data;
   try {
-    const tok = get(K_TOKEN);
+    const tok = loggedIn() ? get(K_TOKEN) : '';
     data = await api(null, `?by=${by}` + (tok ? `&token=${encodeURIComponent(tok)}` : ''));
   } catch { data = null; }
-  if (n !== reqN) return; // переключили вкладку, пока грузилось
+  if (n !== reqN) return; // сменили сортировку, пока грузилось
+  renderMe();
   if (!data) { note('Нет связи с сервером — попробуй позже'); return; }
   if (data.error === 'nodb') { note('Таблица рекордов пока не подключена'); return; }
   if (!data.top || !data.top.length) { note('Пока пусто — стань первым!'); return; }
-  list.textContent = '';
+  note('');
   const me = data.me && data.me.name;
   let meShown = false;
   data.top.forEach((x, i) => {
     const mine = x.name === me;
     if (mine) meShown = true;
-    list.append(row(i + 1, x.name, fmt(x), mine));
+    body.append(row(i + 1, x, mine));
   });
-  if (data.me && !meShown && data.me.rank) {
-    const gap = document.createElement('div'); gap.className = 'lb-gap'; gap.textContent = '···';
-    list.append(gap, row(data.me.rank, data.me.name, fmt(data.me), true));
+  if (data.me && !meShown) {
+    const gap = document.createElement('tr');
+    gap.className = 'gap';
+    gap.append(cell('···'), cell(''), cell(''), cell(''), cell(''));
+    body.append(gap, row(data.me.rank, data.me, true));
   }
-  list.querySelector('.me')?.scrollIntoView({ block: 'nearest' });
+  // своя строка — посередине списка (не под шапкой)
+  const meRow = body.querySelector('.me'), sc = $('lb-scroll');
+  sc.scrollTop = meRow ? meRow.offsetTop - (sc.clientHeight - meRow.offsetHeight) / 2 : 0;
 }
 
 export function openBoard(onBack) {
   back = onBack || null;
   lb.classList.add('show');
-  list.scrollTop = 0;
+  $('lb-scroll').scrollTop = 0;
   loadBoard();
 }
 function closeBoard() {
@@ -208,7 +300,7 @@ function closeBoard() {
   if (f) f();
 }
 $('lb-close').addEventListener('click', (e) => { e.stopPropagation(); closeBoard(); });
-for (const t of document.querySelectorAll('#lb .tabs button')) {
-  t.addEventListener('click', (e) => { e.stopPropagation(); if (by !== t.dataset.by) { by = t.dataset.by; list.textContent = ''; loadBoard(); } });
+for (const th of document.querySelectorAll('#lb th[data-by]')) {
+  th.addEventListener('click', (e) => { e.stopPropagation(); if (by !== th.dataset.by) { by = th.dataset.by; loadBoard(); } });
 }
-for (const el of [lb, nick]) for (const ev of ['pointerdown', 'click']) el.addEventListener(ev, (e) => e.stopPropagation());
+for (const el of [lb, acc]) for (const ev of ['pointerdown', 'click']) el.addEventListener(ev, (e) => e.stopPropagation());

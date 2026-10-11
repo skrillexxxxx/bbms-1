@@ -1,20 +1,30 @@
-// Общая таблица рекордов: Cloudflare Pages Function + база D1 (привязка DB в настройках проекта Pages).
+// Общая таблица рекордов и аккаунты: Cloudflare Pages Function + база D1 (привязка DB в настройках проекта Pages).
 //
-// Игрок «входит» ником: устройство создаёт случайный секретный токен (localStorage sdwg-lb-token),
-// сервер хранит только его хеш. Ник занят — значит, им владеет другой токен, и чужие результаты
-// под этим ником не записать. Ник сравнивается не буквально, а по двум «скелетам»: как выглядит
-// (регистр, похожие буквы латиницы и кириллицы a/а, o/о, p/р…, цифры-двойники 0/o, 1/l/I, пробелы
-// и знаки, повторы букв) и как читается (транслит). Так «Ivan», «lvan», «IVAN_», «Iван», «Ivvan»
-// и «Иван» — одно имя, и занять его может только первый.
+// Аккаунт — ник + пароль. Пароль хранится только как PBKDF2-хеш с солью; после 5 неверных попыток
+// вход по нику закрыт на 10 минут. Каждое устройство, где ты вошёл, получает свой случайный токен
+// (localStorage sdwg-lb-token), сервер хранит только хеш токена — им подтверждаются запросы.
+// Ник сравнивается не буквально, а по двум «скелетам»: как выглядит (регистр, похожие буквы латиницы
+// и кириллицы a/а, o/о, p/р…, цифры-двойники 0/o, 1/l/I, пробелы и знаки, повторы букв) и как читается
+// (транслит). Так «Ivan», «lvan», «IVAN_», «Iван», «Ivvan» и «Иван» — одно имя, и занять его может только первый.
+//
+// Прогресс (рекорды, обезьянки, «Мои города», настройки — ключи city-* и sdwg-*) тоже лежит на сервере
+// и объединяется между устройствами: рекорды и обезьянки — максимум, города — все вместе, остальное — с
+// последнего устройства. Рекорды в таблице берутся из этого прогресса.
 //
 // GET  /api/leaderboard?by=dist|speed|monkeys[&token=…] → { top: [{ name, dist, speed, monkeys }], me: { name, rank, … } | null }
-// POST /api/leaderboard { action: 'register', token, name }   → { ok, name } | { error: 'taken', name } | { error: 'bad' }
-// POST /api/leaderboard { action: 'score', token, dist, speed, monkeys } → { ok, dist, speed, monkeys }
+// POST { action: 'register', token, name, password? } → { ok, name } | { error: 'taken', name } | { error: 'bad' | 'weak' }
+//      (новый аккаунт — пароль обязателен; уже вошёл — смена ника и, если передан, пароля)
+// POST { action: 'login', name, password }   → { ok, name, token, data } | { error: 'wrong' } | { error: 'locked', wait }
+// POST { action: 'sync', token, data }       → { ok, name, data } — объединённый прогресс
+// POST { action: 'logout', token }           → { ok }
 
 const TOP = 50;
 const MAX_DIST = 1_000_000; // м — дальше не бегают, это уже подделка
 const MAX_SPEED = 400; // км/ч
 const MAX_MONKEYS = 100_000;
+const MAX_SAVE = 64 * 1024; // байт JSON прогресса
+const FAILS = 5, LOCK_MS = 10 * 60 * 1000; // неверных паролей подряд → блокировка входа
+const PBKDF2_ITER = 100_000; // больше Workers не разрешают
 
 // латиница ← похожие буквы кириллицы и греческого, цифры и знаки-двойники
 const LOOK = {
@@ -64,11 +74,63 @@ export function translitSkeleton(name) {
   return s.replace(/(.)\1+/gu, '$1');
 }
 
+const hex = (buf) => [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
+const unhex = (h) => new Uint8Array(h.match(/../g).map((x) => parseInt(x, 16)));
 async function hashToken(token) {
-  const d = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(String(token)));
-  return [...new Uint8Array(d)].map((b) => b.toString(16).padStart(2, '0')).join('');
+  return hex(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(String(token))));
+}
+async function pbkdf2(password, salt) {
+  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveBits']);
+  return hex(await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt, iterations: PBKDF2_ITER }, key, 256));
+}
+async function hashPassword(password) {
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  return `${hex(salt)}:${await pbkdf2(password, salt)}`;
+}
+async function checkPassword(password, stored) {
+  if (!stored) return false;
+  const [salt, h] = stored.split(':');
+  const got = await pbkdf2(password, unhex(salt));
+  let diff = got.length ^ h.length; // сравнение без утечки по времени
+  for (let i = 0; i < Math.min(got.length, h.length); i++) diff |= got.charCodeAt(i) ^ h.charCodeAt(i);
+  return diff === 0;
 }
 const okToken = (t) => typeof t === 'string' && t.length >= 16 && t.length <= 128;
+const okPassword = (p) => typeof p === 'string' && p.length >= 4 && p.length <= 64;
+const newToken = () => hex(crypto.getRandomValues(new Uint8Array(24)));
+
+// ---------- прогресс ----------
+const SKIP = (k) => k.startsWith('sdwg-lb-'); // аккаунт устройства — не прогресс
+const ours = (k) => (k.startsWith('city-') || k.startsWith('sdwg-')) && !SKIP(k);
+const MAXED = ['city-best', 'city-best-speed', 'sdwg-monkeys'];
+function parseSeeds(v) { try { const l = JSON.parse(v); return Array.isArray(l) ? l : []; } catch { return []; } }
+
+// объединить сохранённое на сервере (base) с пришедшим с устройства (inc)
+export function mergeSave(base, inc) {
+  const out = {};
+  for (const [k, v] of Object.entries(base || {})) if (ours(k) && typeof v === 'string') out[k] = v;
+  for (const [k, v] of Object.entries(inc || {})) {
+    if (!ours(k) || typeof v !== 'string') continue;
+    if (MAXED.includes(k)) out[k] = String(Math.max(Number(out[k]) || 0, Number(v) || 0));
+    else if (k === 'sdwg-seeds') {
+      const all = new Map();
+      for (const e of [...parseSeeds(out[k]), ...parseSeeds(v)]) {
+        if (!e || typeof e !== 'object' || !Number.isFinite(Number(e.seed))) continue;
+        const was = all.get(e.seed);
+        if (!was) { all.set(e.seed, e); continue; }
+        const late = (Number(e.at) || 0) >= (Number(was.at) || 0) ? e : was;
+        all.set(e.seed, { ...late, best: Math.max(Number(e.best) || 0, Number(was.best) || 0) });
+      }
+      out[k] = JSON.stringify([...all.values()].sort((a, b) => (Number(b.at) || 0) - (Number(a.at) || 0)));
+    } else out[k] = v;
+  }
+  return out;
+}
+const clamp = (v, max) => Math.min(max, Math.max(0, Math.round(Number(v) || 0)));
+function scores(save) {
+  return { dist: clamp(save['city-best'], MAX_DIST), speed: clamp(save['city-best-speed'], MAX_SPEED), monkeys: clamp(save['sdwg-monkeys'], MAX_MONKEYS) };
+}
+function parseSave(text) { try { return JSON.parse(text || '{}') || {}; } catch { return {}; } }
 
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' },
@@ -81,16 +143,24 @@ async function db(env) {
   if (!ready) {
     await DB.batch([
       DB.prepare(`CREATE TABLE IF NOT EXISTS players (
-        tok TEXT PRIMARY KEY, name TEXT NOT NULL, skel TEXT NOT NULL UNIQUE, tskel TEXT NOT NULL UNIQUE,
+        id INTEGER PRIMARY KEY, name TEXT NOT NULL, skel TEXT NOT NULL UNIQUE, tskel TEXT NOT NULL UNIQUE, pass TEXT,
         dist INTEGER NOT NULL DEFAULT 0, speed INTEGER NOT NULL DEFAULT 0, monkeys INTEGER NOT NULL DEFAULT 0,
+        save TEXT, fails INTEGER NOT NULL DEFAULT 0, lock_until INTEGER NOT NULL DEFAULT 0,
         created INTEGER NOT NULL, updated INTEGER NOT NULL)`),
+      DB.prepare(`CREATE TABLE IF NOT EXISTS tokens (
+        tok TEXT PRIMARY KEY, player INTEGER NOT NULL, created INTEGER NOT NULL)`),
       DB.prepare('CREATE INDEX IF NOT EXISTS players_dist ON players (dist DESC)'),
       DB.prepare('CREATE INDEX IF NOT EXISTS players_speed ON players (speed DESC)'),
       DB.prepare('CREATE INDEX IF NOT EXISTS players_monkeys ON players (monkeys DESC)'),
+      DB.prepare('CREATE INDEX IF NOT EXISTS tokens_player ON tokens (player)'),
     ]);
     ready = true;
   }
   return DB;
+}
+async function playerByToken(DB, token) {
+  if (!okToken(token)) return null;
+  return DB.prepare('SELECT p.* FROM tokens t JOIN players p ON p.id = t.player WHERE t.tok = ?').bind(await hashToken(token)).first();
 }
 
 export async function onRequestGet({ request, env }) {
@@ -101,16 +171,13 @@ export async function onRequestGet({ request, env }) {
   const col = by === 'speed' || by === 'monkeys' ? by : 'dist';
   const other = col === 'dist' ? 'speed' : 'dist';
   const { results } = await DB.prepare(
-    `SELECT name, dist, speed, monkeys FROM players WHERE ${col} > 0 ORDER BY ${col} DESC, ${other} DESC, updated ASC LIMIT ?`,
+    `SELECT name, dist, speed, monkeys FROM players WHERE ${col} > 0 ORDER BY ${col} DESC, ${other} DESC, id ASC LIMIT ?`,
   ).bind(TOP).all();
   let me = null;
-  const token = url.searchParams.get('token');
-  if (okToken(token)) {
-    const row = await DB.prepare('SELECT name, dist, speed, monkeys FROM players WHERE tok = ?').bind(await hashToken(token)).first();
-    if (row) {
-      const above = await DB.prepare(`SELECT COUNT(*) AS n FROM players WHERE ${col} > ?`).bind(row[col]).first();
-      me = { ...row, rank: row[col] > 0 ? above.n + 1 : null };
-    }
+  const row = await playerByToken(DB, url.searchParams.get('token'));
+  if (row) {
+    const above = await DB.prepare(`SELECT COUNT(*) AS n FROM players WHERE ${col} > ?`).bind(row[col]).first();
+    me = { name: row.name, dist: row.dist, speed: row.speed, monkeys: row.monkeys, rank: row[col] > 0 ? above.n + 1 : null };
   }
   return json({ top: results, me });
 }
@@ -120,21 +187,32 @@ export async function onRequestPost({ request, env }) {
   if (!DB) return json({ error: 'nodb' }, 503);
   let body;
   try { body = await request.json(); } catch { return json({ error: 'bad' }, 400); }
-  if (!body || !okToken(body.token)) return json({ error: 'bad' }, 400);
-  const tok = await hashToken(body.token);
+  if (!body || typeof body !== 'object') return json({ error: 'bad' }, 400);
   const now = Date.now();
 
   if (body.action === 'register') {
+    if (!okToken(body.token)) return json({ error: 'bad' }, 400);
     const name = cleanName(body.name);
     if (!validName(name)) return json({ error: 'bad' }, 400);
     const skel = skeleton(name), tskel = translitSkeleton(name);
     if (skel.length < 2 || tskel.length < 2) return json({ error: 'bad' }, 400);
-    const clashQ = DB.prepare('SELECT tok, name FROM players WHERE (skel = ?1 OR tskel = ?2) AND tok != ?3 LIMIT 1').bind(skel, tskel, tok);
+    const me = await playerByToken(DB, body.token);
+    const pw = body.password;
+    if (pw != null && pw !== '' && !okPassword(pw)) return json({ error: 'weak' }, 400);
+    if (!me && !okPassword(pw)) return json({ error: 'weak' }, 400);
+    const clashQ = DB.prepare('SELECT name FROM players WHERE (skel = ?1 OR tskel = ?2) AND id != ?3 LIMIT 1').bind(skel, tskel, me ? me.id : -1);
     const clash = await clashQ.first();
     if (clash) return json({ error: 'taken', name: clash.name }, 409);
+    const pass = okPassword(pw) ? await hashPassword(pw) : null;
     try {
-      await DB.prepare(`INSERT INTO players (tok, name, skel, tskel, created, updated) VALUES (?1, ?2, ?3, ?4, ?5, ?5)
-        ON CONFLICT (tok) DO UPDATE SET name = ?2, skel = ?3, tskel = ?4, updated = ?5`).bind(tok, name, skel, tskel, now).run();
+      if (me) {
+        await DB.prepare('UPDATE players SET name = ?2, skel = ?3, tskel = ?4, pass = COALESCE(?5, pass), updated = ?6 WHERE id = ?1')
+          .bind(me.id, name, skel, tskel, pass, now).run();
+      } else {
+        const row = await DB.prepare(`INSERT INTO players (name, skel, tskel, pass, created, updated) VALUES (?1, ?2, ?3, ?4, ?5, ?5)
+          RETURNING id`).bind(name, skel, tskel, pass, now).first();
+        await DB.prepare('INSERT OR REPLACE INTO tokens (tok, player, created) VALUES (?, ?, ?)').bind(await hashToken(body.token), row.id, now).run();
+      }
     } catch {
       // кто-то занял похожий ник одновременно с нами — UNIQUE не пустил
       const c = await clashQ.first();
@@ -143,17 +221,43 @@ export async function onRequestPost({ request, env }) {
     return json({ ok: true, name });
   }
 
-  if (body.action === 'score') {
-    const dist = Math.round(Number(body.dist));
-    const speed = Math.round(Number(body.speed));
-    const monkeys = Math.round(Number(body.monkeys) || 0);
-    if (!(dist >= 0 && dist <= MAX_DIST && speed >= 0 && speed <= MAX_SPEED && monkeys >= 0 && monkeys <= MAX_MONKEYS)) {
-      return json({ error: 'bad' }, 400);
+  if (body.action === 'login') {
+    const name = cleanName(body.name);
+    if (!name || typeof body.password !== 'string') return json({ error: 'wrong' }, 401);
+    const p = await DB.prepare('SELECT * FROM players WHERE skel = ?1 OR tskel = ?2 LIMIT 1').bind(skeleton(name), translitSkeleton(name)).first();
+    if (!p) return json({ error: 'wrong' }, 401);
+    if (p.lock_until > now) return json({ error: 'locked', wait: Math.ceil((p.lock_until - now) / 1000) }, 429);
+    if (!(await checkPassword(body.password, p.pass))) {
+      const fails = p.fails + 1;
+      await DB.prepare('UPDATE players SET fails = ?2, lock_until = ?3 WHERE id = ?1')
+        .bind(p.id, fails >= FAILS ? 0 : fails, fails >= FAILS ? now + LOCK_MS : 0).run();
+      if (fails >= FAILS) return json({ error: 'locked', wait: LOCK_MS / 1000 }, 429);
+      return json({ error: 'wrong', left: FAILS - fails }, 401);
     }
-    const row = await DB.prepare(`UPDATE players SET dist = MAX(dist, ?2), speed = MAX(speed, ?3), monkeys = MAX(monkeys, ?4),
-      updated = ?5 WHERE tok = ?1 RETURNING dist, speed, monkeys`).bind(tok, dist, speed, monkeys, now).first();
-    if (!row) return json({ error: 'noplayer' }, 404);
-    return json({ ok: true, ...row });
+    const token = newToken();
+    await DB.batch([
+      DB.prepare('UPDATE players SET fails = 0, lock_until = 0 WHERE id = ?').bind(p.id),
+      DB.prepare('INSERT INTO tokens (tok, player, created) VALUES (?, ?, ?)').bind(await hashToken(token), p.id, now),
+    ]);
+    return json({ ok: true, name: p.name, token, data: parseSave(p.save) });
+  }
+
+  if (body.action === 'sync') {
+    const me = await playerByToken(DB, body.token);
+    if (!me) return json({ error: 'noplayer' }, 404);
+    if (!body.data || typeof body.data !== 'object') return json({ error: 'bad' }, 400);
+    const merged = mergeSave(parseSave(me.save), body.data);
+    const text = JSON.stringify(merged);
+    if (text.length > MAX_SAVE) return json({ error: 'big' }, 413);
+    const sc = scores(merged);
+    await DB.prepare(`UPDATE players SET save = ?2, dist = MAX(dist, ?3), speed = MAX(speed, ?4), monkeys = MAX(monkeys, ?5),
+      updated = ?6 WHERE id = ?1`).bind(me.id, text, sc.dist, sc.speed, sc.monkeys, now).run();
+    return json({ ok: true, name: me.name, data: merged });
+  }
+
+  if (body.action === 'logout') {
+    if (okToken(body.token)) await DB.prepare('DELETE FROM tokens WHERE tok = ?').bind(await hashToken(body.token)).run();
+    return json({ ok: true });
   }
 
   return json({ error: 'bad' }, 400);
