@@ -2257,10 +2257,10 @@ function frame(now) {
   const high = Math.min(1, Math.max(0, (cam.base - 10) / 25));
   materials.main.uniforms.uHigh.value = high;
   sound.update(deep, state === 'run' ? speedNow() : 0, high);
-  // ветер: от скорости (с ~50 км/ч, во всю силу к ~100) и в падении — там быстрее и громче
+  // ветер: от скорости (с ~58 км/ч, во всю силу к ~110) и в падении — там быстрее и громче
   {
     const run = state === 'run';
-    const sp = Math.min(1, Math.max(0, (speedNow() - 14) / 14));
+    const sp = Math.min(1, Math.max(0, (speedNow() - 16) / 15));
     // падение — по высоте, с которой летим вниз: обычный прыжок (~3 м) — чуть-чуть, с крыши — во всю силу
     const fall = !pl.grounded && !pl.wall && pl.vy < 0 ? Math.min(1, Math.max(0, (airPeak - pl.y - 1.5) / 3)) : 0;
     sound.wind(run ? Math.max(sp * sp * (3 - 2 * sp), fall) : 0, run ? fall : 0);
