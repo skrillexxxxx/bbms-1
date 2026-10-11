@@ -180,6 +180,12 @@ const frag = /* glsl */ `
         // чем ниже, тем шире пятно; к краю конуса мягко гаснет
         float rr = 0.6 + hh * 0.5;
         streetL += exp(-dot(d, d) / (rr * rr)) * (n.y > 0.5 ? 1.0 : 0.55);
+        // стены рядом: пятно света по расстоянию до плафона в пространстве, ярче там, куда грань смотрит на фонарь
+        if (abs(n.y) < 0.5) {
+          vec3 dl = vec3(L.x - vDx, L.y - y, L.z - vDz);
+          float d2 = dot(dl, dl);
+          streetL += exp(-d2 / 20.0) * max(dot(n, dl * inversesqrt(d2 + 1e-4)), 0.0) * 1.6;
+        }
       }
       streetL = min(streetL, 1.4);
     }
@@ -1601,7 +1607,7 @@ export function buildInstanceMesh(inst, materials, world) {
   const streetLamps = [];
   for (let r = 0; r < nRows; r++) {
     const row = rows[r], ri = inst.rowStart + r;
-    if (row.cover || row.b0 !== 0 || row.b1 !== 0 || ri % 5 !== 0 || hash2(ri, 77) < 0.55) continue;
+    if (row.cover || row.b0 !== 0 || row.b1 !== 0 || ri % 4 !== 0 || hash2(ri, 77) < 0.4) continue;
     const side = hash2(ri, 78) < 0.5 ? -1 : 1; // сторона — случайная, но своя у каждого ряда
     const at = (c) => row[((c % COLS) + COLS) % COLS];
     let cc = -1;
