@@ -329,7 +329,7 @@ let autoExpOn = true;
 // + яркость солнца, глубина солнечной тени; автоэкспозиция: сила, целевая яркость (EV), скорость
 // + эффекты: motion blur, шум, хроматика — множители к обычной силе (1 = как задумано)
 const GFX_DEFAULT = { az: 56, el: 74, lit: 1, shade: 0.38, exp: 0, con: 1, temp: 0, aeStr: 0.5, aeTgt: 0, aeSpd: 1, blur: 1, grain: 1, ca: 1,
-  sunCol: '#ffffff', sunAmt: 0.5, shadeCol: '#ffffff', shadeAmt: 0.5 }; // цвет солнца и тени: белый — как было
+  sunCol: '#ff6a00', sunAmt: 0.16, shadeCol: '#011d57', shadeAmt: 0.18 }; // цвет солнца и тени: тёплое солнце, холодная тень
 const gfx = { ...GFX_DEFAULT };
 try {
   const saved = JSON.parse(localStorage.getItem('sdwg-gfx') || '{}');
