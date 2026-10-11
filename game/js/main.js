@@ -1100,7 +1100,7 @@ function renderSeeds() {
 function die(cause = '?') {
   if (state !== 'run') return;
   rec.event('die', { cause, z: pl.z, x: pl.x, y: pl.y, lane: pl.lane });
-  sound.sfx('dead');
+  sound.death();
   if (slideSnd) { slideSnd = false; sound.slide(false, true); }
   state = 'dead';
   shake = 0.6;

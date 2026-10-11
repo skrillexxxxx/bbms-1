@@ -18,7 +18,13 @@ const SFX = {
   springboard: { url: 'audio/sfx/springboard.mp3', gain: 1.4, space: true },
   monkey: { url: 'audio/sfx/pick_up_monkey.mp3', gain: 1.3, space: true },
   dead: { url: 'audio/sfx/dead.mp3', gain: 0.8, space: false },
+  // разочарование после смерти — фоном, тихо; один из трёх, без повтора подряд
+  disap1: { url: 'audio/sfx/death_disappointment_1.mp3', gain: 0.35, space: false },
+  disap2: { url: 'audio/sfx/death_disappointment_2.mp3', gain: 0.35, space: false },
+  disap3: { url: 'audio/sfx/death_disappointment_3.mp3', gain: 0.35, space: false },
 };
+const DISAP = ['disap1', 'disap2', 'disap3'];
+const DISAP_DELAY = 0.45; // с; чуть после удара
 const SLIDE_LP = 600; // Гц: скольжение глухое, но слышно и на динамике телефона (ниже ~300 Гц он почти не играет)
 const SLIDE_TO_LOOP = 0.45; // через сколько секунд вход перетекает в луп (дальше у входа ровный «шорох»)
 // смерть: музыка уходит «под воду» — срез высоких до MUFFLE_HZ и на 3 дБ тише
@@ -107,6 +113,17 @@ export function createSound(enabled) {
     const s = SFX[name];
     // через sfx (там громкость шагов) — значит, делим на неё, чтобы gain был «как есть»
     oneShot(st, s.gain * k * (s.space ? 1 : 1 / STEP_GAIN), 0, s.space ? sfx : sfxDry, 0.97 + Math.random() * 0.06);
+  }
+
+  let lastDisap = -1;
+  function playDisap() {
+    if (!ctx || ctx.state !== 'running') return;
+    let i = Math.floor(Math.random() * (DISAP.length - 1));
+    if (i >= lastDisap && lastDisap >= 0) i++; // любой, кроме прошлого
+    if (lastDisap < 0) i = Math.floor(Math.random() * DISAP.length);
+    lastDisap = i;
+    const name = DISAP[i], st = sfxBuf[name];
+    if (st) oneShot(st, SFX[name].gain / STEP_GAIN, ctx.currentTime + DISAP_DELAY, sfxDry);
   }
 
   function oneShot(st, gain, when = 0, bus = sfx, rate = 1) {
@@ -289,6 +306,8 @@ export function createSound(enabled) {
     slide(on, quiet = false) { if (on) slideStart(); else slideStop(quiet); },
     // разовый звук из SFX: softFall, hardFall, springboard, monkey, dead
     sfx(name, k = 1) { playSfx(name, k); },
+    // смерть: удар + чуть позже тихое «разочарование»
+    death() { playSfx('dead'); playDisap(); },
     // шаг; k — громкость (1 — обычный бег)
     step(k = 1) { playStep(k); },
     // приземление: два шага почти разом, громче — чем сильнее удар, тем громче
