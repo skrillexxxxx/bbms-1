@@ -392,12 +392,13 @@ export function createSound(enabled) {
       echoL.gain.setTargetAtTime(0.127 * Math.min(1, left + narrow), t, 0.12);
       echoR.gain.setTargetAtTime(0.127 * Math.min(1, right + narrow), t, 0.12);
     },
-    // ветер 0…1: плавно нарастает (~0.6 с) и плавно уходит (~0.9 с); сильнее — ярче и чуть выше
-    wind(k) {
+    // ветер 0…1: плавно нарастает (~0.5 с) и плавно уходит (~0.7 с); сильнее — ярче и чуть выше
+    // fall 0…1 — падаем: ветер включается почти сразу (~0.12 с) и до 1.8× громче
+    wind(k, fall = 0) {
       if (!ctx || !windG) return;
       const t = ctx.currentTime;
-      windG.gain.setTargetAtTime(WIND_GAIN * Math.pow(k, 1.5), t, k > windK ? 0.6 : 0.9);
-      windLP.frequency.setTargetAtTime(900 + 5200 * k, t, 0.5);
+      windG.gain.setTargetAtTime(WIND_GAIN * Math.pow(k, 1.3) * (1 + 0.8 * fall), t, k > windK ? (fall > 0.05 ? 0.12 : 0.5) : 0.7);
+      windLP.frequency.setTargetAtTime(900 + 5200 * k, t, fall > 0.05 ? 0.12 : 0.5);
       windSrc.playbackRate.setTargetAtTime(0.9 + 0.25 * k, t, 0.6);
       windK = k;
     },

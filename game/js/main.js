@@ -1268,7 +1268,6 @@ function tutStart() {
   if (autopilot || params.get('tut') === '0' || saved === 'done') { tut.step = null; return false; }
   tut.step = saved === 'wall' ? 'wall' : 'jump';
   tut.t = 0; tut.muf = false;
-  $('tut-skip').style.display = '';
   $('tut').classList.add('show');
   return tut.step === 'jump';
 }
@@ -1284,14 +1283,12 @@ function tutShow(name, g) {
 }
 function tutHide() { $('tut-hint').classList.remove('on'); tut.shown = null; }
 function tutNext(step) { tutHide(); tut.step = step; tut.t = 0; }
-function tutEnd(skipped) {
+function tutEnd() {
   tutSave('done');
   tut.kTo = 1;
   $('tut-card').classList.remove('show');
-  if (skipped) { tutHide(); tut.step = null; $('tut').classList.remove('show'); leaveAvenue(); return; }
   tutNext('done');
   tutShow('done', 'none');
-  $('tut-skip').style.display = 'none'; // обучение пройдено — «Пропустить» больше не нужна
 }
 // действие игрока: засчитываем, только если сейчас о нём и просили
 function tutEvent(a) {
@@ -1300,7 +1297,7 @@ function tutEvent(a) {
   else if (tut.shown === 'slide' && a === 'slide') tutNext('pump');
   else if (tut.shown === 'wallJump' && a === 'jump') tutShow('wall', tut.wallD < 0 ? 'left' : 'right');
   else if (tut.step === 'wall' && a === 'wall') { tut.kTo = 1; tutNext('kick'); tut.wallD = pl.wall; }
-  else if (tut.step === 'kick' && a === 'kick') tutEnd(false);
+  else if (tut.step === 'kick' && a === 'kick') tutEnd();
 }
 function tutCard(h, p) {
   $('tut-card-h').textContent = h;
@@ -1357,7 +1354,7 @@ function tutUpdate(dt) {
         let opp = false;
         for (let k = 1; k <= 3 && !opp; k++) { const wx = laneX(pl.lane + d * k + d); if (isRunwallAt(wx, pl.z + 2) || isRunwallAt(wx, pl.z + 5)) opp = true; }
         if (opp && !tut.shown) { tutShow('kick', d < 0 ? 'left' : 'right'); tut.kTo = 0.35; }
-      } else tutEnd(false); // со стены сошли — бег по стене освоен
+      } else tutEnd(); // со стены сошли — бег по стене освоен
       break;
     }
     case 'done': if (tut.t > 2.2) { tutHide(); tut.step = null; $('tut').classList.remove('show'); } break;
@@ -1372,7 +1369,6 @@ $('tut-card-ok').addEventListener('click', (e) => {
   leaveAvenue(); // дальше — город; первая красная стена будет уже в нём
 });
 $('tut-card').addEventListener('pointerdown', (e) => e.stopPropagation());
-$('tut-skip').addEventListener('click', (e) => { e.stopPropagation(); tutEnd(true); });
 $('help-tut').addEventListener('click', (e) => {
   e.stopPropagation();
   tutSave('');
@@ -2261,13 +2257,13 @@ function frame(now) {
   const high = Math.min(1, Math.max(0, (cam.base - 10) / 25));
   materials.main.uniforms.uHigh.value = high;
   sound.update(deep, state === 'run' ? speedNow() : 0, high);
-  // ветер: от большой скорости (с ~58 км/ч, во всю силу к ~110) и в быстром падении
+  // ветер: от скорости (с ~43 км/ч, во всю силу к ~90) и в падении — там быстрее и громче
   {
     const run = state === 'run';
-    const sp = Math.min(1, Math.max(0, (speedNow() - 16) / 15));
-    // обычный прыжок падает до ~−13 м/с — от него ветра ещё нет
-    const fall = !pl.grounded && !pl.wall ? Math.min(1, Math.max(0, (-pl.vy - 13) / 14)) : 0;
-    sound.wind(run ? Math.max(sp * sp * (3 - 2 * sp), fall) : 0);
+    const sp = Math.min(1, Math.max(0, (speedNow() - 12) / 13));
+    // падение — по высоте, с которой летим вниз: обычный прыжок (~3 м) — чуть-чуть, с крыши — во всю силу
+    const fall = !pl.grounded && !pl.wall && pl.vy < 0 ? Math.min(1, Math.max(0, (airPeak - pl.y - 1.5) / 3)) : 0;
+    sound.wind(run ? Math.max(sp * sp * (3 - 2 * sp), fall) : 0, run ? fall : 0);
   }
   sound.rain(weather.r * (1 - 0.85 * deep));
   updateSpace(dt, deep);

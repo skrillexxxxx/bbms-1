@@ -332,8 +332,6 @@
     @keyframes tutLeft { 0% { transform: translateX(46px); opacity: 0; } 15% { transform: translateX(40px); opacity: 1; } 65% { transform: translateX(-46px); opacity: 1; } 85%, 100% { transform: translateX(-50px); opacity: 0; } }
     @keyframes tutTrailX { 0%, 15% { width: 0; } 65%, 100% { width: 56px; } }
     .tut-hint[data-g=none] .tut-g { display: none; }
-    #tut-skip { position: absolute; right: calc(env(safe-area-inset-right) + 14px); bottom: calc(env(safe-area-inset-bottom) + 12px);
-      pointer-events: auto; padding: 6px 12px; font-size: 12px; opacity: 0.6; border-width: 1.5px; background: rgba(255,255,255,0.6); }
     @media (max-height: 500px) { .tut-hint { bottom: calc(env(safe-area-inset-bottom) + 8%); } .tut-g { height: 84px; } }
     /* карточка посреди забега (время стоит): в стиле главного меню, на ореоле */
     #tut-card { z-index: 7; pointer-events: auto; }
@@ -434,7 +432,7 @@
     </div>
   </div>
 
-  <div id="tut"><div class="tut-hint" id="tut-hint" data-g="up"><div class="tut-g"><div class="tut-f c"></div><div class="tut-f l"></div><div class="tut-f r"></div></div><div class="tut-label" id="tut-label"></div></div><button id="tut-skip" class="ghost small">Пропустить обучение</button></div>
+  <div id="tut"><div class="tut-hint" id="tut-hint" data-g="up"><div class="tut-g"><div class="tut-f c"></div><div class="tut-f l"></div><div class="tut-f r"></div></div><div class="tut-label" id="tut-label"></div></div></div>
   <div id="tut-card" class="screen"><h2 id="tut-card-h"></h2><p id="tut-card-p"></p><div><button id="tut-card-ok">Понятно</button></div></div>
   <div id="help" class="screen">
     <div class="card">
