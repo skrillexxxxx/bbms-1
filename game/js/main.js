@@ -1695,6 +1695,15 @@ for (const id of ['gfx-open', 'gfx-open-start', 'gfx-open-over']) $(id).addEvent
 for (const id of ['snd-open', 'snd-open-start', 'snd-open-over']) $(id).addEventListener('click', (e) => { e.stopPropagation(); openGfx('snd'); });
 $('gfx-close').addEventListener('click', (e) => { e.stopPropagation(); closeGfx(); });
 $('gfx').addEventListener('pointerdown', (e) => e.stopPropagation());
+// пока тянешь ползунок — меню и ореол прячутся (остаётся только он сам), отпустил — всё вернулось
+function peekOff() { document.body.classList.remove('peek'); document.querySelector('#gfx label.peek')?.classList.remove('peek'); }
+$('gfx').addEventListener('pointerdown', (e) => {
+  if (e.target.type !== 'range') return;
+  e.target.closest('label').classList.add('peek');
+  document.body.classList.add('peek');
+});
+for (const ev of ['pointerup', 'pointercancel', 'blur']) window.addEventListener(ev, peekOff);
+$('gfx').addEventListener('change', peekOff);
 syncGfxUI();
 applyGfx();
 
