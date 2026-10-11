@@ -48,6 +48,11 @@ function audibleRange(buf) {
   return [a / buf.sampleRate, (b + 1) / buf.sampleRate];
 }
 
+// ветер: от большой скорости и в падении. Файл не закольцован — склеиваем конец с началом
+// плавным перекрёстным фейдом (WIND_XFADE с), дальше крутим как обычный луп
+const WIND_URL = 'audio/sfx/wind.mp3';
+const WIND_GAIN = 0.55, WIND_XFADE = 1.5;
+
 export function createSound(enabled) {
   let ctx = null, master = null, lp = null, duck = null, started = false, muffled = false;
   let m = 0, lastT = 0; // m: 0 — чистый звук, 1 — «под водой»
@@ -58,6 +63,8 @@ export function createSound(enabled) {
   const slideRaw = enabled ? Object.fromEntries(Object.entries(SLIDE_URLS).map(([k, u]) => [k, get(u)])) : {};
   const sfxRaw = enabled ? Object.fromEntries(Object.entries(SFX).map(([k, s]) => [k, get(s.url)])) : {};
   const sfxBuf = {};
+  const windRaw = enabled ? get(WIND_URL) : null;
+  let windG = null, windLP = null, windSrc = null, windK = 0;
   let slideBuf = {}, slideNow = null, slideBus = null; // slideNow: { srcs, gains } — звучащий подкат
   let steps = [], sfx = null, sfxDry = null, farBus = null, lastStep = -1, stepBus = null;
   // steps: [{ buf, a }] — a: где начинается звук (без тишины mp3)
@@ -101,6 +108,36 @@ export function createSound(enabled) {
       if (!data) continue;
       try { const buf = await decode(data); const [a, b] = audibleRange(buf); slideBuf[k] = { buf, a, b }; } catch { /* пропускаем */ }
     }
+  }
+
+  // луп ветра: первые WIND_XFADE с перекрываются хвостом (равная мощность: sin/cos), шва не слышно
+  function loopBuffer(buf) {
+    const [a, b] = audibleRange(buf);
+    const sr = buf.sampleRate, s0 = Math.floor(a * sr), len = Math.floor(b * sr) - s0;
+    const x = Math.min(Math.floor(WIND_XFADE * sr), Math.floor(len / 3)), n = len - x;
+    const out = ctx.createBuffer(buf.numberOfChannels, n, sr);
+    for (let ch = 0; ch < buf.numberOfChannels; ch++) {
+      const src = buf.getChannelData(ch), dst = out.getChannelData(ch);
+      for (let i = 0; i < n; i++) {
+        if (i < x) {
+          const t = (i / x) * Math.PI / 2;
+          dst[i] = src[s0 + i] * Math.sin(t) + src[s0 + n + i] * Math.cos(t);
+        } else dst[i] = src[s0 + i];
+      }
+    }
+    return out;
+  }
+
+  async function startWind() {
+    const data = await windRaw;
+    if (!data) return;
+    const buf = loopBuffer(await decode(data));
+    windSrc = ctx.createBufferSource();
+    windSrc.buffer = buf; windSrc.loop = true;
+    windLP = ctx.createBiquadFilter(); windLP.type = 'lowpass'; windLP.frequency.value = 900; windLP.Q.value = 0.5;
+    windG = ctx.createGain(); windG.gain.value = 0;
+    windSrc.connect(windLP); windLP.connect(windG); windG.connect(gameOut);
+    windSrc.start();
   }
 
   async function loadSfx() {
@@ -317,7 +354,7 @@ export function createSound(enabled) {
       if (!ctx) build();
       if (!ctx) return;
       if (ctx.state === 'suspended') ctx.resume();
-      if (!started) { started = true; startMusic().catch(() => { started = false; }); loadSteps(); loadSlide(); loadSfx(); }
+      if (!started) { started = true; startMusic().catch(() => { started = false; }); startWind().catch(() => {}); loadSteps(); loadSlide(); loadSfx(); }
     },
     // true — плавно глушим (смерть), false — плавно возвращаем как было (снова играем)
     muffle(on) { muffled = on; },
@@ -354,6 +391,15 @@ export function createSound(enabled) {
       nearC.gain.setTargetAtTime(0.65 * narrow, t, 0.2);
       echoL.gain.setTargetAtTime(0.127 * Math.min(1, left + narrow), t, 0.12);
       echoR.gain.setTargetAtTime(0.127 * Math.min(1, right + narrow), t, 0.12);
+    },
+    // ветер 0…1: плавно нарастает (~0.6 с) и плавно уходит (~0.9 с); сильнее — ярче и чуть выше
+    wind(k) {
+      if (!ctx || !windG) return;
+      const t = ctx.currentTime;
+      windG.gain.setTargetAtTime(WIND_GAIN * Math.pow(k, 1.5), t, k > windK ? 0.6 : 0.9);
+      windLP.frequency.setTargetAtTime(900 + 5200 * k, t, 0.5);
+      windSrc.playbackRate.setTargetAtTime(0.9 + 0.25 * k, t, 0.6);
+      windK = k;
     },
     // дождь 0…1 (в подземке почти не слышно)
     rain(k) {

@@ -2261,6 +2261,13 @@ function frame(now) {
   const high = Math.min(1, Math.max(0, (cam.base - 10) / 25));
   materials.main.uniforms.uHigh.value = high;
   sound.update(deep, state === 'run' ? speedNow() : 0, high);
+  // ветер: от большой скорости (с ~58 км/ч, во всю силу к ~110) и в быстром падении
+  {
+    const run = state === 'run';
+    const sp = Math.min(1, Math.max(0, (speedNow() - 16) / 15));
+    const fall = !pl.grounded && !pl.wall ? Math.min(1, Math.max(0, (-pl.vy - 13) / 14)) // обычный прыжок (~−13 м/с) — ещё без ветра : 0;
+    sound.wind(run ? Math.max(sp * sp * (3 - 2 * sp), fall) : 0);
+  }
   sound.rain(weather.r * (1 - 0.85 * deep));
   updateSpace(dt, deep);
   materials.star.uniforms.uB.value = cam.base;
