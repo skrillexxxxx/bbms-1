@@ -1884,16 +1884,8 @@ export function buildInstanceMesh(inst, materials, world) {
       const v = row[c];
       if (!walk(v) || lv(v) !== 0 || v === LAUNCH) continue;
       // узкий проход над пропастью (пропасть с обеих сторон) — красные перила: «сюда»
-      // а ещё на узкой дорожке (1–2 клетки) и там, где путь впереди или позади уходит вбок, — зигзаги
-      const at = (rr, cc) => (rr < 0 || rr >= nRows ? null : rows[rr][((cc % COLS) + COLS) % COLS]);
       const narrow = row[((c - 1) % COLS + COLS) % COLS] === VOID && row[(c + 1) % COLS] === VOID;
-      let w = 1;
-      while (w < 3 && walk(row[((c - w) % COLS + COLS) % COLS])) w++;
-      let w2 = 1;
-      while (w2 < 3 && walk(row[(c + w2) % COLS])) w2++;
-      const thin = w + w2 - 1 <= 2;
-      const turn = at(r + 1, c) === VOID || at(r - 1, c) === VOID;
-      b.tint = narrow || thin || turn ? 1 : 0;
+      b.tint = narrow ? 1 : 0;
       for (const side of [-1, 1]) {
         if (row[((c + side) % COLS + COLS) % COLS] !== VOID) continue;
         const x = side < 0 ? c * CELL + 0.1 : (c + 1) * CELL - 0.1;
