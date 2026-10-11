@@ -282,6 +282,60 @@
       position: fixed; left: 16px; top: calc(var(--app-h, 100dvh) - env(safe-area-inset-bottom) - 10px); transform: translateY(-100%);
       font: 11px ui-monospace, Menlo, monospace; opacity: 0.45; pointer-events: none;
     }
+
+    /* ---------- обучение прямо в забеге: жест + короткая подпись внизу, игра не останавливается ---------- */
+    #tut { position: fixed; inset: 0; z-index: 5; pointer-events: none; display: none; }
+    #tut.show { display: block; }
+    .tut-hint {
+      position: absolute; left: 50%; bottom: calc(env(safe-area-inset-bottom) + 13%); transform: translate(-50%, 12px);
+      display: flex; flex-direction: column; align-items: center; opacity: 0; transition: opacity 0.35s ease, transform 0.35s ease;
+    }
+    .tut-hint.on { opacity: 1; transform: translate(-50%, 0); }
+    .tut-label { background: rgba(255,255,255,0.88); color: #111; border-radius: 999px; padding: 8px 18px; font-size: 17px; font-weight: 800; letter-spacing: 0.02em; white-space: nowrap; }
+    .tut-label small { display: block; font-size: 12px; font-weight: 600; opacity: 0.6; letter-spacing: 0.02em; margin-top: 1px; }
+    .tut-key { display: none; }
+    @media (hover: hover) and (pointer: fine) { .tut-key { display: inline; } .tut-touch { display: none; } }
+    /* жест: «палец» — белый кружок со следом, едет в сторону свайпа */
+    .tut-g { position: relative; width: 130px; height: 96px; margin-bottom: 6px; }
+    .tut-f { position: absolute; left: 50%; top: 50%; width: 30px; height: 30px; margin: -15px 0 0 -15px; border-radius: 50%;
+      background: rgba(255,255,255,0.95); border: 2.5px solid #111; box-sizing: border-box; }
+    .tut-f::after { content: ''; position: absolute; left: 50%; width: 6px; margin-left: -3px; border-radius: 3px; height: 0; opacity: 0.85; }
+    .tut-hint[data-g=up] .tut-f { animation: tutUp 1.15s cubic-bezier(.3,.1,.3,1) infinite; }
+    .tut-hint[data-g=up] .tut-f::after { top: 100%; background: linear-gradient(rgba(17,17,17,0.55), rgba(17,17,17,0)); animation: tutTrail 1.15s cubic-bezier(.3,.1,.3,1) infinite; }
+    .tut-hint[data-g=down] .tut-f { animation: tutDown 1.15s cubic-bezier(.3,.1,.3,1) infinite; }
+    .tut-hint[data-g=down] .tut-f::after { bottom: 100%; background: linear-gradient(rgba(17,17,17,0), rgba(17,17,17,0.55)); animation: tutTrail 1.15s cubic-bezier(.3,.1,.3,1) infinite; }
+    @keyframes tutUp { 0% { transform: translateY(34px) scale(0.85); opacity: 0; } 15% { transform: translateY(30px) scale(1); opacity: 1; } 65% { transform: translateY(-34px); opacity: 1; } 85%, 100% { transform: translateY(-38px); opacity: 0; } }
+    @keyframes tutDown { 0% { transform: translateY(-34px) scale(0.85); opacity: 0; } 15% { transform: translateY(-30px) scale(1); opacity: 1; } 65% { transform: translateY(34px); opacity: 1; } 85%, 100% { transform: translateY(38px); opacity: 0; } }
+    @keyframes tutTrail { 0%, 15% { height: 0; } 65% { height: 46px; } 100% { height: 46px; } }
+    /* накачка: два пальца по очереди, быстро — слева и справа */
+    .tut-hint[data-g=pump] .tut-g { width: min(560px, 80vw); }
+    .tut-hint[data-g=pump] .tut-f { animation: tutDown 0.56s cubic-bezier(.3,.1,.3,1) infinite; }
+    .tut-hint[data-g=pump] .tut-f::after { bottom: 100%; background: linear-gradient(rgba(17,17,17,0), rgba(17,17,17,0.55)); animation: tutTrail 0.56s cubic-bezier(.3,.1,.3,1) infinite; }
+    .tut-hint[data-g=pump] .tut-f.l { left: 12%; }
+    .tut-hint[data-g=pump] .tut-f.r { left: 88%; animation-delay: -0.28s; }
+    .tut-hint[data-g=pump] .tut-f.r::after { animation-delay: -0.28s; }
+    .tut-f.l, .tut-f.r { display: none; }
+    .tut-hint[data-g=pump] .tut-f.l, .tut-hint[data-g=pump] .tut-f.r { display: block; }
+    .tut-hint[data-g=pump] .tut-f.c { display: none; }
+    /* в стену: палец уходит вбок, к красной стене; стрелка — красная, как стена */
+    .tut-hint[data-g=left] .tut-f, .tut-hint[data-g=right] .tut-f { border-color: #e5262b; }
+    .tut-hint[data-g=right] .tut-f { animation: tutRight 0.9s cubic-bezier(.3,.1,.3,1) infinite; }
+    .tut-hint[data-g=left] .tut-f { animation: tutLeft 0.9s cubic-bezier(.3,.1,.3,1) infinite; }
+    .tut-hint[data-g=right] .tut-f::after, .tut-hint[data-g=left] .tut-f::after { top: 50%; left: auto; width: 0; height: 6px; margin: -3px 0 0; animation: tutTrailX 0.9s cubic-bezier(.3,.1,.3,1) infinite; }
+    .tut-hint[data-g=right] .tut-f::after { right: 100%; background: linear-gradient(90deg, rgba(229,38,43,0), rgba(229,38,43,0.7)); }
+    .tut-hint[data-g=left] .tut-f::after { left: 100%; background: linear-gradient(90deg, rgba(229,38,43,0.7), rgba(229,38,43,0)); }
+    @keyframes tutRight { 0% { transform: translateX(-46px); opacity: 0; } 15% { transform: translateX(-40px); opacity: 1; } 65% { transform: translateX(46px); opacity: 1; } 85%, 100% { transform: translateX(50px); opacity: 0; } }
+    @keyframes tutLeft { 0% { transform: translateX(46px); opacity: 0; } 15% { transform: translateX(40px); opacity: 1; } 65% { transform: translateX(-46px); opacity: 1; } 85%, 100% { transform: translateX(-50px); opacity: 0; } }
+    @keyframes tutTrailX { 0%, 15% { width: 0; } 65%, 100% { width: 56px; } }
+    .tut-hint[data-g=none] .tut-g { display: none; }
+    #tut-skip { position: absolute; right: calc(env(safe-area-inset-right) + 14px); bottom: calc(env(safe-area-inset-bottom) + 12px);
+      pointer-events: auto; padding: 6px 12px; font-size: 12px; opacity: 0.6; border-width: 1.5px; background: rgba(255,255,255,0.6); }
+    @media (max-height: 500px) { .tut-hint { bottom: calc(env(safe-area-inset-bottom) + 8%); } .tut-g { height: 84px; } }
+    /* карточка посреди забега (время стоит): в стиле главного меню, на ореоле */
+    #tut-card { z-index: 7; pointer-events: auto; }
+    #tut-card h2 { font-size: clamp(26px, 6vw, 40px); font-weight: 800; margin: 0 0 8px; }
+    #tut-card p { font-size: 16px; line-height: 1.5; margin: 0 0 18px; max-width: 460px; }
+    body:has(#tut-card.show) #halo { opacity: 1; width: max(150vmin, 115vw, 125vmax); height: max(150vmin, 115vw, 125vmax); }
   </style>
   <script type="importmap">
     {
@@ -376,6 +430,8 @@
     </div>
   </div>
 
+  <div id="tut"><div class="tut-hint" id="tut-hint" data-g="up"><div class="tut-g"><div class="tut-f c"></div><div class="tut-f l"></div><div class="tut-f r"></div></div><div class="tut-label" id="tut-label"></div></div><button id="tut-skip" class="ghost small">Пропустить обучение</button></div>
+  <div id="tut-card" class="screen"><h2 id="tut-card-h"></h2><p id="tut-card-p"></p><div><button id="tut-card-ok">Понятно</button></div></div>
   <div id="help" class="screen">
     <div class="card">
       <h2>Как играть</h2>
@@ -386,7 +442,7 @@
         <li><b>Свайп в красную стену</b> — бег по стене, <b>свайп от неё</b> — прыжок на стену напротив</li>
         <li>Не врезайся в здания</li>
       </ul>
-      <div class="row"><button id="help-ok" class="ghost">Понятно</button></div>
+      <div class="row"><button id="help-tut" class="ghost">Пройти обучение</button><button id="help-ok" class="ghost">Понятно</button></div>
     </div>
   </div>
   <div id="lb" class="screen">

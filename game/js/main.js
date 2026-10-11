@@ -462,7 +462,7 @@ function reset(s) {
   monkeys = [];
   built = 0;
   world = new World(seed);
-  world.menu = state === 'ready'; // на стартовом экране — бесконечный прямой проспект
+  world.menu = state === 'ready' || tutWantsAvenue(); // на стартовом экране и в обучении — бесконечный прямой проспект
   runZ0 = 0;
   // для проверки: ?under=dark,balls,balloons,sparks,carts — эти особенности во всех переходах
   // ?ruin=1 — разруха везде, ?ruin=0 — нигде
@@ -723,6 +723,7 @@ function canWallRun(d) {
 function startWallRun(d) {
   rec.event('wall', { d, z: pl.z, y: pl.y, lane: pl.lane });
   pl.wall = d;
+  tutEvent('wall');
   pl.fromLong = false;
   pl.jumpBuf = 0; // прыжок, нажатый до прилипания, — не толчок от стены сразу же
   pl.wallT = 0;
@@ -742,6 +743,7 @@ function wallKick() {
   const d = -pl.wall;
   rec.event('kick', { d, z: pl.z, y: pl.y });
   endWallRun();
+  tutEvent('kick');
   pl.vy = P.wallJumpV * jumpScale(speedNow());
   pl.jumpBuf = 0; pl.pending = 0;
   pl.boost = Math.min(P.boostMax, pl.boost + P.wallJumpBoost);
@@ -1022,6 +1024,7 @@ function startSlide() {
 function slide() {
   if (state !== 'run') return;
   rec.event('in', { a: 'down', z: pl.z });
+  tutEvent('slide');
   if (pl.wall) endWallRun();
   pl.glideT = 0; pl.hover = 0; pl.longT = 0;
   if (!pl.grounded) {
@@ -1033,7 +1036,7 @@ function slide() {
   startSlide();
 }
 
-function jump() { if (state === 'run') { rec.event('in', { a: 'jump', z: pl.z }); pl.jumpBuf = P.jumpBuffer; } }
+function jump() { if (state === 'run') { rec.event('in', { a: 'jump', z: pl.z }); pl.jumpBuf = P.jumpBuffer; tutEvent('jump'); } }
 
 // ---------- сохранённые сиды ----------
 const SEEDS_KEY = 'sdwg-seeds';
@@ -1117,6 +1120,8 @@ const MONKEYS_N = 5;
 function die(cause = '?') {
   if (state !== 'run') return;
   rec.event('die', { cause, z: pl.z, x: pl.x, y: pl.y, lane: pl.lane });
+  tutHide(); tut.kTo = tut.k = 1;
+  if (tut.step === 'done') tut.step = null;
   sound.death();
   if (slideSnd) { slideSnd = false; sound.slide(false, true); }
   state = 'dead';
@@ -1173,7 +1178,8 @@ function toMainMenu() {
   state = 'ready';
   reset(seed);
   sound.muffle(false);
-  for (const id of ['pause-menu', 'gfx']) $(id).classList.remove('show');
+  for (const id of ['pause-menu', 'gfx', 'tut', 'tut-card']) $(id).classList.remove('show');
+  tutHide(); tut.step = null; tut.k = tut.kTo = 1;
   ui.over.classList.remove('show');
   ui.hud.classList.remove('show');
   ui.start.classList.add('show');
@@ -1211,10 +1217,10 @@ function start() {
   wasGroundedSnd = true; airPeak = pl.y; airLaunch = false; // умерли в полёте — новый забег без «приземления»
   // из меню: проспект кончается, дальше генератор как обычно; метры — от этого места
   if (world.menu) {
-    world.menu = false;
-    world.distOffset = (world.rows.length - 9) * ROW;
     runZ0 = pl.z - ROW * 0.5;
-  }
+    // обучение: первые шаги — на том же прямом проспекте, без препятствий; город — после них
+    if (!tutStart()) leaveAvenue();
+  } else tutStart();
   if (slideSnd) { slideSnd = false; sound.slide(false, true); }
   resetWeather();
   sound.muffle(false);
@@ -1226,6 +1232,142 @@ function start() {
     screen: `${innerWidth}x${innerHeight}@${devicePixelRatio}`, autopilot,
   });
 }
+
+// прямой проспект из меню кончается — дальше город, как у этого сида с нуля
+function leaveAvenue() {
+  if (!world.menu) return;
+  world.menu = false;
+  world.distOffset = (world.rows.length - 9) * ROW;
+}
+
+// ---------- обучение прямо в забеге ----------
+// Игра не останавливается: внизу жест и короткая подпись. Сделал — подсказка уходит, через секунду следующая.
+// Прыжок → подкат → разгон (быстрые свайпы вниз; после него время замирает — карточка с объяснением) →
+// город, и у первой красной стены время замедляется: свайп в стену, потом свайп от стены.
+// Пройдено — sdwg-tut = done; умер на стенах — в следующем забеге продолжаем со стен.
+const TUT_KEY = 'sdwg-tut';
+const TUT_TEXT = {
+  jump: ['Прыжок', 'свайп вверх', '↑ или пробел'],
+  slide: ['Подкат', 'свайп вниз', '↓'],
+  pump: ['Разгон', 'быстро свайпай вниз — двумя пальцами по очереди', 'часто жми ↓'],
+  wall: ['Бег по стене', 'свайп к красной стене', '← или → к красной стене'],
+  kick: ['На стену напротив', 'свайп от стены', '← или → от стены'],
+  done: ['Готово! Дальше — сам', '', ''],
+};
+const tut = { step: null, t: 0, shown: null, k: 1, kTo: 1, wallD: 0, doneT: 0 };
+function tutSaved() { try { return localStorage.getItem('sdwg-tut') || ''; } catch { return 'done'; } }
+// новый забег начнётся с первых шагов обучения — нужен прямой проспект (и после смерти)
+function tutWantsAvenue() { return !autopilot && params.get('tut') !== '0' && !['done', 'wall'].includes(tutSaved()); }
+function tutSave(v) { try { localStorage.setItem(TUT_KEY, v); } catch { /* приватный режим */ } }
+// true — обучение идёт с первых шагов (проспект не кончается)
+function tutStart() {
+  tutHide(); tut.k = tut.kTo = 1;
+  const saved = tutSaved();
+  if (autopilot || params.get('tut') === '0' || saved === 'done') { tut.step = null; return false; }
+  tut.step = saved === 'wall' ? 'wall' : 'jump';
+  tut.t = 0;
+  $('tut').classList.add('show');
+  return tut.step === 'jump';
+}
+function tutShow(name, g) {
+  const [h, touchTxt, keyTxt] = TUT_TEXT[name];
+  const el = $('tut-hint');
+  el.dataset.g = g;
+  $('tut-label').innerHTML = h + (touchTxt ? `<small><span class="tut-touch">${touchTxt}</span><span class="tut-key">${keyTxt}</span></small>` : '');
+  el.classList.add('on');
+  tut.shown = name;
+}
+function tutHide() { $('tut-hint').classList.remove('on'); tut.shown = null; }
+function tutNext(step) { tutHide(); tut.step = step; tut.t = 0; }
+function tutEnd(skipped) {
+  tutSave('done');
+  tut.kTo = 1;
+  $('tut-card').classList.remove('show');
+  if (skipped) { tutHide(); tut.step = null; $('tut').classList.remove('show'); leaveAvenue(); return; }
+  tutNext('done');
+  tutShow('done', 'none');
+}
+// действие игрока: засчитываем, только если сейчас о нём и просили
+function tutEvent(a) {
+  if (!tut.step || state !== 'run') return;
+  if (tut.shown === 'jump' && a === 'jump') tutNext('slide');
+  else if (tut.shown === 'slide' && a === 'slide') tutNext('pump');
+  else if (tut.step === 'wall' && a === 'wall') { tut.kTo = 1; tutNext('kick'); tut.wallD = pl.wall; }
+  else if (tut.step === 'kick' && a === 'kick') tutEnd(false);
+}
+function tutCard(h, p) {
+  $('tut-card-h').textContent = h;
+  $('tut-card-p').innerHTML = p;
+  $('tut-card').classList.add('show');
+}
+// красная стена сбоку впереди: −1/+1 (или ±2 — через полосу), 0 — нет
+function tutWallAhead(v) {
+  const reach = Math.max(10, v * 1.1);
+  for (const d of [-1, 1, -2, 2]) {
+    const x = laneX(pl.lane + d);
+    for (let dz = 0; dz <= reach; dz += 1) if (isRunwallAt(x, pl.z + dz)) return d;
+  }
+  return 0;
+}
+function tutUpdate(dt) {
+  // замедление и «стоп-кадр» — плавно, без рывка
+  tut.k += (tut.kTo - tut.k) * Math.min(1, dt * 8);
+  if (Math.abs(tut.k - tut.kTo) < 0.01) tut.k = tut.kTo;
+  if (!tut.step) return;
+  $('tut').style.visibility = state === 'run' ? '' : 'hidden';
+  if (state !== 'run') return;
+  if ($('tut-card').classList.contains('show')) return;
+  tut.t += dt / Math.max(tut.k, 0.05); // по реальному времени, а не замедленному
+  const v = speedNow();
+  switch (tut.step) {
+    case 'jump': if (!tut.shown && tut.t > 1.4) tutShow('jump', 'up'); break;
+    case 'slide': if (!tut.shown && tut.t > 1.1 && pl.grounded) tutShow('slide', 'down'); break;
+    case 'pump':
+      if (!tut.shown && tut.t > 1.2 && pl.grounded && !sliding()) tutShow('pump', 'pump');
+      // разогнался — время замирает, карточка объясняет, что это было
+      if (tut.shown && pl.pump > 1.6) {
+        tutHide(); tut.step = 'pumpCard'; tut.kTo = 0;
+        const touchTxt = 'Быстрые свайпы вниз в подкате разгоняют. Чем чаще — тем быстрее, предела нет. Перестанешь — скорость понемногу спадёт.<br>Быстрее всего — двумя пальцами по очереди.';
+        const keyTxt = 'Частые нажатия ↓ в подкате разгоняют. Чем чаще — тем быстрее, предела нет. Перестанешь — скорость понемногу спадёт.';
+        tutCard('Это разгон', matchMedia('(hover: hover) and (pointer: fine)').matches ? keyTxt : touchTxt);
+      }
+      break;
+    case 'wall': {
+      // у первой красной стены — замедление и жест в её сторону; проехал мимо — ждём следующую
+      const d = pl.wall ? 0 : tutWallAhead(v);
+      if (d && !tut.shown && tut.t > 0.8) { tut.wallD = Math.sign(d); tutShow('wall', d < 0 ? 'left' : 'right'); tut.kTo = 0.3; }
+      else if (tut.shown && !d) { tutHide(); tut.kTo = 1; }
+      break;
+    }
+    case 'kick': {
+      // на стене: если напротив есть ещё красная стена — покажем толчок; нет — обучение пройдено
+      if (pl.wall) {
+        const d = -pl.wall;
+        let opp = false;
+        for (let k = 1; k <= 3 && !opp; k++) { const wx = laneX(pl.lane + d * k + d); if (isRunwallAt(wx, pl.z + 2) || isRunwallAt(wx, pl.z + 5)) opp = true; }
+        if (opp && !tut.shown) { tutShow('kick', d < 0 ? 'left' : 'right'); tut.kTo = 0.35; }
+      } else tutEnd(false); // со стены сошли — бег по стене освоен
+      break;
+    }
+    case 'done': if (tut.t > 2.2) { tutHide(); tut.step = null; } break;
+  }
+}
+$('tut-card-ok').addEventListener('click', (e) => {
+  e.stopPropagation();
+  $('tut-card').classList.remove('show');
+  tut.kTo = 1;
+  tutSave('wall');
+  tutNext('wall');
+  leaveAvenue(); // дальше — город; первая красная стена будет уже в нём
+});
+$('tut-card').addEventListener('pointerdown', (e) => e.stopPropagation());
+$('tut-skip').addEventListener('click', (e) => { e.stopPropagation(); tutEnd(true); });
+$('help-tut').addEventListener('click', (e) => {
+  e.stopPropagation();
+  tutSave('');
+  $('help').classList.remove('show');
+  if (state === 'ready') start();
+});
 
 // ---------- автопилот (?auto) — для тестов: бежит по «живым» клеткам ----------
 const AHEAD = 10;
@@ -1354,6 +1496,7 @@ window.addEventListener('keydown', (e) => {
   if ($('lb').classList.contains('show') || $('nick').classList.contains('show')) return; // рекорды, ввод ника
   if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'KeyA', 'KeyD', 'KeyW', 'KeyS', 'Space'].includes(e.code)) e.preventDefault();
   if (state === 'ready' && (e.code === 'Space' || e.code === 'Enter') && !$('gfx').classList.contains('show')) { start(); return; }
+  if ($('tut-card').classList.contains('show')) { if (e.code === 'Enter' || e.code === 'Space') $('tut-card-ok').click(); return; }
   if (state === 'dead' && ui.over.classList.contains('show') && e.code === 'Enter') { restart(false); return; }
   if (e.code === 'Escape' || e.code === 'KeyP') { if (state === 'run') pauseGame(); else resumeGame(); return; }
   if (state === 'paused') return;
@@ -1972,7 +2115,10 @@ let fpsAcc = 0, fpsN = 0, fps = 0;
 function frame(now) {
   requestAnimationFrame(frame);
   // на паузе время стоит: мир, анимации и погода замирают, кадр просто перерисовывается
-  const dt = state === 'paused' ? 0 : Math.min(0.05, (now - last) / 1000) * timeScale;
+  const rawDt = Math.min(0.05, (now - last) / 1000);
+  tutUpdate(state === 'paused' ? 0 : rawDt);
+  // обучение может замедлить время (у красной стены) или остановить (карточка)
+  const dt = state === 'paused' ? 0 : rawDt * timeScale * tut.k;
   // FPS в углу: среднее за полсекунды
   hudFpsN++; hudFpsT += now - last;
   if (hudFpsT >= 500) { fpsEl.textContent = `${Math.round(hudFpsN * 1000 / hudFpsT)} fps`; hudFpsN = 0; hudFpsT = 0; }
@@ -2178,4 +2324,4 @@ ui.start.classList.add('show');
 requestAnimationFrame(frame);
 
 // для автотестов
-window.__game = { materials, cam, laneShift, setAuto: (v) => { autopilot = v; }, get state() { return state; }, pl, start, die, jump, runFile, get monkeys() { return monkeys; }, slide, get seed() { return seed; }, get world() { return world; }, get meshes() { return meshes; }, get exposure() { return exposurePass ? [exposurePass.exposure, exposurePass.avg] : null; } };
+window.__game = { materials, cam, tut, laneShift, setAuto: (v) => { autopilot = v; }, get state() { return state; }, pl, start, die, jump, runFile, get monkeys() { return monkeys; }, slide, get seed() { return seed; }, get world() { return world; }, get meshes() { return meshes; }, get exposure() { return exposurePass ? [exposurePass.exposure, exposurePass.avg] : null; } };
