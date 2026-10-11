@@ -702,6 +702,7 @@ function physicsStep(dt) {
       pl.boost = 0; pl.hopKeep = false;
       pl.grabT = P.grabTime;
       rec.event('grab', { z: pl.z, y: pl.y });
+      lampHit(0.6);
       cam.dip = Math.max(cam.dip, 0.55);
       cam.pitch -= 0.08;
       shake = Math.max(shake, 0.15);
@@ -755,6 +756,10 @@ function physicsStep(dt) {
     if (pl.y <= ground) {
       // приземление: камера «проседает» тем сильнее, чем быстрее падали
       cam.dip = Math.max(cam.dip, Math.min(0.55, -pl.vy * 0.022));
+      // жёсткое приземление — фонарь от удара на миг моргает (контакт болтается)
+      // (обычный прыжок на ровном месте не в счёт: на скорости он тоже падает быстрее)
+      const hard = -pl.vy / Math.sqrt(jumpScale(v));
+      if (hard > 15) lampHit(hard > 22 ? 1 : 0.6);
       pl.y = ground; pl.vy = 0; pl.grounded = true; pl.hopKeep = false;
       if (pl.wall) endWallRun();
       pl.wallLast = 0;
@@ -1165,13 +1170,24 @@ resetWeather();
 // ---------- фонарь: луч трясётся на бегу ----------
 // Фонарь «в руке»: качается в такт шагам (cam.bob), вздрагивает при приземлении и толчках (cam.dip),
 // в полёте плывёт, на стене уходит в сторону стены. Пятно крупнее на широком экране.
-const lamp = { x: 0, y: -0.1, vx: 0, vy: 0, jit: 0, on: false, t: 0 };
+const lamp = { x: 0, y: -0.1, vx: 0, vy: 0, jit: 0, on: false, t: 0, hitT: -9, hitK: 0 };
+function lampHit(k) { lamp.hitT = gameTime; lamp.hitK = k; }
 // фонарь щёлкает резко, а не плавно: включился — короткое моргание и сразу полная яркость;
 // выключился (в подземке, на рассвете) — сразу темно
 function lampSwitch(want) {
   if (want !== lamp.on) { lamp.on = want; lamp.t = gameTime; }
   if (!lamp.on) return 0;
   const t = gameTime - lamp.t;
+  // строб от удара: гаснет — вспыхивает — подмигивает, ~0.15 с
+  const h = gameTime - lamp.hitT;
+  if (h >= 0 && h < 0.16) {
+    const k = lamp.hitK;
+    if (h < 0.035) return 1 - 0.95 * k;
+    if (h < 0.07) return 1;
+    if (h < 0.1) return 1 - 0.7 * k;
+    if (h < 0.13) return 1;
+    return 1 - 0.35 * k;
+  }
   if (t < 0.05) return 1;
   if (t < 0.11) return 0.15;
   if (t < 0.16) return 1;
