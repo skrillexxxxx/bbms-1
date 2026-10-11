@@ -276,7 +276,7 @@ const frag = /* glsl */ `
           if (fy > 0.3 && fy < 0.78) {
             col = 0.06;
             float h = h21(vec2(floor((u - uMin) / 3.4), floor(y / floorH)) + bid);
-            if (h > 0.6) emit += WARM * winK * (0.75 + 0.55 * h) * uNight;
+            if (h > 0.84) emit += WARM * winK * (1.25 + 1.6 * (h - 0.84)) * uNight;
           }
         } else if (st == 3 && inBody) {
           // сетка окон
@@ -285,8 +285,8 @@ const frag = /* glsl */ `
             col = 0.07;
             float h = h21(vec2(floor((u - uMin) / 2.6), floor(y / floorH)) + bid);
             // большинство тёплые, некоторые — холодный свет экранов
-            vec3 wc = h > 0.93 ? vec3(0.7, 0.85, 1.1) : WARM;
-            if (h > 0.6) emit += wc * winK * (0.75 + 0.55 * h) * uNight;
+            vec3 wc = h > 0.97 ? vec3(0.7, 0.85, 1.1) : WARM;
+            if (h > 0.84) emit += wc * winK * (1.25 + 1.6 * (h - 0.84)) * uNight;
           }
         }
         float dt = vTop - y; // расстояние от верха предмета
@@ -373,7 +373,8 @@ const frag = /* glsl */ `
     if (ballCol.x >= 0.0) c3 = ballCol * ballShade;
     vec3 red = vec3(1.0, 0.2, 0.15);
     // Runner Vision: издалека предметы белые, краснеют по мере приближения
-    float near = 1.0 - smoothstep(16.0, 34.0, vDz);
+    // ночью красное видно издалека — неоновые подсказки пути
+    float near = 1.0 - smoothstep(mix(16.0, 40.0, uNight), mix(34.0, 75.0, uNight), vDz);
     if (vTint > 0.5 && vTint < 1.5) c3 = mix(c3, col * red * 0.95, near);      // красные трубы
     else if (vTint > 3.5 && vTint < 4.5) {
       // Runner Vision: красный только верх и кромка — «хватайся здесь»
@@ -407,9 +408,9 @@ const frag = /* glsl */ `
       // ночной свет тёплый — от тысяч жёлтых окон
       vec3 dark = c3 * vec3(0.19, 0.155, 0.12) * mix(0.38, 1.0, nearPath);
       if (redLit) dark = mix(dark, c3 * vec3(0.75, 0.6, 0.6), near);
-      // красные акценты ночью светятся: умеренно, ниже порога пересвета, но заметно в темноте
+      // красные акценты ночью горят как неон: ярче порога блума — с ореолом, видно издалека
       float redness = clamp((c3.r - max(c3.g, c3.b)) * 2.2, 0.0, 1.0);
-      if (redLit) dark += vec3(1.0, 0.14, 0.1) * redness * 0.62;
+      if (redLit) dark += vec3(1.0, 0.1, 0.07) * redness * 1.45;
       dark += vec3(0.3, 0.33, 0.4) * rimK;
       // препятствия у земли (то, через что прыгаем и под чем катимся) ночью не проваливаются в черноту:
       // тёплый свет с улицы, ярче на гранях к нам и сверху — видно издалека, ещё до фонаря
@@ -1332,8 +1333,16 @@ export function buildInstanceMesh(inst, materials, world) {
       const v = row[c];
       if (!walk(v) || lv(v) !== 0 || v === LAUNCH) continue;
       // узкий проход над пропастью (пропасть с обеих сторон) — красные перила: «сюда»
+      // а ещё на узкой дорожке (1–2 клетки) и там, где путь впереди или позади уходит вбок, — зигзаги
+      const at = (rr, cc) => (rr < 0 || rr >= nRows ? null : rows[rr][((cc % COLS) + COLS) % COLS]);
       const narrow = row[((c - 1) % COLS + COLS) % COLS] === VOID && row[(c + 1) % COLS] === VOID;
-      b.tint = narrow ? 1 : 0;
+      let w = 1;
+      while (w < 3 && walk(row[((c - w) % COLS + COLS) % COLS])) w++;
+      let w2 = 1;
+      while (w2 < 3 && walk(row[(c + w2) % COLS])) w2++;
+      const thin = w + w2 - 1 <= 2;
+      const turn = at(r + 1, c) === VOID || at(r - 1, c) === VOID;
+      b.tint = narrow || thin || turn ? 1 : 0;
       for (const side of [-1, 1]) {
         if (row[((c + side) % COLS + COLS) % COLS] !== VOID) continue;
         const x = side < 0 ? c * CELL + 0.1 : (c + 1) * CELL - 0.1;

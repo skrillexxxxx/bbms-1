@@ -371,8 +371,8 @@ function ensureWorld() {
 const wrapX = (x) => ((x % W) + W) % W;
 
 function speedNow() {
-  const t = Math.min(1, pl.z / P.speedRamp);
-  const v = P.speedStart + (P.speedMax - P.speedStart) * t + pl.boost;
+  // от пройденного пути скорость не растёт — только разгон от подкатов, стен и толчков
+  const v = P.speedStart + pl.boost;
   // после зацепа за край скорость проседает и плавно возвращается
   const g = pl.grabT / P.grabTime;
   return v * (1 - 0.6 * g * g);
@@ -437,6 +437,17 @@ function laneShift(d) {
   pl.pendT = runwallSoon(d, speedNow()) ? 0.55 : P.laneBuffer;
 }
 
+// Впереди по нашей полосе пропасть, а рядом с ней (вплотную слева или справа) красная стена
+function flankedPit(v) {
+  const reach = Math.max(14, v * 1.2);
+  for (let dz = 0; dz <= reach; dz += 1) {
+    const c = world.cellAt(wrapX(pl.x), pl.z + dz);
+    if (c !== VOID && c !== POOL) continue;
+    if (isRunwallAt(laneX(pl.lane - 1), pl.z + dz) || isRunwallAt(laneX(pl.lane + 1), pl.z + dz)) return true;
+  }
+  return false;
+}
+
 // Есть ли стена на полосах между нашей и lane (включая lane) от нас до dz вперёд
 function crossesWall(lane, dz) {
   const s = Math.sign(lane - pl.lane);
@@ -458,6 +469,8 @@ function longJumpTarget(v) {
   // пропасть — это клетка без пола (уступ выше — не пропасть, на него просто запрыгиваем)
   const hole = (dz) => { const c = world.cellAt(wrapX(pl.x), pl.z + dz); return c === VOID || c === POOL; };
   if (!hole(reach) || !hole(reach * 0.6)) return null;
+  // яма, вдоль которой красные стены, — её проходят по стенам, а не перелетают
+  if (flankedPit(v)) return null;
   // красные стены впереди в пределах 3 полос; к стене подлетаем с той стороны,
   // где после неё есть пол (а не с наружной стороны над пропастью)
   const floorAt = (lane, z) => walk(world.cellAt(wrapX(laneX(lane)), z));
@@ -815,6 +828,8 @@ function physicsStep(dt) {
   } else if (pl.jumpBuf > 0 && pl.coyote > 0) {
     const fromSlide = sliding();
     pl.vy = P.jumpV * jumpScale(v); pl.grounded = false; pl.coyote = 0; pl.jumpBuf = 0;
+    // и не зависаем над ней — иначе стены можно просто перепорхнуть
+    if (flankedPit(v)) pl.hover = 0;
     // впереди длинная пропасть, а за ней красная стена — прыжок дольше и тянет к стене
     const lj = longJumpTarget(v);
     if (lj) {
