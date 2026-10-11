@@ -193,15 +193,6 @@ const frag = /* glsl */ `
       // свет с неба падает туда, куда нужно бежать: светлое пятно = путь
       // мягко и ниже порога блума — иначе пятно раздувается на полэкрана
       col = min(col * (1.0 + vLight * 0.3) + vLight * 0.05, 0.84);
-      if (vDark > 1.5) {
-        // разруха: асфальт в трещинах и грязных пятнах
-        vec2 q = vPos.xz;
-        float cr = abs(fract(q.x * 0.23 + q.y * 0.11 + 0.35 * sin(q.y * 0.6 + q.x * 0.21)) - 0.5);
-        float cr2 = abs(fract(q.y * 0.19 - q.x * 0.07 + 0.3 * sin(q.x * 0.8)) - 0.5);
-        float m = step(0.45, h21(floor(q / 5.0) + 2.0));
-        col *= mix(1.0, mix(0.4, 1.0, smoothstep(0.0, 0.015, min(cr, cr2))), m);
-        col *= mix(0.72, 1.0, h21(floor(q / 1.7)));
-      }
       if (uNight > 0.0) {
         // улица ночью: широкие мягкие тёплые пятна (фонари, витрины) — гуще на пути, но и вокруг есть
         float onPath = smoothstep(0.03, 0.2, vLight);
@@ -249,7 +240,7 @@ const frag = /* glsl */ `
       ballShade = 0.55 + 0.45 * max(dot(n, normalize(vec3(-0.3, 0.6, -0.7))), 0.0) + 0.35 * pow(max(dot(n, normalize(vec3(-0.4, 0.5, -0.75))), 0.0), 18.0);
     } else if (st == 27) {
       // бетонные обломки: серые, пятнами, сколы светлее
-      col = 0.5 * (0.8 + 0.2 * abs(n.y)) * mix(0.75, 1.1, h21(floor(vPos.xz * 2.3) + floor(vPos.y * 2.3)));
+      col = 0.52 * (0.82 + 0.18 * abs(n.y));
     } else if (st == 26) {
       // мусорный контейнер: белый пластик, у земли грязнее, рёбра на боках
       col = 0.84 * mix(0.7, 1.0, smoothstep(0.1, 0.6, y - uB));
@@ -354,17 +345,9 @@ const frag = /* glsl */ `
           }
         }
         if (vDark > 1.5 && st >= 1 && st <= 3) {
-          // разруха: стёкла выбиты (света нет), копоть пятнами, трещины, сквозные пробоины;
+          // разруха: в окнах света нет (разрушение — формой домов, а не мелкой грязью на стенах);
           // изредка в окне — огонь
           emit = vec3(0.0);
-          col *= mix(0.6, 0.92, h21(vec2(floor(u / 1.1), floor(y / 7.0)) + bid));
-          float cr = abs(fract((u - uMin) * 0.21 + y * 0.13 + 0.4 * sin(y * 0.7 + u * 0.3)) - 0.5);
-          if (h21(floor(vec2(u / 6.0, y / 8.0)) + bid + 9.0) > 0.55) col *= mix(0.35, 1.0, smoothstep(0.0, 0.014, cr));
-          vec2 hp = vec2((u - uMin) / 5.0, y / 6.0);
-          vec2 fp = fract(hp) - 0.5;
-          float hh = h21(floor(hp) + bid * 0.3 + 3.3);
-          float shape = length(fp * vec2(1.0, 1.3)) + 0.16 * sin(atan(fp.y, fp.x) * 5.0 + hh * 20.0);
-          if (hh > 0.8 && shape < 0.34 && y > 2.5 && edge > 0.6) col = 0.025;
           float fire = h21(vec2(floor((u - uMin) / 2.6), floor(y / floorH)) + bid + 17.0);
           if (inBody && fire > 0.988 && fy > 0.28 && fy < 0.8) {
             col = 0.1;
@@ -532,6 +515,14 @@ const frag = /* glsl */ `
     if (vDark > 0.5 && vDark < 1.5 && st != 23) {
       float redness = clamp((alb.r - max(alb.g, alb.b)) * 2.2, 0.0, 1.0);
       c3 = alb * vec3(0.045, 0.045, 0.055) + vec3(0.35, 0.05, 0.04) * redness * near;
+      // аварийная подсветка: тонкая красная полоса по низу стен тоннеля — изгибы и тупики
+      // видно издалека, ещё до фонаря (иначе с улицы тёмный переход — просто чёрная дыра)
+      if (st == 9 && abs(n.y) < 0.5) {
+        float yy = y - -6.0;
+        float fw = fwidth(yy) + 1e-3;
+        float strip = smoothstep(0.26 - fw, 0.26 + fw, yy) * (1.0 - smoothstep(0.4 - fw, 0.4 + fw, yy));
+        c3 += vec3(1.0, 0.1, 0.06) * strip * 2.2;
+      }
     }
     // фонарь бегуна, как в хоррорах: круглое пятно по центру взгляда (чуть ниже), мягкий ореол
     // и светлое кольцо по краю. Считаем по направлению от камеры, вблизи ярко, вдаль слабеет
@@ -1117,6 +1108,13 @@ function ruinTower(b, x0, x1, z0, z1, H, style, minTop, seed) {
     }
     b.tint = 0;
   }
+  // крупно: верхняя часть дома обломилась и завалилась набок, опираясь на излом
+  if (rr() < 0.45) {
+    const cx = x0 + w * 0.5, cz = z0 + d * 0.5;
+    const L = 8 + rr() * 14, ang = 0.18 + rr() * 0.3, dir = rr() * Math.PI * 2;
+    b.slab([cx, cut - 2, cz], [cx + Math.cos(dir) * Math.sin(ang) * L, cut - 2 + Math.cos(ang) * L, cz + Math.sin(dir) * Math.sin(ang) * L],
+      w * 0.7, d * 0.7, 27);
+  }
   // плита перекрытия свисает с края излома
   if (rr() < 0.7) {
     const left = rr() < 0.5, sx = left ? x0 : x1, dir = left ? -1 : 1;
@@ -1585,16 +1583,19 @@ export function buildInstanceMesh(inst, materials, world) {
         for (const [nv, p0, out, along] of edges) {
           if (!hole(nv)) continue;
           const len = along[0] ? CELL : ROW;
-          // обломки плиты: неровная «бахрома» края, чуть ниже пола
-          for (let s = 0.2; s < len - 0.3; s += 0.5 + rr() * 0.7) {
-            const ow = 0.4 + rr() * 0.9, depth = 0.35 + rr() * 0.9, wl = 0.4 + rr() * 0.7;
-            const a = [p0[0] + along[0] * s, fy - 0.06 - rr() * 0.12, p0[2] + along[2] * s];
-            const tip = [a[0] + out[0] * ow + along[0] * wl * 0.5, a[1] - depth * (0.3 + rr()), a[2] + out[2] * ow + along[2] * wl * 0.5];
-            b.slab(a, tip, wl, 0.22 + rr() * 0.2, 27);
-            if (rr() < 0.55) b.rebar([a[0] + out[0] * 0.05, a[1] - 0.15, a[2] + out[2] * 0.05], [out[0], -0.1, out[2]], 0.6 + rr() * 1.3, rr);
+          // крупно: на край — один обломившийся кусок плиты, свесившийся в провал, и пучок арматуры
+          if (rr() < 0.6) {
+            const s = len * (0.25 + rr() * 0.5), wl = len * (0.35 + rr() * 0.3);
+            const a = [p0[0] + along[0] * s - out[0] * 0.15, fy - 0.35, p0[2] + along[2] * s - out[2] * 0.15];
+            const ow = 1.2 + rr() * 1.4;
+            b.slab(a, [a[0] + out[0] * ow * 0.6, a[1] - ow, a[2] + out[2] * ow * 0.6], wl, 0.35, 27);
+            for (let k = 0; k < 4; k++) {
+              const q = [a[0] + along[0] * (rr() - 0.5) * wl, fy - 0.2, a[2] + along[2] * (rr() - 0.5) * wl];
+              b.rebar(q, [out[0], -0.1, out[2]], 1.0 + rr() * 1.4, rr);
+            }
           }
           // разорванная труба из-под плиты
-          if (rr() < 0.35) {
+          if (rr() < 0.2) {
             const s = 0.5 + rr() * (len - 1);
             const a = [p0[0] + along[0] * s - out[0] * 0.4, fy - 0.9, p0[2] + along[2] * s - out[2] * 0.4];
             b.prism(a, [a[0] + out[0] * (0.8 + rr() * 1.2), a[1] - 0.3 - rr() * 0.8, a[2] + out[2] * (0.8 + rr() * 1.2)], 0.13, 0.13, 8, 22);
@@ -1629,10 +1630,12 @@ export function buildInstanceMesh(inst, materials, world) {
       if (!lr) continue;
       for (let c = 0; c < COLS; c++) {
         const v = row[c];
-        if (!walk(v) || lv(v) !== 0 || v === BRIDGE || v === LAUNCH || lr[c] > 0 || rr() > 0.5) continue;
-        const x = c * CELL + 0.8 + rr() * 2.4, z = r * ROW + 0.8 + rr() * 2.4;
-        if (rr() < 0.5) b.slab([x, 0, z], [x + (rr() - 0.5) * 2, 1.2 + rr() * 2.5, z + (rr() - 0.5) * 3], 1.2 + rr(), 0.25, 27);
-        else b.slab([x, 0.3, z], [x + (rr() - 0.5) * 3, 0.5 + rr() * 0.6, z + (rr() - 0.5) * 3], 0.6, 0.6, 27);
+        if (!walk(v) || lv(v) !== 0 || v === BRIDGE || v === LAUNCH || lr[c] > 0 || rr() > 0.35) continue;
+        // крупный обломок: кусок стены или перекрытия, упавший углом в землю и прислонённый к дому
+        const x = c * CELL + CELL / 2, z = r * ROW + ROW / 2;
+        const side = row[((c - 1) % COLS + COLS) % COLS] === WALL ? -1 : row[(c + 1) % COLS] === WALL ? 1 : (rr() < 0.5 ? -1 : 1);
+        b.slab([x - side * 1.2, -0.4, z], [x + side * 1.5, 2.5 + rr() * 2.5, z + (rr() - 0.5) * 1.5], 2.6 + rr() * 0.8, 0.45, 27);
+        for (let k = 0; k < 3; k++) b.rebar([x + side * 1.4, 2.4 + rr() * 2, z + (rr() - 0.5) * 2], [side * 0.3, 0.6, (rr() - 0.5)], 0.8 + rr(), rr);
       }
     }
   }

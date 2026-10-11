@@ -1752,7 +1752,9 @@ function frame(now) {
   if (bloom) { bloom.strength = 0.27 - 0.06 * night; bloom.threshold = 0.9 + 0.05 * night; }
   // фонарь: ночью на улице; в подземке плавно гаснет (deep меняется плавно вместе с камерой)
   // фонарь: ночью на улице, а в тёмном переходе — и днём
-  materials.main.uniforms.uLamp.value = lampSwitch((nightAmount() > 0.55 && deep < 0.35) || (darkAmt > 0.5 && deep > 0.3));
+  // тёмный переход впереди — фонарик щёлкает заранее, ещё на спуске: видно, куда забегаешь
+  const darkAhead = state === 'run' && !!world.featAt(pl.z + 22)?.dark;
+  materials.main.uniforms.uLamp.value = lampSwitch((nightAmount() > 0.55 && deep < 0.35) || (darkAmt > 0.5 && deep > 0.3) || darkAhead);
   updateLamp(dt);
   materials.monkey.uniforms.uNight.value = night;
   materials.monkey.uniforms.uFlashT.value = gameTime;
