@@ -556,7 +556,7 @@ const frag = /* glsl */ `
       if (uCookieOn < 0.5) sp.x *= 0.78; // нарисованное пятно — овал; маска — ровный круг
       float R = uLampP.z;
       float r = length(sp);
-      float spot = 1.0 - smoothstep(R * 0.8, R * 1.1, r);
+      float spot = 1.0 - smoothstep(R * 0.7, R * 1.2, r);
       float ring = exp(-pow((r - R * 0.95) / (R * 0.1), 2.0)) * 0.3;
       float halo = (1.0 - smoothstep(R * 1.1, R * 2.6, r)) * 0.3;
       if (uCookieOn > 0.5) {
@@ -576,12 +576,17 @@ const frag = /* glsl */ `
         // тень: 4 выборки вокруг — мягкий край
         vec3 lp = vLampPos.xyz / vLampPos.w * 0.5 + 0.5;
         if (vLampPos.w > 0.0 && lp.x > 0.0 && lp.x < 1.0 && lp.y > 0.0 && lp.y < 1.0 && lp.z < 1.0) {
-          float lit = 0.0, o = 1.5 / 1024.0, bias = 0.0004;
-          lit += step(lp.z - bias, texture2D(uShadow, lp.xy + vec2(-o, -o)).r);
-          lit += step(lp.z - bias, texture2D(uShadow, lp.xy + vec2(o, -o)).r);
-          lit += step(lp.z - bias, texture2D(uShadow, lp.xy + vec2(-o, o)).r);
-          lit += step(lp.z - bias, texture2D(uShadow, lp.xy + vec2(o, o)).r);
-          lampL *= mix(0.12, 1.0, lit * 0.25);
+          // мягкая тень: 12 выборок по кругу с поворотом от пикселя — край размыт, без «лесенки»
+          float lit = 0.0, bias = 0.0004;
+          float rot = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453) * 6.2831853;
+          for (int i = 0; i < 12; i++) {
+            float a = rot + float(i) * 2.3999632;            // золотой угол
+            float rad = (0.5 + float(i)) / 12.0;
+            vec2 off = vec2(cos(a), sin(a)) * sqrt(rad) * (5.0 / 1024.0);
+            lit += step(lp.z - bias, texture2D(uShadow, lp.xy + off).r);
+          }
+          // тень не в черноту — рассеянный свет фонаря от стен всё равно доходит
+          lampL *= mix(0.3, 1.0, lit / 12.0);
         }
       }
       // свет фонаря не выше порога блума — то, куда бежим, не выжигается в белое.
