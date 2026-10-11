@@ -177,7 +177,7 @@
     /* при запуске в портрете — крупно, по центру экрана и поверх всего (окна установки, ника…);
        первый тап или поворот — значок плавно уезжает на своё место наверху */
     #rotate { transition: top 0.5s cubic-bezier(.2,.7,.2,1), width 0.5s cubic-bezier(.2,.7,.2,1), height 0.5s cubic-bezier(.2,.7,.2,1), transform 0.5s cubic-bezier(.2,.7,.2,1), opacity 0.45s ease; }
-    body.rot-first #rotate, body.rot-first #hud.show ~ #rotate { z-index: 1000; top: 50%; width: 136px; height: 136px; opacity: 1; transform: translate(-50%, -50%); box-shadow: 0 6px 30px rgba(0,0,0,0.3); }
+    body.rot-first #rotate, body.rot-first #hud.show ~ #rotate { z-index: 4000; top: 50%; width: 136px; height: 136px; opacity: 1; transform: translate(-50%, -50%); box-shadow: 0 6px 30px rgba(0,0,0,0.3); }
     /* в портрете все экраны начинаются ниже значка — он не наезжает на заголовки
        (стартовый, «Мои города», пауза, «Графика», конец забега) */
     @media (orientation: portrait) and (pointer: coarse) {
@@ -530,6 +530,16 @@
       var $ = function (id) { return document.getElementById(id); };
       var boot = $('boot'), bar = $('boot-bar');
       var q = new URLSearchParams(location.search);
+      // «поверни телефон»: в портрете — крупно по центру, поверх экрана запуска; первый тап, поворот
+      // или конец загрузки — уезжает на обычное место наверху (поверх окон потом не висит)
+      if (matchMedia('(orientation: portrait) and (pointer: coarse)').matches) {
+        document.body.classList.add('rot-first');
+        var rotOff = function () { document.body.classList.remove('rot-first'); };
+        window.addEventListener('pointerup', rotOff, { once: true, capture: true });
+        window.addEventListener('sdwg-reveal', rotOff, { once: true });
+        var land = matchMedia('(orientation: landscape)');
+        if (land.addEventListener) land.addEventListener('change', function (e) { if (e.matches) rotOff(); });
+      }
       if (q.get('boot') === '0' || q.has('auto')) {
         boot.remove(); document.body.classList.remove('booting');
         import('./js/main.js');

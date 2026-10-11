@@ -152,12 +152,3 @@ if (wantSoundHint) {
   if (screen.orientation) screen.orientation.addEventListener?.('change', placeSoundHint);
 }
 
-// значок «поверни телефон»: при запуске в портрете — крупно по центру, поверх всего;
-// первый тап или поворот в ландшафт — уезжает на обычное место наверху
-if (matchMedia('(orientation: portrait) and (pointer: coarse)').matches) {
-  document.body.classList.add('rot-first');
-  const off = () => document.body.classList.remove('rot-first');
-  window.addEventListener('pointerup', off, { once: true, capture: true });
-  const land = matchMedia('(orientation: landscape)');
-  land.addEventListener?.('change', (e) => { if (e.matches) off(); });
-}

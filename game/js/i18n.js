@@ -36,7 +36,7 @@
     player: 'Player', meters: 'Meters', kmh: 'km/h', monkeys: 'Monkeys',
     nickPh: 'Nickname', passPh: 'Password', newPassPh: 'New password',
     nickNewH: 'What’s your name?', nickNewOk: 'Done', nickNewSkip: 'Later', nickNewSwap: 'Already have an account? Log in',
-    nickNewWhy: 'Nickname and password are your account: your records go to the shared table,<br>your progress is saved, and you can log in from any device.',
+    nickNewWhy: 'Nickname and password are your account: your records go to the shared table, your progress is saved, and you can log in from any device.',
     nickLoginH: 'Log in', nickLoginOk: 'Log in', nickLoginSwap: 'New player? Pick a nickname',
     nickLoginWhy: 'Enter your nickname and password — your progress will load from the server.',
     nickEditH: 'Account', nickEditOk: 'Save', nickEditSkip: 'Cancel', nickEditSwap: 'Log out',
