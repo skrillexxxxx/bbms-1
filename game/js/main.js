@@ -437,6 +437,19 @@ function laneShift(d) {
   pl.pendT = runwallSoon(d, speedNow()) ? 0.55 : P.laneBuffer;
 }
 
+// Есть ли стена на полосах между нашей и lane (включая lane) от нас до dz вперёд
+function crossesWall(lane, dz) {
+  const s = Math.sign(lane - pl.lane);
+  for (let m = pl.lane + s; s !== 0; m += s) {
+    for (let z = 0; z <= dz + 1; z += 1) {
+      const c = world.cellAt(wrapX(laneX(m)), pl.z + z);
+      if (c === WALL || c === RUNWALL) return true;
+    }
+    if (m === lane) break;
+  }
+  return false;
+}
+
 // Длинный прыжок: впереди по своей полосе пропасть хотя бы на 2 ряда, а дальше — красная стена
 // рядом с полосой (вплотную или через одну). d — в какую сторону стена (0 — с обеих сторон).
 function longJumpTarget(v) {
@@ -461,6 +474,9 @@ function longJumpTarget(v) {
     for (const d of [-1, 1]) {
       const lane = wl - d; // полоса вплотную к стене, стена — со стороны d
       if (!floorAt(lane, pl.z + dz1 + 3) && !floorAt(lane, pl.z + dz1 + 6)) continue;
+      // сквозь стены не ведём: к внутренней стороне стены, у которой стоим снаружи, не перетаскиваем —
+      // игрок видит перед собой эту стену и свайпом сам выбирает, на какую лезть
+      if (crossesWall(lane, dz1)) continue;
       const cost = Math.abs(lane - pl.lane) * 10 + dz0;
       if (!best || cost < best.cost) best = { cost, lane, d, dz: dz0 };
       if (!side[d + 1] || cost < side[d + 1].cost) side[d + 1] = { cost, lane, d, dz: dz0 };
@@ -494,7 +510,9 @@ function lanePhysics(dt, v, h) {
   if (pl.pending !== 0) {
     const d = Math.sign(pl.pending);
     // свайп туда же, куда уже ведёт длинный прыжок, — просто подтверждение; в другую сторону — отмена подсказки
-    const lead = pl.longLane != null ? Math.sign(pl.longLane - pl.lane) : 0;
+    let lead = pl.longLane != null ? Math.sign(pl.longLane - pl.lane) : 0;
+    // но если в ту сторону вплотную стена — игрок хочет на неё, а не ждать подсказку
+    if (lead === d && !sideFree(pl.lane + d)) lead = -d;
     if (lead === -d) { pl.autoAttach = 0; pl.longLane = null; }
     else if (lead === 0 && pl.autoAttach === -d) pl.autoAttach = 0;
     if (lead === d) {
