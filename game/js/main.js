@@ -1376,16 +1376,24 @@ sunRT.depthTexture.type = THREE.UnsignedIntType;
 const sunCam = new THREE.OrthographicCamera(-75, 75, 135, -135, 1, 900);
 const sunDepth = createSunDepthMaterial();
 const _sc = new THREE.Vector3();
+const _sq = new THREE.Quaternion();
 function renderSunShadow(deep) {
   const u = materials.main.uniforms;
   const k = sunOn ? (1 - nightAmount()) * Math.max(0, 1 - deep * 1.5) * (1 - 0.8 * weather.w) : 0;
   u.uSun.value = k;
   if (k <= 0.01) return;
   const d = u.uSunDir.value;
-  // центр карты — чуть впереди игрока: туда, что видно
-  _sc.set(0, cam.base + 10, 95);
+  // центр карты — чуть впереди игрока: туда, что видно.
+  // Привязан к сетке текселей в координатах МИРА: иначе карта съезжает вместе с игроком на доли
+  // текселя каждый кадр, и края теней на фасадах «кипят» (мерцали окна)
+  sunCam.position.set(0, 0, 0); sunCam.up.set(0, 0, 1); sunCam.lookAt(-d.x, -d.y, -d.z);
+  _sq.copy(sunCam.quaternion).invert();
+  _sc.set(pl.x, Math.round(cam.base + 10), pl.z + 95).applyQuaternion(_sq); // в осях солнца
+  const tx = 150 / SUN_RES, ty = 270 / SUN_RES;
+  _sc.x = Math.round(_sc.x / tx) * tx; _sc.y = Math.round(_sc.y / ty) * ty;
+  _sc.applyQuaternion(sunCam.quaternion);
+  _sc.x -= pl.x; _sc.z -= pl.z; // обратно в координаты сцены (мир сдвинут на игрока)
   sunCam.position.copy(_sc).addScaledVector(d, 300);
-  sunCam.up.set(0, 0, 1);
   sunCam.lookAt(_sc);
   sunCam.updateMatrixWorld();
   sunCam.updateProjectionMatrix();
