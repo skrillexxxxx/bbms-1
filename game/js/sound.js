@@ -23,6 +23,8 @@ const SFX = {
   disap2: { url: 'audio/sfx/death_disappointment_2.mp3', gain: 0.35, space: false },
   disap3: { url: 'audio/sfx/death_disappointment_3.mp3', gain: 0.35, space: false },
 };
+// каждые N обезьянок — «награда» вдалеке: глухо и в большом реверберации (отдельная шина far)
+SFX.monkeysN = { url: 'audio/sfx/monkeys_collect.mp3', gain: 0.9, space: 'far' };
 const DISAP = ['disap1', 'disap2', 'disap3'];
 const DISAP_DELAY = 0.45; // с; чуть после удара
 const SLIDE_LP = 600; // Гц: скольжение глухое, но слышно и на динамике телефона (ниже ~300 Гц он почти не играет)
@@ -57,7 +59,7 @@ export function createSound(enabled) {
   const sfxRaw = enabled ? Object.fromEntries(Object.entries(SFX).map(([k, s]) => [k, get(s.url)])) : {};
   const sfxBuf = {};
   let slideBuf = {}, slideNow = null, slideBus = null; // slideNow: { srcs, gains } — звучащий подкат
-  let steps = [], sfx = null, sfxDry = null, lastStep = -1, stepBus = null;
+  let steps = [], sfx = null, sfxDry = null, farBus = null, lastStep = -1, stepBus = null;
   // steps: [{ buf, a }] — a: где начинается звук (без тишины mp3)
   let revWet = null; // сколько шагов уходит в реверб (в подземке — эхо тоннеля)
   let rainG = null; // шум дождя
@@ -107,12 +109,13 @@ export function createSound(enabled) {
       try { const buf = await decode(data); sfxBuf[k] = { buf, a: audibleRange(buf)[0] }; } catch { /* пропускаем */ }
     }
   }
-  function playSfx(name, k = 1) {
+  function playSfx(name, k = 1, delay = 0) {
     const st = sfxBuf[name];
     if (!ctx || ctx.state !== 'running' || !st) return;
     const s = SFX[name];
     // через sfx (там громкость шагов) — значит, делим на неё, чтобы gain был «как есть»
-    oneShot(st, s.gain * k * (s.space ? 1 : 1 / STEP_GAIN), 0, s.space ? sfx : sfxDry, 0.97 + Math.random() * 0.06);
+    const bus = s.space === 'far' ? farBus : s.space ? sfx : sfxDry;
+    oneShot(st, s.gain * k * (s.space === true ? 1 : 1 / STEP_GAIN), ctx.currentTime + delay, bus, 0.97 + Math.random() * 0.06);
   }
 
   let lastDisap = -1;
@@ -223,6 +226,16 @@ export function createSound(enabled) {
     sfx = ctx.createGain(); sfx.gain.value = STEP_GAIN;
     sfx.connect(ctx.destination);
     sfxDry = ctx.createGain(); sfxDry.gain.value = STEP_GAIN; sfxDry.connect(ctx.destination);
+    // «вдалеке»: срез верхов, прямого звука мало, почти всё — длинный хвост реверба
+    {
+      farBus = ctx.createGain(); farBus.gain.value = STEP_GAIN;
+      const flp = ctx.createBiquadFilter(); flp.type = 'lowpass'; flp.frequency.value = 2200; flp.Q.value = 0.5;
+      const fdry = ctx.createGain(); fdry.gain.value = 0.22;
+      const fconv = ctx.createConvolver(); fconv.buffer = impulse(3.2, 2.2);
+      const fwet = ctx.createGain(); fwet.gain.value = 1.1;
+      farBus.connect(flp); flp.connect(fdry); fdry.connect(ctx.destination);
+      flp.connect(fconv); fconv.connect(fwet); fwet.connect(ctx.destination);
+    }
     // шаги чуть глуше: мягкий срез верхов — без «песочного» шороха
     // сами шаги везде одинаковые и полные (они прямо под нами — пространство их не глушит);
     // «песок» убираем мягкой полкой −5 дБ выше 4 кГц, а не срезом — уши не закладывает
@@ -305,7 +318,7 @@ export function createSound(enabled) {
     // quiet — без звука выхода (смерть, рестарт)
     slide(on, quiet = false) { if (on) slideStart(); else slideStop(quiet); },
     // разовый звук из SFX: softFall, hardFall, springboard, monkey, dead
-    sfx(name, k = 1) { playSfx(name, k); },
+    sfx(name, k = 1, delay = 0) { playSfx(name, k, delay); },
     // смерть: удар + чуть позже тихое «разочарование»
     death() { playSfx('dead'); playDisap(); },
     // шаг; k — громкость (1 — обычный бег)

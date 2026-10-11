@@ -1097,6 +1097,8 @@ function renderSeeds() {
   }
 }
 
+const MONKEYS_N = 5;
+
 function die(cause = '?') {
   if (state !== 'run') return;
   rec.event('die', { cause, z: pl.z, x: pl.x, y: pl.y, lane: pl.lane });
@@ -1697,6 +1699,7 @@ function collectMonkeys(z0) {
     updateMonkeyHud();
     ui.monk.classList.remove('pop'); void ui.monk.offsetWidth; ui.monk.classList.add('pop');
     sound.sfx('monkey');
+    if (runMonkeys % MONKEYS_N === 0) sound.sfx('monkeysN', 1, 0.25); // каждые 5 за забег — далёкая «награда»
     rec.event('monkey', { z: k.z, x: k.x, n: runMonkeys });
   }
 }
