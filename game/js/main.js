@@ -1864,8 +1864,11 @@ function frame(now) {
     gu.uB.value = mu.uB.value; gu.uFogNear.value = mu.uFogNear.value; gu.uFogFar.value = mu.uFogFar.value;
     gu.uPulse.value = 0.85 + 0.15 * Math.sin(gameTime * 4); // в такт пульсу самой обезьянки
   }
-  _sky.copy(materials.main.uniforms.uFogColor.value);
-  renderer.setClearColor(useBloom ? _sky.clone().convertSRGBToLinear() : _sky, 1);
+  // небо — фоном сцены, а не цветом очистки: цвет очистки three.js пересчитывает под ту цель рендера,
+  // что была выбрана в момент установки, — после прохода теней фонаря небо выходило то тёмным, то
+  // серо-голубым. Фон пересчитывается под нужную цель при каждой отрисовке
+  const fc = materials.main.uniforms.uFogColor.value;
+  _sky.setRGB(fc.r, fc.g, fc.b, THREE.SRGBColorSpace);
   document.body.classList.toggle('night', night > 0.45);
   const high = Math.min(1, Math.max(0, (cam.base - 10) / 25));
   materials.main.uniforms.uHigh.value = high;
@@ -1922,7 +1925,9 @@ function frame(now) {
   }
   renderLampShadow();
   renderSunShadow(Math.min(1, Math.max(0, -cam.base / 5)));
+  scene.background = _sky; // только для основного кадра: проходы теней копят глубину без очистки
   if (composer) composer.render(); else renderer.render(scene, camera);
+  scene.background = null;
 
   if (showDebug) {
     fpsAcc += dt; fpsN++;

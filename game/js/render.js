@@ -592,8 +592,10 @@ const frag = /* glsl */ `
       // по зелёному и синему раньше, чем по красному, — и пятно шло розово-зелёными разводами
       vec3 litC = c3 + lampL;
       const vec3 LUMW = vec3(0.2126, 0.7152, 0.0722);
-      float lcap = max(dot(c3, LUMW), 0.8), lnow = dot(litC, LUMW);
-      c3 = lnow > lcap ? litC * (lcap / lnow) : litC;
+      // мягкое «колено»: к потолку подходим плавно — иначе на краю пересвета виден резкий контур плато
+      float lcap = max(dot(c3, LUMW), 0.8), lnow = dot(litC, LUMW), knee = lcap * 0.55;
+      float lout = lnow <= knee ? lnow : knee + (lcap - knee) * (1.0 - exp(-(lnow - knee) / (lcap - knee)));
+      c3 = litC * (lout / max(lnow, 1e-4));
     }
     // высота: всё, что далеко внизу под ярусом, тонет в дымке (днём белой, ночью — цвета тумана)
     float below = uB - y;
