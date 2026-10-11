@@ -328,7 +328,8 @@ let autoExpOn = true;
 // настройки из меню «Графика»: солнце (азимут/высота, градусы), экспозиция (EV), контраст, температура
 // + яркость солнца, глубина солнечной тени; автоэкспозиция: сила, целевая яркость (EV), скорость
 // + эффекты: motion blur, шум, хроматика — множители к обычной силе (1 = как задумано)
-const GFX_DEFAULT = { az: 56, el: 74, lit: 1, shade: 0.38, exp: 0, con: 1, temp: 0, aeStr: 0.5, aeTgt: 0, aeSpd: 1, blur: 1, grain: 1, ca: 1 };
+const GFX_DEFAULT = { az: 56, el: 74, lit: 1, shade: 0.38, exp: 0, con: 1, temp: 0, aeStr: 0.5, aeTgt: 0, aeSpd: 1, blur: 1, grain: 1, ca: 1,
+  sunCol: '#ffffff', sunAmt: 0.5, shadeCol: '#ffffff', shadeAmt: 0.5 }; // цвет солнца и тени: белый — как было
 const gfx = { ...GFX_DEFAULT };
 try {
   const saved = JSON.parse(localStorage.getItem('sdwg-gfx') || '{}');
@@ -1624,12 +1625,26 @@ updateAutoExpButtons();
 
 // ---------- меню «Графика» (из паузы): направление солнца и цветокоррекция ----------
 // Пауза продолжает рисовать кадр, так что изменения видны сразу
+let skyTint = [1, 1, 1]; // небо днём — в цвет солнца
 function applyGfx() {
   const az = gfx.az * Math.PI / 180, el = gfx.el * Math.PI / 180;
   const u = materials.main.uniforms;
   u.uSunDir.value.set(Math.cos(el) * Math.sin(az), Math.sin(el), Math.cos(el) * Math.cos(az));
   u.uSunLit.value = gfx.lit;
   u.uSunShade.value = gfx.shade;
+  // цвет: множитель с той же яркостью (чтобы синяя тень не стала чёрной, а жёлтое солнце — белым пятном);
+  // небо — без осветления: самый яркий канал остаётся белым, остальные уходят в цвет
+  const rgb = (hex) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255);
+  const tint = (hex, amt, out) => {
+    const c = rgb(hex), l = Math.max(0.05, 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]);
+    let t = c.map((v) => v / l);
+    const mx = Math.max(...t); if (mx > 1.6) t = t.map((v) => v * 1.6 / mx);
+    out.set(...t.map((v) => 1 + (v - 1) * amt));
+  };
+  tint(gfx.sunCol, gfx.sunAmt, u.uSunTint.value);
+  tint(gfx.shadeCol, gfx.shadeAmt, u.uShadeTint.value);
+  const sc = rgb(gfx.sunCol), sm = Math.max(0.01, ...sc);
+  skyTint = sc.map((v) => 1 + (v / sm - 1) * gfx.sunAmt);
   // без композера (?bloom=0) есть только экспозиция — через ACES
   if (!composer) renderer.toneMappingExposure = Math.pow(2, gfx.exp);
 }
@@ -1638,11 +1653,14 @@ const gfxFmt = {
   lit: (v) => `×${v.toFixed(2)}`, shade: (v) => `${Math.round(v * 100)}%`,
   exp: (v) => `${v > 0 ? '+' : ''}${v.toFixed(2)} EV`, con: (v) => v.toFixed(2),
   aeStr: (v) => `${Math.round(v * 100)}%`, aeTgt: (v) => `${v > 0 ? '+' : ''}${v.toFixed(2)} EV`, aeSpd: (v) => `×${v.toFixed(2)}`,
+  sunAmt: (v) => `${Math.round(v * 100)}%`, shadeAmt: (v) => `${Math.round(v * 100)}%`,
   blur: (v) => `${Math.round(v * 100)}%`, grain: (v) => `${Math.round(v * 100)}%`, ca: (v) => `${Math.round(v * 100)}%`,
   temp: (v) => (v === 0 ? '0' : `${v > 0 ? 'теплее' : 'холоднее'} ${Math.abs(v).toFixed(2)}`),
 };
+const GFX_COLORS = ['sunCol', 'shadeCol'];
 function syncGfxUI() {
   for (const k of Object.keys(gfxFmt)) { $(`gfx-${k}`).value = gfx[k]; $(`gfx-${k}-v`).textContent = gfxFmt[k](gfx[k]); }
+  for (const k of GFX_COLORS) $(`gfx-${k}`).value = gfx[k];
 }
 function saveGfx() { try { localStorage.setItem('sdwg-gfx', JSON.stringify(gfx)); } catch { /* приватный режим */ } }
 for (const k of Object.keys(gfxFmt)) {
@@ -1651,6 +1669,10 @@ for (const k of Object.keys(gfxFmt)) {
     $(`gfx-${k}-v`).textContent = gfxFmt[k](gfx[k]);
     applyGfx();
   });
+  $(`gfx-${k}`).addEventListener('change', saveGfx);
+}
+for (const k of GFX_COLORS) {
+  $(`gfx-${k}`).addEventListener('input', (e) => { gfx[k] = e.target.value; applyGfx(); });
   $(`gfx-${k}`).addEventListener('change', saveGfx);
 }
 $('gfx-reset').addEventListener('click', (e) => {
@@ -2042,6 +2064,8 @@ function frame(now) {
   // в тумане днём — белёсо-серая дымка, ночью — плотная серо-синяя, подсвеченная городом
   const fd = [0.84, 0.855, 0.87], fn = [0.2, 0.21, 0.235];
   for (let i = 0; i < 3; i++) { df[i] += (fd[i] - df[i]) * fogW; nf[i] += (fn[i] - nf[i]) * fogW; }
+  // днём небо и дымка — в цвет солнца (в подземке — нет)
+  for (let i = 0; i < 3; i++) df[i] *= 1 + (skyTint[i] - 1) * (1 - deep);
   // тёмный переход: дымка почти чёрная (свет не работает)
   const feat = state === 'ready' ? null : world.featAt(pl.z + 4);
   darkAmt = damp(darkAmt, feat && feat.dark && deep > 0.3 ? 1 : 0, 3, dt);
@@ -2051,6 +2075,7 @@ function frame(now) {
   materials.star.uniforms.uFogNear.value = materials.main.uniforms.uFogNear.value;
   materials.star.uniforms.uFogFar.value = materials.main.uniforms.uFogFar.value;
   materials.main.uniforms.uNight.value = night;
+  materials.main.uniforms.uSkyTint.value.set(...skyTint.map((v) => 1 + (v - 1) * (1 - deep)));
   updateStreetLamps(night);
   // ночью блум слабее и с порогом повыше: светятся только окна и красное, без пересвета
   if (bloom) { bloom.strength = 0.27 - 0.06 * night; bloom.threshold = 0.9 + 0.05 * night; }

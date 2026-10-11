@@ -114,6 +114,9 @@ const frag = /* glsl */ `
   uniform vec3 uSunDir;         // направление на солнце
   uniform float uSunLit;        // яркость освещённого солнцем (1 — как задумано)
   uniform float uSunShade;      // насколько темнит солнечная тень: 0 — нет тени, 1 — чёрная
+  uniform vec3 uSunTint;        // цвет солнца и цвет тени — множители (белый = без изменений)
+  uniform vec3 uShadeTint;
+  uniform vec3 uSkyTint;        // небо и дымка днём — в цвет солнца
   varying vec4 vSunPos;
   uniform float uCookieOn;
   varying float vTint;
@@ -431,6 +434,7 @@ const frag = /* glsl */ `
     }
 
     // солнце: резкие тени от домов друг на друга. Грань, повёрнутая от солнца, — тоже в тени
+    float sunW = 0.0, shadeW = 0.0; // сколько тут солнца и сколько солнечной тени — для их цвета
     if (uSun > 0.0 && st != 8 && st != 9 && st != 16) {
       float facing = dot(n, uSunDir);
       float sl = 0.0;
@@ -446,6 +450,7 @@ const frag = /* glsl */ `
       sl *= smoothstep(-0.05, 0.15, facing);
       // контраст солнца: освещённое заметно ярче (но ниже порога блума), тень — глубже
       col *= mix(1.0, mix(1.0 - uSunShade, min(1.4, 0.93 / max(col, 0.01)) * uSunLit, sl), uSun);
+      sunW = sl * uSun; shadeW = (1.0 - sl) * uSun;
     }
 
     // под землёй темнее — чем глубже, тем сильнее; светильники не трогаем
@@ -615,9 +620,11 @@ const frag = /* glsl */ `
       float addOut = room > 1e-4 ? room * (1.0 - exp(-add / room)) : 0.0;
       c3 += lampL * (addOut / max(add, 1e-4));
     }
+    // цвет солнца и тени (из «Графики»): освещённое красим цветом солнца, тень — цветом тени
+    c3 *= mix(vec3(1.0), uSunTint, sunW) * mix(vec3(1.0), uShadeTint, shadeW);
     // высота: всё, что далеко внизу под ярусом, тонет в дымке (днём белой, ночью — цвета тумана)
     float below = uB - y;
-    c3 = mix(c3, mix(vec3(1.0), uFogColor * 1.4, uNight), smoothstep(2.0, 30.0, below) * (0.35 + 0.25 * uHigh));
+    c3 = mix(c3, mix(uSkyTint, uFogColor * 1.4, uNight), smoothstep(2.0, 30.0, below) * (0.35 + 0.25 * uHigh));
     vec3 c = mix(c3, uFogColor, fog);
     if (uLinearOut > 0.5) c = pow(c, vec3(2.2));
     gl_FragColor = vec4(c, 1.0);
@@ -660,6 +667,9 @@ export function createMaterial({ linearOut }) {
       uSun: { value: 0 },
       uSunLit: { value: 1 },
       uSunShade: { value: 0.38 },
+      uSunTint: { value: new THREE.Vector3(1, 1, 1) },
+      uShadeTint: { value: new THREE.Vector3(1, 1, 1) },
+      uSkyTint: { value: new THREE.Vector3(1, 1, 1) },
       uSunDir: { value: new THREE.Vector3(0.75, 1.45, 0.5).normalize() }, // спереди-сбоку: тени отбрасывает то, что впереди и всегда есть
     },
   });

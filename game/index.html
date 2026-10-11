@@ -135,6 +135,9 @@
     #gfx label span { float: right; font: 12px ui-monospace, Menlo, monospace; opacity: 0.75; }
     #gfx input[type=range] { width: 100%; margin: 4px 0 2px; accent-color: #111; height: 28px; }
     #gfx .row { margin-top: 10px; }
+    #gfx input.swatch { width: 34px; height: 18px; padding: 0; margin: 0 0 0 6px; border: 1.5px solid #111; border-radius: 4px; background: none; vertical-align: middle; cursor: pointer; }
+    #gfx input.swatch::-webkit-color-swatch-wrapper { padding: 0; }
+    #gfx input.swatch::-webkit-color-swatch { border: 0; border-radius: 2px; }
     /* тянешь ползунок — всё меню, ореол и HUD прячутся, остаётся только этот ползунок: видно саму картинку */
     #gfx h2, #gfx .toggles, #gfx .sub, #gfx label, #gfx .row, #hud, #rotate, #debug, #fps { transition: opacity 0.45s ease; }
     body.peek :is(#gfx h2, #gfx .toggles, #gfx .sub, #gfx label:not(.peek), #gfx .row, #hud, #rotate, #debug, #fps) { opacity: 0; }
@@ -351,6 +354,8 @@
       <label>Экспозиция <span id="gfx-exp-v"></span><input type="range" id="gfx-exp" min="-2" max="2" step="0.05"></label>
       <label>Контраст <span id="gfx-con-v"></span><input type="range" id="gfx-con" min="0.5" max="1.6" step="0.01"></label>
       <label>Температура <span id="gfx-temp-v"></span><input type="range" id="gfx-temp" min="-1" max="1" step="0.02"></label>
+      <label>Цвет солнца <input type="color" id="gfx-sunCol" class="swatch"><span id="gfx-sunAmt-v"></span><input type="range" id="gfx-sunAmt" min="0" max="1" step="0.01"></label>
+      <label>Цвет тени <input type="color" id="gfx-shadeCol" class="swatch"><span id="gfx-shadeAmt-v"></span><input type="range" id="gfx-shadeAmt" min="0" max="1" step="0.01"></label>
       </div><div class="col">
       <div class="sub">Автоэкспозиция</div>
       <label>Сила <span id="gfx-aeStr-v"></span><input type="range" id="gfx-aeStr" min="0" max="1" step="0.01"></label>
