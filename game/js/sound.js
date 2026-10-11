@@ -24,7 +24,7 @@ const SFX = {
   disap3: { url: 'audio/sfx/death_disappointment_3.mp3', gain: 0.35, space: false },
 };
 // каждые N обезьянок — «награда» вдалеке: глухо и в большом реверберации (отдельная шина far)
-SFX.monkeysN = { url: 'audio/sfx/monkeys_collect.mp3', gain: 0.3, space: 'far' };
+SFX.monkeysN = { url: 'audio/sfx/monkeys_collect.mp3', gain: 0.42, space: 'far' };
 const DISAP = ['disap1', 'disap2', 'disap3'];
 const DISAP_DELAY = 0.45; // с; чуть после удара
 const SLIDE_LP = 600; // Гц: скольжение глухое, но слышно и на динамике телефона (ниже ~300 Гц он почти не играет)
@@ -230,9 +230,9 @@ export function createSound(enabled) {
     {
       farBus = ctx.createGain(); farBus.gain.value = STEP_GAIN;
       const flp = ctx.createBiquadFilter(); flp.type = 'lowpass'; flp.frequency.value = 2200; flp.Q.value = 0.5;
-      const fdry = ctx.createGain(); fdry.gain.value = 0.22;
-      const fconv = ctx.createConvolver(); fconv.buffer = impulse(3.2, 2.2);
-      const fwet = ctx.createGain(); fwet.gain.value = 1.1;
+      const fdry = ctx.createGain(); fdry.gain.value = 0.45;
+      const fconv = ctx.createConvolver(); fconv.buffer = impulse(1.6, 3.0);
+      const fwet = ctx.createGain(); fwet.gain.value = 0.6;
       // «колокола» вниз там, где режет уши: ~2.5 кГц и ~4.5 кГц
       const bell = (f, db, q) => { const b = ctx.createBiquadFilter(); b.type = 'peaking'; b.frequency.value = f; b.gain.value = db; b.Q.value = q; return b; };
       const b1 = bell(2500, -10, 1.0), b2 = bell(4500, -9, 1.2);
