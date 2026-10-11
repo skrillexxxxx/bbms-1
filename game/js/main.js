@@ -417,6 +417,8 @@ const pl = {
 };
 const cam = { roll: 0, yaw: 0, pitch: 0, dip: 0, slide: 0, bob: 0, fov: 82, wallStep: 0, slideSide: 1, lookY: 1.2, vx: 0, lines: 0, base: 0, wall: 0, fly: 0, baseV: 0, lookV: 0 };
 let gameTime = 0;
+let runZ0 = 0;      // где начался забег (из меню — не с нуля): от него считаем метры
+const runMeters = () => Math.floor(pl.z - runZ0);
 let runStartT = 0; // gameTime в начале забега — от него считаем день и ночь
 const _sky = new THREE.Color();
 // День → сумерки → ночь → рассвет → день… Забег всегда начинается днём.
@@ -445,6 +447,8 @@ function reset(s) {
   monkeys = [];
   built = 0;
   world = new World(seed);
+  world.menu = state === 'ready'; // на стартовом экране — бесконечный прямой проспект
+  runZ0 = 0;
   // для проверки: ?under=dark,balls,balloons,sparks,carts — эти особенности во всех переходах
   // ?ruin=1 — разруха везде, ?ruin=0 — нигде
   if (params.get('ruin') !== null) world.ruinOverride = params.get('ruin') === '1';
@@ -1098,7 +1102,7 @@ function die(cause = '?') {
   state = 'dead';
   shake = 0.6;
   sound.muffle(true);
-  const meters = Math.floor(pl.z);
+  const meters = runMeters();
   lastRun = meters;
   // рекорд по сохранённому городу
   const list = loadSeeds();
@@ -1167,7 +1171,7 @@ $('pause').addEventListener('click', (e) => {
   if (state === 'run') pauseGame();
   else if (state === 'paused') { if ($('gfx').classList.contains('show')) closeGfx(); else { sound.unlock(); resumeGame(); } }
 });
-$('to-menu').addEventListener('click', (e) => { e.stopPropagation(); toMainMenu(); });
+for (const id of ['to-menu', 'to-menu-over']) $(id).addEventListener('click', (e) => { e.stopPropagation(); toMainMenu(); });
 $('resume').addEventListener('click', (e) => { e.stopPropagation(); sound.unlock(); resumeGame(); });
 $('restart-same').addEventListener('click', (e) => { e.stopPropagation(); sound.unlock(); restart(true); });
 $('restart-new').addEventListener('click', (e) => { e.stopPropagation(); sound.unlock(); restart(false); });
@@ -1183,6 +1187,12 @@ function start() {
   ui.hud.classList.add('show');
   state = 'run';
   runStartT = gameTime;
+  // из меню: проспект кончается, дальше генератор как обычно; метры — от этого места
+  if (world.menu) {
+    world.menu = false;
+    world.distOffset = (world.rows.length - 9) * ROW;
+    runZ0 = pl.z - ROW * 0.5;
+  }
   if (slideSnd) { slideSnd = false; sound.slide(false, true); }
   resetWeather();
   sound.muffle(false);
@@ -1722,11 +1732,11 @@ function runFile() {
     const row = world.rows[r], info = world.rowInfo[r];
     rows.push(`${r} ${Array.from(row, (v) => CELL_CH[v] ?? String(v)).join('')} ${row.b0}..${row.b1}${row.cover ? ' cover' : ''} ${info.name}#${info.inst} ${info.local + 1}/${info.total}`);
   }
-  return rec.build({ meta: { meters: Math.floor(pl.z), info: ui.overInfo.textContent, P }, rows });
+  return rec.build({ meta: { meters: runMeters(), info: ui.overInfo.textContent, P }, rows });
 }
 async function sendRecording() {
   if (!rec.has()) return;
-  const name = `sdwg-run-${seed}-${Math.floor(pl.z)}m.json`;
+  const name = `sdwg-run-${seed}-${runMeters()}m.json`;
   const res = await shareFile(name, JSON.stringify(runFile()));
   if (res !== 'cancelled') { ui.rec.textContent = 'Запись готова ✓'; setTimeout(() => { ui.rec.textContent = 'Отправить запись'; }, 2500); }
 }
@@ -1885,7 +1895,7 @@ function frame(now) {
     const n = Math.ceil(dt * Math.max(120, speedNow() / 0.3));
     for (let i = 0; i < n && state === 'run'; i++) { if (autopilot) autopilotStep(); physicsStep(dt / n); }
     ensureWorld();
-    ui.dist.textContent = `${Math.floor(pl.z)} м`;
+    ui.dist.textContent = `${runMeters()} м`;
     const sp = kmh(speedNow());
     if (sp > runMaxSpeed) runMaxSpeed = sp;
     ui.spd.textContent = `${sp} км/ч`;
@@ -1901,7 +1911,7 @@ function frame(now) {
     else if (slideSnd && (slideOffT += dt) > 0.12) { slideSnd = false; sound.slide(false); }
   } else if (state === 'ready') {
     // медленный «облёт» на стартовом экране
-    pl.z = Math.min(pl.z + dt * 2, ROW * 4);
+    pl.z += dt * 2;
     ensureWorld();
   }
 

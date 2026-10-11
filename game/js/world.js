@@ -281,6 +281,10 @@ export class World {
     this.fallbacks = 0;
     this.tier = 'street';
     this.tierAge = 0;    // сколько паттернов подряд на этом ярусе
+    // главное меню: бесконечный прямой проспект (копии стартового паттерна, без расхода rng —
+    // после старта город продолжается так же, как с этим сидом с нуля)
+    this.menu = false;
+    this.distOffset = 0; // на сколько метров «прямой из меню» длиннее обычного старта
     // старт: прямой проспект, игрок в колонке 6
     const rows = START_P.parsed;
     const F0 = new Uint8Array(COLS); F0[6] = 1;
@@ -288,7 +292,7 @@ export class World {
     this._push(START_P, rows, reach, 0, false);
   }
 
-  _push(p, rows, reach, shift, mirror) {
+  _push(p, rows, reach, shift, mirror, menuCopy = false) {
     const inst = {
       id: this.instCount++,
       name: p.name,
@@ -296,7 +300,7 @@ export class World {
       vision: !!p.vision,
       rowStart: this.rows.length,
       rows,
-      seed: Math.floor(this.rng() * 1e9),
+      seed: menuCopy ? this.instances[0].seed : Math.floor(this.rng() * 1e9),
     };
     // подземка: первый спуск — обычный переход, в следующих — случайный набор особенностей
     const under = p.tier === 'under';
@@ -379,7 +383,16 @@ export class World {
   }
 
   appendNext() {
-    const distance = this.rows.length * ROW;
+    if (this.menu) {
+      const rows = START_P.parsed;
+      const reach = reachThrough(this.rows.slice(-8), this.reach.slice(-8), rows);
+      const age = this.tierAge;
+      const inst = this._push(START_P, rows, reach, 0, false, true);
+      this.tierAge = age;
+      return inst;
+    }
+    // меню закончилось — счёт расстояния как у обычного старта
+    const distance = this.rows.length * ROW - this.distOffset;
     const last = this.instances[this.instances.length - 1];
 
     for (let attempt = 0; attempt < 16; attempt++) {
