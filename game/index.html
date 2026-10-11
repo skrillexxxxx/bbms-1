@@ -126,15 +126,19 @@
     /* настройки графики — в стиле главного меню: по центру, на ореоле, прозрачные кнопки */
     #gfx { z-index: 4; pointer-events: auto; justify-content: flex-start; touch-action: pan-y; padding-top: calc(env(safe-area-inset-top) + 48px); }
     /* здесь колонки шире заголовка меню — и круг больше, во всю ширину */
-    #gfx .panel { margin: auto 0; width: min(820px, 100%); }
+    #gfx .panel { margin: auto 0; width: min(880px, 100%); }
     #gfx h2 { font-size: clamp(28px, 7vw, 44px); font-weight: 800; margin: 0 0 8px; }
     #gfx .toggles { margin-bottom: 4px; }
-    #gfx .cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 0 26px; text-align: left; }
+    #gfx .cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 0 22px; text-align: left; }
     #gfx .sub { font-size: 12px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; opacity: 0.55; margin: 12px 0 0; text-align: center; }
     #gfx label { display: block; font-size: 14px; font-weight: 600; margin: 6px 0 0; }
     #gfx label span { float: right; font: 12px ui-monospace, Menlo, monospace; opacity: 0.75; }
     #gfx input[type=range] { width: 100%; margin: 4px 0 2px; accent-color: #111; height: 28px; }
     #gfx .row { margin-top: 10px; }
+    /* один экран на «Графику» и «Звук»: показываем нужную страницу */
+    #gfx:not([data-pg=snd]) .pg-snd, #gfx[data-pg=snd] .pg-gfx { display: none; }
+    #gfx .snd-cols { width: min(340px, 100%); margin: 0 auto; text-align: left; }
+    body:has(#gfx.show[data-pg=snd]) #halo { width: max(175vmin, 140vw, 125vmax); height: max(175vmin, 140vw, 125vmax); }
     @media (max-height: 500px) {
       #gfx h2 { font-size: 24px; margin: 0 0 2px; }
       #gfx label { margin-top: 0; font-size: 13px; }
@@ -298,7 +302,7 @@
   <div id="start" class="screen">
     <h1>SDWG GAME</h1>
     <div class="pulse">Тапни, чтобы бежать</div>
-    <div class="menu"><button id="install-open" class="ghost small" style="display:none">Установить приложение</button><button id="lb-open" class="ghost">Рекорды</button><button id="open-seeds" class="ghost">Мои города</button><button id="help-open" class="ghost small">Инструкция</button><button id="save-progress" class="ghost small">Сохранить прогресс</button><button id="load-progress" class="ghost small">Загрузить</button><br><button id="gfx-open-start" class="ghost small">Графика</button></div>
+    <div class="menu"><button id="install-open" class="ghost small" style="display:none">Установить приложение</button><button id="lb-open" class="ghost">Рекорды</button><button id="open-seeds" class="ghost">Мои города</button><button id="help-open" class="ghost small">Инструкция</button><button id="save-progress" class="ghost small">Сохранить прогресс</button><button id="load-progress" class="ghost small">Загрузить</button><br><button id="gfx-open-start" class="ghost small">Графика</button><button id="snd-open-start" class="ghost small">Звук</button></div>
   </div>
 
   <div id="seeds" class="screen">
@@ -317,19 +321,20 @@
       <button id="same" class="ghost">Этот же сид</button>
     </div>
     <div><button id="lb-open-over" class="ghost">Рекорды</button><button id="save" class="ghost">Сохранить сид</button><button id="open-seeds-over" class="ghost">Мои города</button><button id="to-menu-over" class="ghost">Главное меню</button></div>
-    <div><button id="gfx-open-over" class="ghost small">Графика</button><button id="rec" class="ghost small">Отправить запись</button></div>
+    <div><button id="gfx-open-over" class="ghost small">Графика</button><button id="snd-open-over" class="ghost small">Звук</button><button id="rec" class="ghost small">Отправить запись</button></div>
   </div>
 
   <div id="pause-menu" class="screen">
     <h2>Пауза</h2>
     <div><button id="resume">Продолжить</button></div>
     <div><button id="restart-same" class="ghost">Заново</button><button id="restart-new" class="ghost">Новый город</button><button id="to-menu" class="ghost">Главное меню</button></div>
-    <div><button id="gfx-open" class="ghost small">Графика</button></div>
+    <div><button id="gfx-open" class="ghost small">Графика</button><button id="snd-open" class="ghost small">Звук</button></div>
   </div>
 
   <div id="gfx" class="screen">
     <div class="panel">
-      <h2>Графика</h2>
+      <h2 class="pg-gfx">Графика</h2><h2 class="pg-snd">Звук</h2>
+      <div class="pg-gfx">
       <div class="toggles"><button id="shadows" class="ghost small">Тени фонаря: выкл</button><button id="sun" class="ghost small">Тени солнца: выкл</button><button id="ps1" class="ghost small">PS1: выкл</button><button id="autoexp" class="ghost small">Автоэкспозиция: вкл</button></div>
       <div class="cols"><div class="col">
       <div class="sub">Солнце</div>
@@ -347,7 +352,17 @@
       <label>Сила <span id="gfx-aeStr-v"></span><input type="range" id="gfx-aeStr" min="0" max="1" step="0.01"></label>
       <label>Целевая яркость <span id="gfx-aeTgt-v"></span><input type="range" id="gfx-aeTgt" min="-1.5" max="1.5" step="0.05"></label>
       <label>Скорость привыкания <span id="gfx-aeSpd-v"></span><input type="range" id="gfx-aeSpd" min="0.25" max="4" step="0.05"></label>
+      </div><div class="col">
+      <div class="sub">Эффекты</div>
+      <label>Motion blur <span id="gfx-blur-v"></span><input type="range" id="gfx-blur" min="0" max="2" step="0.05"></label>
+      <label>Шум <span id="gfx-grain-v"></span><input type="range" id="gfx-grain" min="0" max="3" step="0.05"></label>
+      <label>Хром. аберрация <span id="gfx-ca-v"></span><input type="range" id="gfx-ca" min="0" max="3" step="0.05"></label>
       </div></div>
+      </div>
+      <div class="pg-snd snd-cols">
+      <label>Музыка <span id="snd-music-v"></span><input type="range" id="snd-music" min="0" max="1" step="0.01"></label>
+      <label>Игровые звуки <span id="snd-game-v"></span><input type="range" id="snd-game" min="0" max="1" step="0.01"></label>
+      </div>
       <div class="row"><button id="gfx-reset" class="ghost small">Сбросить</button><button id="gfx-close" class="small">Назад</button></div>
     </div>
   </div>

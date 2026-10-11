@@ -327,7 +327,8 @@ class ExposurePass extends Pass {
 let autoExpOn = true;
 // настройки из меню «Графика»: солнце (азимут/высота, градусы), экспозиция (EV), контраст, температура
 // + яркость солнца, глубина солнечной тени; автоэкспозиция: сила, целевая яркость (EV), скорость
-const GFX_DEFAULT = { az: 56, el: 74, lit: 1, shade: 0.38, exp: 0, con: 1, temp: 0, aeStr: 0.5, aeTgt: 0, aeSpd: 1 };
+// + эффекты: motion blur, шум, хроматика — множители к обычной силе (1 = как задумано)
+const GFX_DEFAULT = { az: 56, el: 74, lit: 1, shade: 0.38, exp: 0, con: 1, temp: 0, aeStr: 0.5, aeTgt: 0, aeSpd: 1, blur: 1, grain: 1, ca: 1 };
 const gfx = { ...GFX_DEFAULT };
 try {
   const saved = JSON.parse(localStorage.getItem('sdwg-gfx') || '{}');
@@ -1637,6 +1638,7 @@ const gfxFmt = {
   lit: (v) => `×${v.toFixed(2)}`, shade: (v) => `${Math.round(v * 100)}%`,
   exp: (v) => `${v > 0 ? '+' : ''}${v.toFixed(2)} EV`, con: (v) => v.toFixed(2),
   aeStr: (v) => `${Math.round(v * 100)}%`, aeTgt: (v) => `${v > 0 ? '+' : ''}${v.toFixed(2)} EV`, aeSpd: (v) => `×${v.toFixed(2)}`,
+  blur: (v) => `${Math.round(v * 100)}%`, grain: (v) => `${Math.round(v * 100)}%`, ca: (v) => `${Math.round(v * 100)}%`,
   temp: (v) => (v === 0 ? '0' : `${v > 0 ? 'теплее' : 'холоднее'} ${Math.abs(v).toFixed(2)}`),
 };
 function syncGfxUI() {
@@ -1651,13 +1653,36 @@ for (const k of Object.keys(gfxFmt)) {
   });
   $(`gfx-${k}`).addEventListener('change', saveGfx);
 }
-$('gfx-reset').addEventListener('click', (e) => { e.stopPropagation(); Object.assign(gfx, GFX_DEFAULT); syncGfxUI(); applyGfx(); saveGfx(); });
+$('gfx-reset').addEventListener('click', (e) => {
+  e.stopPropagation();
+  if ($('gfx').dataset.pg === 'snd') { Object.assign(snd, SND_DEFAULT); syncSndUI(); applySnd(); saveSnd(); return; }
+  Object.assign(gfx, GFX_DEFAULT); syncGfxUI(); applyGfx(); saveGfx();
+});
+// ---------- «Звук»: громкость музыки и игровых звуков (0…1; слышим квадрат — ползунок ровнее на слух) ----------
+const SND_DEFAULT = { music: 1, game: 1 };
+const snd = { ...SND_DEFAULT };
+try { Object.assign(snd, JSON.parse(localStorage.getItem('sdwg-snd') || '{}')); } catch { /* приватный режим */ }
+const sndFmt = (v) => `${Math.round(v * 100)}%`;
+function applySnd() { sound.volume(snd.music * snd.music, snd.game * snd.game); }
+function syncSndUI() { for (const k of Object.keys(SND_DEFAULT)) { $(`snd-${k}`).value = snd[k]; $(`snd-${k}-v`).textContent = sndFmt(snd[k]); } }
+function saveSnd() { try { localStorage.setItem('sdwg-snd', JSON.stringify(snd)); } catch { /* приватный режим */ } }
+for (const k of Object.keys(SND_DEFAULT)) {
+  $(`snd-${k}`).addEventListener('input', (e) => {
+    snd[k] = parseFloat(e.target.value);
+    $(`snd-${k}-v`).textContent = sndFmt(snd[k]);
+    sound.unlock();
+    applySnd();
+  });
+  $(`snd-${k}`).addEventListener('change', saveSnd);
+}
+applySnd();
 // открывается из паузы, главного меню и экрана конца забега; «Назад» возвращает туда, откуда пришли
-function openGfx() {
+function openGfx(pg = 'gfx') {
   $('pause-menu').classList.remove('show');
   ui.start.classList.remove('show');
   ui.over.classList.remove('show');
-  syncGfxUI();
+  $('gfx').dataset.pg = pg;
+  syncGfxUI(); syncSndUI();
   $('gfx').classList.add('show');
 }
 function closeGfx() {
@@ -1667,6 +1692,7 @@ function closeGfx() {
   else if (state === 'dead') ui.over.classList.add('show');
 }
 for (const id of ['gfx-open', 'gfx-open-start', 'gfx-open-over']) $(id).addEventListener('click', (e) => { e.stopPropagation(); openGfx(); });
+for (const id of ['snd-open', 'snd-open-start', 'snd-open-over']) $(id).addEventListener('click', (e) => { e.stopPropagation(); openGfx('snd'); });
 $('gfx-close').addEventListener('click', (e) => { e.stopPropagation(); closeGfx(); });
 $('gfx').addEventListener('pointerdown', (e) => e.stopPropagation());
 syncGfxUI();
@@ -2068,8 +2094,10 @@ function frame(now) {
     const run = state === 'run' ? 1 : 0;
     const sp = Math.min(1, Math.max(0, (speedNow() - 12) / 14));
     // сильнее на разгоне, в подкате и при бусте после подката
-    blurPass.uniforms.uStrength.value = run * (0.04 + sp * 0.11 + cam.slide * 0.05 + pl.boost * 0.006);
-    blurPass.uniforms.uLateral.value.set(run * -cam.vx * 0.0012, 0);
+    blurPass.uniforms.uStrength.value = run * gfx.blur * (0.04 + sp * 0.11 + cam.slide * 0.05 + pl.boost * 0.006);
+    blurPass.uniforms.uLateral.value.set(run * gfx.blur * -cam.vx * 0.0012, 0);
+    blurPass.uniforms.uGrain.value = useFx ? 0.045 * gfx.grain : 0;
+    blurPass.uniforms.uCA.value = useFx ? 0.004 * gfx.ca : 0;
     // полосы копятся медленно: на всю силу — только на длинной серии подкатов
     // полосы скорости — от скорости: появляются выше обычного бега (~13 м/с), на ~32 м/с — во всю силу
     const vNow = speedNow();

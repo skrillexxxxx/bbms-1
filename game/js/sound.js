@@ -63,6 +63,7 @@ export function createSound(enabled) {
   // steps: [{ buf, a }] — a: где начинается звук (без тишины mp3)
   let revWet = null; // сколько шагов уходит в реверб (в подземке — эхо тоннеля)
   let rainG = null; // шум дождя
+  let musicOut = null, gameOut = null, vol = { music: 1, game: 1 }; // громкости из меню «Звук»
   let nearLP = null, nearL = null, nearR = null, nearC = null, echoL = null, echoR = null, narrowAmt = 0; // короткое эхо от стен: слева, справа, отовсюду (узко)
 
   function decode(data) {
@@ -217,15 +218,18 @@ export function createSound(enabled) {
     const AC = window.AudioContext || window.webkitAudioContext;
     if (!AC) return;
     ctx = new AC();
+    // две общие ручки громкости: музыка и всё остальное (шаги, подкат, эхо, дождь, разовые звуки)
+    musicOut = ctx.createGain(); musicOut.gain.value = vol.music; musicOut.connect(ctx.destination);
+    gameOut = ctx.createGain(); gameOut.gain.value = vol.game; gameOut.connect(ctx.destination);
     master = ctx.createGain();
     master.gain.value = MUSIC_GAIN;
     lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = OPEN_HZ; lp.Q.value = 0.7;
     duck = ctx.createGain(); duck.gain.value = 1;
-    master.connect(lp); lp.connect(duck); duck.connect(ctx.destination);
+    master.connect(lp); lp.connect(duck); duck.connect(musicOut);
     // звуки действий — мимо фильтра музыки
     sfx = ctx.createGain(); sfx.gain.value = STEP_GAIN;
-    sfx.connect(ctx.destination);
-    sfxDry = ctx.createGain(); sfxDry.gain.value = STEP_GAIN; sfxDry.connect(ctx.destination);
+    sfx.connect(gameOut);
+    sfxDry = ctx.createGain(); sfxDry.gain.value = STEP_GAIN; sfxDry.connect(gameOut);
     // «вдалеке»: срез верхов, прямого звука мало, почти всё — длинный хвост реверба
     {
       farBus = ctx.createGain(); farBus.gain.value = STEP_GAIN;
@@ -236,8 +240,8 @@ export function createSound(enabled) {
       // «колокола» вниз там, где режет уши: ~2.5 кГц и ~4.5 кГц
       const bell = (f, db, q) => { const b = ctx.createBiquadFilter(); b.type = 'peaking'; b.frequency.value = f; b.gain.value = db; b.Q.value = q; return b; };
       const b1 = bell(2500, -10, 1.0), b2 = bell(4500, -9, 1.2);
-      farBus.connect(b1); b1.connect(b2); b2.connect(flp); flp.connect(fdry); fdry.connect(ctx.destination);
-      flp.connect(fconv); fconv.connect(fwet); fwet.connect(ctx.destination);
+      farBus.connect(b1); b1.connect(b2); b2.connect(flp); flp.connect(fdry); fdry.connect(gameOut);
+      flp.connect(fconv); fconv.connect(fwet); fwet.connect(gameOut);
     }
     // шаги чуть глуше: мягкий срез верхов — без «песочного» шороха
     // сами шаги везде одинаковые и полные (они прямо под нами — пространство их не глушит);
@@ -249,7 +253,7 @@ export function createSound(enabled) {
     const conv = ctx.createConvolver();
     conv.buffer = impulse(2.2, 2.6, true); // подземка: кафель — яркий долгий хвост
     revWet = ctx.createGain(); revWet.gain.value = 0;
-    sfx.connect(conv); conv.connect(revWet); revWet.connect(ctx.destination);
+    sfx.connect(conv); conv.connect(revWet); revWet.connect(gameOut);
     // эхо улицы от стен рядом (~0.9 с): отражение слышно с той стороны, где стена
     const near = ctx.createConvolver();
     near.buffer = impulse(0.9, 3.0);
@@ -258,12 +262,12 @@ export function createSound(enabled) {
     nearLP = ctx.createBiquadFilter(); nearLP.type = 'lowpass'; nearLP.frequency.value = 1800; nearLP.Q.value = 0.5;
     near.connect(nearLP);
     const pan = (p) => {
-      if (!ctx.createStereoPanner) return ctx.destination;
-      const sp = ctx.createStereoPanner(); sp.pan.value = p; sp.connect(ctx.destination); return sp;
+      if (!ctx.createStereoPanner) return gameOut;
+      const sp = ctx.createStereoPanner(); sp.pan.value = p; sp.connect(gameOut); return sp;
     };
     nearL = ctx.createGain(); nearL.gain.value = 0; nearLP.connect(nearL); nearL.connect(pan(-0.85));
     nearR = ctx.createGain(); nearR.gain.value = 0; nearLP.connect(nearR); nearR.connect(pan(0.85));
-    nearC = ctx.createGain(); nearC.gain.value = 0; nearLP.connect(nearC); nearC.connect(ctx.destination);
+    nearC = ctx.createGain(); nearC.gain.value = 0; nearLP.connect(nearC); nearC.connect(gameOut);
     // отдельные отражения «чух-чух-чух»: пинг-понг между левой и правой стеной.
     // Каждое отражение тише и глуше предыдущего
     const mkDelay = (sec) => { const d = ctx.createDelay(1); d.delayTime.value = sec; return d; };
@@ -298,7 +302,7 @@ export function createSound(enabled) {
       const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 400;
       const lp2 = ctx.createBiquadFilter(); lp2.type = 'lowpass'; lp2.frequency.value = 5500;
       rainG = ctx.createGain(); rainG.gain.value = 0;
-      src.connect(hp); hp.connect(lp2); lp2.connect(rainG); rainG.connect(ctx.destination);
+      src.connect(hp); hp.connect(lp2); lp2.connect(rainG); rainG.connect(gameOut);
       src.start();
     }
     // свернули Safari — музыка замолкает, вернулись — продолжает
@@ -317,6 +321,11 @@ export function createSound(enabled) {
     },
     // true — плавно глушим (смерть), false — плавно возвращаем как было (снова играем)
     muffle(on) { muffled = on; },
+    // громкость музыки и игровых звуков, 0…1
+    volume(music, game) {
+      vol = { music, game };
+      if (musicOut) { musicOut.gain.value = music; gameOut.gain.value = game; }
+    },
     // скольжение (подкат по полу): true — началось, false — закончилось;
     // quiet — без звука выхода (смерть, рестарт)
     slide(on, quiet = false) { if (on) slideStart(); else slideStop(quiet); },
