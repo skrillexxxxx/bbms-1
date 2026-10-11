@@ -469,9 +469,11 @@ const frag = /* glsl */ `
       float k;
       if (n.y > 0.5) {
         float ax = abs(fract(vPos.x / uCell) - 0.5) * uCell;
-        float ch = fract((vPos.z + ax * 0.9) / 1.6);       // остриё стрелки — вперёд, по ходу бега
-        float fw = fwidth(ch) + 1e-3;
-        k = smoothstep(0.0, fw, ch) * (1.0 - smoothstep(0.42 - fw, 0.42, ch));
+        // остриё стрелки — вперёд, по ходу бега; широкие шевроны: ~1.6 м полоса, ~1.6 м просвет
+        float chs = (vPos.z + ax * 0.9) / 3.2;
+        float ch = fract(chs);
+        float fw = fwidth(chs) + 1e-3;
+        k = smoothstep(0.0, fw, ch) * (1.0 - smoothstep(0.5 - fw, 0.5, ch));
         float ex = min(min(vPos.x - vBox.x, vBox.z - vPos.x), min(vPos.z - vBox.y, vBox.w - vPos.z));
         k = max(k, 1.0 - smoothstep(0.12, 0.16, ex));     // красная окантовка по краю верха
       } else k = 1.0 - smoothstep(0.2, 0.26, vTop - y);
