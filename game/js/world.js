@@ -308,7 +308,8 @@ export class World {
     if (inst.feat?.dark && !prev?.feat?.dark) (this.darkStarts ||= []).push(inst.rowStart * ROW);
     // разруха — как погода, но мира: включается и выключается только на «склейках» —
     // вылезли из подземки или спрыгнули с небоскрёба, а город уже другой (или снова целый)
-    inst.ruin = !under && (this.ruinOverride ?? !!this._ruin);
+    // разруха пока отключена (не понравилась); ?ruin=1 включает её для проверки
+    inst.ruin = !under && (this.ruinOverride ?? false);
     if (p.to && p.to !== p.tier && (p.tier === 'under' || p.tier === 'sky') && inst.rowStart >= 40) {
       const roll = hash2(this.seed + 555, inst.rowStart);
       this._ruin = this._ruin ? roll < 0.35 : roll < 0.4;
