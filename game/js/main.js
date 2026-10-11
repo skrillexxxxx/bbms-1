@@ -2119,8 +2119,10 @@ const fpsEl = document.getElementById('fps');
 let hudFpsN = 0, hudFpsT = 0;
 let fpsAcc = 0, fpsN = 0, fps = 0;
 
+let bootFrames = 0;
 function frame(now) {
   requestAnimationFrame(frame);
+  if (++bootFrames === 3) window.dispatchEvent(new Event('sdwg-ready'));
   // на паузе время стоит: мир, анимации и погода замирают, кадр просто перерисовывается
   const rawDt = Math.min(0.05, (now - last) / 1000);
   tutUpdate(state === 'paused' ? 0 : rawDt);
@@ -2336,6 +2338,13 @@ function frame(now) {
 const initialSeed = Number(params.get('seed'));
 reset(Number.isFinite(initialSeed) && params.has('seed') ? initialSeed : newSeed());
 ui.start.classList.add('show');
+// экран запуска: звук уже включён тапом — музыка стартует «под водой» и выходит из глухого,
+// когда экран растворится; сам экран ждёт, пока нарисуются первые кадры (шейдеры собраны, квартал построен)
+if (window.__sdwgAudio) {
+  sound.unlock();
+  sound.muffleNow();
+  window.addEventListener('sdwg-reveal', () => { if (state === 'ready') sound.muffle(false); }, { once: true });
+}
 requestAnimationFrame(frame);
 
 // для автотестов

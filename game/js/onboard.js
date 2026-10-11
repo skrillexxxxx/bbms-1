@@ -13,7 +13,7 @@ const ios = /iPhone|iPad|iPod/.test(navigator.userAgent)
 // ---------- установка как веб-приложение ----------
 // В браузере на телефоне показываем при каждом запуске (до установки): без панелей Safari
 // игра на весь экран, а свайпы не дёргают страницу. «Понятно» скрывает до следующего запуска.
-let installEvt = null; // Android/Chrome: системное окно установки
+let installEvt = window.__installEvt || null; // Android/Chrome: системное окно установки (могло прийти ещё на экране запуска)
 window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); installEvt = e; showAndroidButton(); });
 
 function showAndroidButton() {

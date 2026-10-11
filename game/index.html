@@ -338,6 +338,28 @@
     #tut-card h2 { font-size: clamp(26px, 6vw, 40px); font-weight: 800; margin: 0 0 8px; }
     #tut-card p { font-size: 16px; line-height: 1.5; margin: 0 0 18px; max-width: 460px; }
     body:has(#tut-card.show) #halo { opacity: 1; width: max(150vmin, 115vw, 125vmax); height: max(150vmin, 115vw, 125vmax); }
+
+    /* ---------- запуск: белый экран «Тапни» → загрузка → всё растворяется, меню въезжает ---------- */
+    #boot { position: fixed; inset: 0; z-index: 3000; background: #fff; color: #111; display: flex; flex-direction: column;
+      align-items: center; justify-content: center; transition: opacity 0.9s ease; cursor: pointer; touch-action: none; }
+    #boot.gone { opacity: 0; pointer-events: none; }
+    #boot .in { display: flex; flex-direction: column; align-items: center; transition: opacity 0.45s ease; }
+    #boot.done .in { opacity: 0; }
+    #boot .txt { font-size: 28px; letter-spacing: 0.3em; text-transform: uppercase; font-weight: 700; padding-left: 0.3em; animation: pulse 1.6s ease-in-out infinite; }
+    #boot .bar { width: min(220px, 60vw); height: 3px; border-radius: 2px; background: rgba(17,17,17,0.12); margin-top: 18px; overflow: hidden; opacity: 0; transition: opacity 0.3s ease; }
+    #boot .bar i { display: block; height: 100%; width: 0; background: #111; transition: width 0.25s ease; }
+    #boot.loading .bar { opacity: 1; }
+    #boot.started .txt { opacity: 0; transition: opacity 0.3s ease; }
+    #boot.loading .txt { animation: none; opacity: 0.6; }
+    #boot.install { cursor: default; }
+    #boot.install .txt { display: none; }
+    #boot.install #install { transition: opacity 0.4s ease; }
+    #boot.install #install.leave { opacity: 0; pointer-events: none; }
+    /* меню въезжает: название сверху, остальное снизу */
+    #start h1, #start .pulse, #start .menu { transition: transform 1.1s cubic-bezier(.16,.8,.2,1), opacity 0.9s ease; }
+    body.booting #start h1 { transform: translateY(-60px); opacity: 0; }
+    body.booting #start .pulse, body.booting #start .menu { transform: translateY(70px); opacity: 0; }
+    body.booting #start .menu { transition-delay: 0.08s; }
   </style>
   <script type="importmap">
     {
@@ -348,7 +370,8 @@
     }
   </script>
 </head>
-<body>
+<body class="booting">
+  <div id="boot"><div class="in"><div class="txt" id="boot-txt">Tap</div><div class="bar"><i id="boot-bar"></i></div></div></div>
   <canvas id="game"></canvas>
   <div id="halo"></div>
 
@@ -489,6 +512,110 @@
   </div>
   <input type="file" id="load-file" style="display:none">
 
-  <script type="module" src="js/main.js"></script>
+  <script>
+    // Запуск. Первый тап — это жест: в нём включаем звук (AudioContext), и только потом грузим игру.
+    // В мобильном браузере вместо «Тапни» сразу окно «Установи на экран „Домой“»: «Играть в браузере» — тот же тап.
+    // Полоска — настоящий прогресс (файлы → сборка игры → первые кадры) с лёгким сглаживанием;
+    // если всё готово почти сразу (кэш) — полоски нет. Готово — экран растворяется, меню въезжает,
+    // музыка выходит из «глухого». ?boot=0 и автопилот (?auto) — сразу в игру, без экрана (для тестов)
+    (function () {
+      var $ = function (id) { return document.getElementById(id); };
+      var boot = $('boot'), bar = $('boot-bar');
+      var q = new URLSearchParams(location.search);
+      if (q.get('boot') === '0' || q.has('auto')) {
+        boot.remove(); document.body.classList.remove('booting');
+        import('./js/main.js');
+        return;
+      }
+      // [файл, примерный вес в КБ]
+      var FILES = [['vendor/three.module.min.js', 690], ['js/main.js', 130], ['js/render.js', 115], ['js/world.js', 40], ['js/patterns.js', 40],
+        ['js/sound.js', 25], ['js/monkeys.js', 10], ['js/leaderboard.js', 15], ['js/onboard.js', 10], ['js/recorder.js', 3],
+        ['audio/ambient.mp3', 870], ['models/monkey.bin', 9], ['lamp-cookie.jpg', 30]];
+      var total = 0, got = {}; FILES.forEach(function (f) { total += f[1] * 1024; });
+      var target = 0, shown = 0, last = 0, ready = false;
+      function filesPart() { var n = 0; for (var k in got) n += got[k]; return 0.8 * Math.min(1, n / total); }
+      function fetchOne(f) {
+        var cap = f[1] * 1024;
+        return fetch(f[0]).then(function (r) {
+          if (!r.body || !r.body.getReader) return r.arrayBuffer().then(function () { got[f[0]] = cap; target = Math.max(target, filesPart()); });
+          var rd = r.body.getReader(), n = 0;
+          return (function pump() { return rd.read().then(function (x) {
+            if (x.done) { got[f[0]] = cap; target = Math.max(target, filesPart()); return; }
+            n += x.value.length; got[f[0]] = Math.min(cap, n); target = Math.max(target, filesPart()); return pump();
+          }); })();
+        }).catch(function () { got[f[0]] = cap; });
+      }
+      // полоска догоняет настоящий прогресс плавно (~0.15 с), но не придумывает своего
+      function tick(now) {
+        var dt = last ? Math.min(0.1, (now - last) / 1000) : 0; last = now;
+        shown += (target - shown) * Math.min(1, dt * 7);
+        if (target - shown < 0.004) shown = target;
+        bar.style.width = (shown * 100).toFixed(1) + '%';
+        if (ready && (shown >= 0.999 || !boot.classList.contains('loading'))) { reveal(); return; }
+        requestAnimationFrame(tick);
+      }
+      function reveal() {
+        boot.classList.add('done');
+        setTimeout(function () {
+          boot.classList.add('gone');
+          document.body.classList.remove('booting');
+          window.dispatchEvent(new Event('sdwg-reveal'));
+          setTimeout(function () {
+            // окно установки — обратно на своё место (кнопка «Установить приложение» в меню)
+            var ins = $('install'); ins.classList.remove('show'); $('install-ok').textContent = 'Понятно'; document.body.appendChild(ins);
+            boot.remove();
+          }, 1000);
+        }, 300);
+      }
+      var started = false;
+      function go() {
+        if (started) return; started = true;
+        try {
+          var AC = window.AudioContext || window.webkitAudioContext;
+          if (AC) {
+            var ctx = new AC(), b = ctx.createBuffer(1, 1, 22050), s = ctx.createBufferSource();
+            s.buffer = b; s.connect(ctx.destination); s.start(0); if (ctx.resume) ctx.resume();
+            window.__sdwgAudio = ctx;
+          }
+        } catch (e) { /* без звука */ }
+        boot.classList.add('started');
+        // полоска — только если загрузка заметная
+        setTimeout(function () { if (!ready) boot.classList.add('loading'); }, 250);
+        window.addEventListener('sdwg-ready', function () { target = 1; ready = true; }, { once: true });
+        requestAnimationFrame(tick);
+        Promise.all(FILES.map(fetchOne))
+          .then(function () { return import('./js/main.js'); })
+          .then(function () { target = Math.max(target, 0.9); })
+          .catch(function (e) { console.error(e); target = 1; ready = true; });
+      }
+      // мобильный браузер (не приложение с экрана «Домой») — первым делом окно установки
+      var standalone = navigator.standalone === true || matchMedia('(display-mode: standalone)').matches || matchMedia('(display-mode: fullscreen)').matches;
+      var ios = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+      var needInstall = q.get('install') === '1' || (q.get('install') !== '0' && matchMedia('(pointer: coarse)').matches && !standalone);
+      if (needInstall) {
+        var ins = $('install');
+        boot.appendChild(ins);
+        $('install-ios').style.display = ios ? '' : 'none';
+        $('install-other').style.display = ios ? 'none' : '';
+        $('install-ok').textContent = 'Играть в браузере';
+        ins.classList.add('show');
+        boot.classList.add('install');
+        try { sessionStorage.setItem('sdwg-install-seen', '1'); } catch (e) { /* приватный режим */ }
+        // Android/Chrome: системное окно установки
+        window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault(); window.__installEvt = e; $('install-native').style.display = ''; });
+        $('install-native').addEventListener('click', function (e) {
+          e.stopPropagation();
+          var ev = window.__installEvt; if (!ev) return;
+          ev.prompt(); window.__installEvt = null; $('install-native').style.display = 'none';
+        });
+        // «Играть в браузере» — тот самый тап: окно растворяется, дальше загрузка
+        ['touchend', 'click'].forEach(function (ev) { $('install-ok').addEventListener(ev, function (e) { e.stopPropagation(); ins.classList.add('leave'); go(); }); });
+        return;
+      }
+      // касание — по отпусканию (touchend) или клику: iOS включает звук только от них
+      ['touchend', 'click'].forEach(function (ev) { boot.addEventListener(ev, go); });
+      window.addEventListener('keydown', go);
+    })();
+  </script>
 </body>
 </html>

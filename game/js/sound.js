@@ -254,7 +254,7 @@ export function createSound(enabled) {
   function build() {
     const AC = window.AudioContext || window.webkitAudioContext;
     if (!AC) return;
-    ctx = new AC();
+    ctx = window.__sdwgAudio || new AC(); // экран запуска уже включил звук в момент тапа
     // две общие ручки громкости: музыка и всё остальное (шаги, подкат, эхо, дождь, разовые звуки)
     musicOut = ctx.createGain(); musicOut.gain.value = vol.music; musicOut.connect(ctx.destination);
     gameOut = ctx.createGain(); gameOut.gain.value = vol.game; gameOut.connect(ctx.destination);
@@ -358,6 +358,8 @@ export function createSound(enabled) {
     },
     // true — плавно глушим (смерть), false — плавно возвращаем как было (снова играем)
     muffle(on) { muffled = on; },
+    // сразу «под водой», без перехода — с экрана запуска музыка выходит из глухого
+    muffleNow() { muffled = true; m = 1; },
     // громкость музыки и игровых звуков, 0…1
     volume(music, game) {
       vol = { music, game };
