@@ -1582,7 +1582,10 @@ function lampHit(k) { lamp.hitT = gameTime; lamp.hitK = k; }
 // фонарь щёлкает резко, а не плавно: включился — короткое моргание и сразу полная яркость;
 // выключился (в подземке, на рассвете) — сразу темно
 function lampSwitch(want) {
-  if (want !== lamp.on) { lamp.on = want; lamp.t = gameTime; }
+  if (want !== lamp.on) {
+    lamp.on = want; lamp.t = gameTime;
+    if (want && state === 'run') sound.click(); // щёлк — фонарик включился
+  }
   if (!lamp.on) return 0;
   const t = gameTime - lamp.t;
   // строб от удара: гаснет — вспыхивает — подмигивает, ~0.15 с

@@ -167,6 +167,31 @@ export function createSound(enabled) {
     if (st) oneShot(st, SFX[name].gain / STEP_GAIN, ctx.currentTime + DISAP_DELAY, sfxDry);
   }
 
+  // щелчок кнопки фонарика — синтез, без файла: резкий «тик» (шум выше ~3 кГц), короткий корпусный стук
+  // (~1.3 кГц) и через ~28 мс тише — отскок пружины. Идёт через шину шагов: эхо улицы и реверб подземки
+  let clickBuf = null;
+  function makeClick() {
+    const sr = ctx.sampleRate, n = Math.floor(sr * 0.07), buf = ctx.createBuffer(1, n, sr), d = buf.getChannelData(0);
+    let hp = 0, prev = 0;
+    const hit = (t0, amp, tick, body) => {
+      const i0 = Math.floor(t0 * sr);
+      for (let i = i0; i < n; i++) {
+        const t = (i - i0) / sr;
+        const w = Math.random() * 2 - 1;
+        hp = 0.6 * (hp + w - prev); prev = w; // простой срез низов — сухой «тик»
+        d[i] += amp * (tick * hp * Math.exp(-t / 0.0012) + body * Math.sin(2 * Math.PI * 1300 * t) * Math.exp(-t / 0.006));
+      }
+    };
+    hit(0, 1, 0.9, 0.55);
+    hit(0.028, 0.45, 0.8, 0.35);
+    return { buf, a: 0 };
+  }
+  function playClick() {
+    if (!ctx || ctx.state !== 'running') return;
+    if (!clickBuf) clickBuf = makeClick();
+    oneShot(clickBuf, 0.9, 0, sfx, 0.94 + Math.random() * 0.12);
+  }
+
   function oneShot(st, gain, when = 0, bus = sfx, rate = 1) {
     const src = ctx.createBufferSource();
     src.buffer = st.buf;
@@ -372,6 +397,8 @@ export function createSound(enabled) {
     sfx(name, k = 1, delay = 0) { playSfx(name, k, delay); },
     // смерть: удар + чуть позже тихое «разочарование»
     death() { playSfx('dead'); playDisap(); },
+    // щелчок фонарика (включение)
+    click() { playClick(); },
     // шаг; k — громкость (1 — обычный бег)
     step(k = 1) { playStep(k); },
     // приземление: два шага почти разом, громче — чем сильнее удар, тем громче
