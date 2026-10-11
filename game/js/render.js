@@ -249,11 +249,12 @@ const frag = /* glsl */ `
       col = 0.84 * mix(0.7, 1.0, smoothstep(0.1, 0.6, y - uB));
       if (abs(n.y) < 0.5) col *= 0.93 + 0.07 * step(0.5, fract((abs(n.x) > 0.5 ? vPos.z : vPos.x) / 0.45));
     } else if (st == 24) {
-      col = 0.3; // столб фонаря — тёмный металл
+      col = 0.42; // столб фонаря — серый крашеный металл
     } else if (st == 25) {
       // плафон: снизу — стекло, ночью горит
       col = 0.55;
-      if (n.y < -0.5) { col = mix(0.4, 0.8, uNight); emit += vec3(1.0, 0.85, 0.6) * 2.2 * uNight; }
+      if (n.y < -0.5) { col = mix(0.4, 0.8, uNight); emit += vec3(1.0, 0.88, 0.68) * 2.2 * uNight; }
+      else emit += vec3(1.0, 0.88, 0.68) * 0.9 * uNight; // стекло светится и по бокам — видно издалека
     } else if (st == 22) {
       col = 0.62 + 0.15 * abs(n.y); // хромированная проволока тележки
     } else if (st == 23) {
@@ -506,6 +507,8 @@ const frag = /* glsl */ `
         dark += c3 * vec3(0.2, 0.2, 0.22) * low * mix(0.6, 1.0, nearPath);
       }
       dark += c3 * WARM * streetL * 1.15; // пятно от уличного фонаря
+      // сам фонарь ночью виден силуэтом: столб и колпак подсвечены своим светом и витринами
+      if (st == 24) dark += c3 * WARM * (0.3 + 0.5 * smoothstep(3.0, 7.0, y - uB));
       // препятствия у земли (то, через что прыгаем и под чем катимся) ночью не проваливаются в черноту:
       // тёплый свет с улицы, ярче на гранях к нам и сверху — видно издалека, ещё до фонаря
       bool obstacle = (st == 4 || st == 5 || (st >= 11 && st <= 13) || st == 26 || st == 27) && vTop - uB < 4.0;
@@ -1618,9 +1621,12 @@ export function buildInstanceMesh(inst, materials, world) {
       continue;
     }
     const xh = xp - side * 1.7, top = 7.2;
-    b.prism([xp, 0, z], [xp, top, z], 0.11, 0.08, 6, 24);
-    b.prism([xp, top - 0.05, z], [xh, top, z], 0.06, 0.06, 4, 24);
-    b.boxGeo(Math.min(xh, xh - side * 0.5) - 0.0, Math.max(xh, xh - side * 0.5), z - 0.2, z + 0.2, top + 0.05, 25, top - 0.18);
+    b.prism([xp, 0, z], [xp, top, z], 0.15, 0.1, 6, 24);
+    b.boxGeo(xp - 0.22, xp + 0.22, z - 0.22, z + 0.22, 0.5, 24); // основание столба
+    b.prism([xp, top - 0.05, z], [xh, top, z], 0.07, 0.07, 4, 24);
+    // плафон: крупный, «кобра» — сверху колпак, снизу светящееся стекло
+    b.boxGeo(Math.min(xh + side * 0.15, xh - side * 0.75), Math.max(xh + side * 0.15, xh - side * 0.75), z - 0.3, z + 0.3, top + 0.12, 24, top - 0.02);
+    b.boxGeo(Math.min(xh + side * 0.1, xh - side * 0.7), Math.max(xh + side * 0.1, xh - side * 0.7), z - 0.24, z + 0.24, top - 0.02, 25, top - 0.16);
     streetLamps.push([xh - side * 0.25, z, top - 0.2]);
   }
 

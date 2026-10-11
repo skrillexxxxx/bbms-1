@@ -1506,27 +1506,12 @@ for (const id of ['ps1', 'ps1-over', 'ps1-pause']) {
 }
 updatePs1Buttons();
 
-// ---------- цветовой профиль (тонмаппинг на выходе) и автоэкспозиция ----------
-const TONES = [
-  ['none', 'обычный', THREE.NoToneMapping, 1],
-  ['aces', 'ACES', THREE.ACESFilmicToneMapping, 1.3],
-  ['agx', 'AgX', THREE.AgXToneMapping, 1.25],
-];
-let toneIdx = 0;
-try { toneIdx = Math.max(0, TONES.findIndex((t) => t[0] === localStorage.getItem('sdwg-tone'))); } catch { /* приватный режим */ }
-function applyTone() {
-  renderer.toneMapping = TONES[toneIdx][2];
-  renderer.toneMappingExposure = TONES[toneIdx][3];
-  for (const id of ['tone', 'tone-over', 'tone-pause']) $(id).textContent = `Цвет: ${TONES[toneIdx][1]}`;
+// ---------- цветовой профиль и автоэкспозиция ----------
+// на выходе — ACES Filmic: киношный контраст, мягко скатывающийся пересвет
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.0; // наш город белый — с большей экспозицией ACES выжигал крыши
+function updateAutoExpButtons() {
   for (const id of ['autoexp', 'autoexp-over', 'autoexp-pause']) $(id).textContent = `Автоэкспозиция: ${autoExpOn ? 'вкл' : 'выкл'}`;
-}
-for (const id of ['tone', 'tone-over', 'tone-pause']) {
-  $(id).addEventListener('click', (e) => {
-    e.stopPropagation();
-    toneIdx = (toneIdx + 1) % TONES.length;
-    try { localStorage.setItem('sdwg-tone', TONES[toneIdx][0]); } catch { /* приватный режим */ }
-    applyTone();
-  });
 }
 for (const id of ['autoexp', 'autoexp-over', 'autoexp-pause']) {
   $(id).addEventListener('click', (e) => {
@@ -1534,10 +1519,10 @@ for (const id of ['autoexp', 'autoexp-over', 'autoexp-pause']) {
     autoExpOn = !autoExpOn;
     try { localStorage.setItem('sdwg-autoexp', autoExpOn ? '1' : '0'); } catch { /* приватный режим */ }
     if (exposurePass) exposurePass.exposure = 1;
-    applyTone();
+    updateAutoExpButtons();
   });
 }
-applyTone();
+updateAutoExpButtons();
 
 // ---------- акустика улицы: стены рядом ----------
 // Короткое эхо со стороны стены (бежим вдоль башни или по красной стене) и отовсюду в узком месте.
