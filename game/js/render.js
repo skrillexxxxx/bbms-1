@@ -476,7 +476,11 @@ const frag = /* glsl */ `
     } else if (vTint > 4.5 && vTint < 5.5) {
       // красная стена: белая панель с красными полосами на высоте бега
       // полосы под 45°, «вверх и вперёд» — по направлению бега
-      float k = step(fract((y - vPos.z) / 1.4), 0.36);
+      // широкие полосы: ~2 м полоса, ~2 м просвет (край сглажен)
+      float sp = (y - vPos.z) / 4.0;
+      float fwS = fwidth(sp) + 1e-3;
+      float fs = fract(sp);
+      float k = smoothstep(0.0, fwS, fs) * (1.0 - smoothstep(0.5 - fwS, 0.5, fs));
       c3 = mix(c3 * 1.05, vec3(col * 0.9) * red, k * near);
     }
     else if (vTint > 1.5 && vTint < 2.5) c3 = col * vec3(0.8, 0.97, 1.04);     // бирюзовая плитка
