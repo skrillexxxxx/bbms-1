@@ -1122,7 +1122,7 @@ function die(cause = '?') {
   if (state !== 'run') return;
   rec.event('die', { cause, z: pl.z, x: pl.x, y: pl.y, lane: pl.lane });
   tutHide(); tut.kTo = tut.k = 1;
-  if (tut.step === 'done') tut.step = null;
+  if (tut.step === 'done' || tut.step === 'under') tut.step = null;
   sound.death();
   if (slideSnd) { slideSnd = false; sound.slide(false, true); }
   state = 'dead';
@@ -1255,12 +1255,15 @@ const TUT_TEXT = {
   wallJump: ['tWallJump', 'tJumpT', 'tJumpK'],
   wall: ['tWall', 'tWallT', 'tWallK'],
   kick: ['tKick', 'tKickT', 'tKickK'],
+  under: ['tUnder', 'tUnderT', 'tUnderK'],
   done: ['tDone', '', ''],
 };
-const tut = { step: null, t: 0, shown: null, k: 1, kTo: 1, wallD: 0, doneT: 0, muf: false };
+const tut = { step: null, t: 0, shown: null, k: 1, kTo: 1, wallD: 0, doneT: 0, muf: false, underTodo: false };
+try { tut.underTodo = localStorage.getItem('sdwg-tut-under') !== '1' && params.get('tut') !== '0'; } catch { /* приватный режим */ }
 function tutSaved() { try { return localStorage.getItem('sdwg-tut') || ''; } catch { return 'done'; } }
 // новый забег начнётся с первых шагов обучения — нужен прямой проспект (и после смерти)
 function tutWantsAvenue() { return !autopilot && params.get('tut') !== '0' && !['done', 'wall'].includes(tutSaved()); }
+function tutUnderSave() { tut.underTodo = false; try { localStorage.setItem('sdwg-tut-under', '1'); } catch { /* приватный режим */ } }
 function tutSave(v) { try { localStorage.setItem(TUT_KEY, v); } catch { /* приватный режим */ } }
 // true — обучение идёт с первых шагов (проспект не кончается)
 function tutStart() {
@@ -1296,7 +1299,7 @@ function tutEvent(a) {
   if (!tut.step || state !== 'run') return;
   if (tut.shown === 'jump' && a === 'jump') tutNext('slide');
   else if (tut.shown === 'slide' && a === 'slide') tutNext('pump');
-  else if (tut.shown === 'wallJump' && a === 'jump') tutShow('wall', tut.wallD < 0 ? 'left' : 'right');
+  else if (tut.step === 'under' && a === 'wall') { tutUnderSave(); tutHide(); tut.kTo = 1; tut.step = null; }
   else if (tut.step === 'wall' && a === 'wall') { tut.kTo = 1; tutNext('kick'); tut.wallD = pl.wall; }
   else if (tut.step === 'kick' && a === 'kick') tutEnd();
 }
@@ -1306,13 +1309,35 @@ function tutCard(h, p) {
   $('tut-card').classList.add('show');
 }
 // красная стена сбоку впереди: −1/+1 (или ±2 — через полосу), 0 — нет
-function tutWallAhead(v) {
-  const reach = Math.max(10, v * 1.1);
+// ближайшая красная стена сбоку впереди: { d: −1/+1 (или ±2 — через полосу), dz: через сколько метров начнётся }
+function tutWallInfo(v) {
+  const reach = Math.max(10, v * 1.2);
+  let best = null;
   for (const d of [-1, 1, -2, 2]) {
     const x = laneX(pl.lane + d);
-    for (let dz = 0; dz <= reach; dz += 1) if (isRunwallAt(x, pl.z + dz)) return d;
+    for (let dz = 0; dz <= reach; dz += 1) {
+      if (!isRunwallAt(x, pl.z + dz)) continue;
+      if (!best || dz < best.dz) best = { d, dz };
+      break;
+    }
   }
-  return 0;
+  return best;
+}
+// подсказки у красной стены — по тому, что сейчас нужно, а не по очереди:
+// на земле и до стены ~0.3–0.75 с — «прыгай»; до стены ≤ 0.3 с или она уже рядом — «свайп в стену»
+// (раньше свайп уводил в обычную стену перед красной); уже в воздухе — ждём молча, пока не пора свайпать
+function tutWallHints(v, under) {
+  const w = pl.wall ? null : tutWallInfo(v);
+  if (!w) { if (tut.shown) tutHide(); tut.kTo = 1; return; }
+  const tw = w.dz / Math.max(v, 1);
+  const side = w.d < 0 ? 'left' : 'right';
+  tut.wallD = Math.sign(w.d);
+  let want = null, g = side;
+  if (tw <= 0.3) want = under ? 'under' : 'wall';
+  else if (!under && pl.grounded && tw <= 0.75) { want = 'wallJump'; g = 'up'; }
+  if (want && (tut.shown !== want || $('tut-hint').dataset.g !== g)) tutShow(want, g);
+  else if (!want && tut.shown) tutHide();
+  tut.kTo = tw <= 0.9 ? 0.3 : 1;
 }
 function tutUpdate(dt) {
   // замедление и «стоп-кадр» — плавно, без рывка
@@ -1321,6 +1346,10 @@ function tutUpdate(dt) {
   // замедление и стоп-кадр — звук «под воду», как в меню и при смерти; вернулось время — вернулся звук
   const muf = state === 'run' && tut.kTo < 1;
   if (muf !== tut.muf) { if (state === 'run') sound.muffle(muf); tut.muf = muf; }
+  // подземка с провалом вдоль красной стены — отдельная подсказка, один раз (после основного обучения)
+  if (!tut.step && state === 'run' && !autopilot && tut.underTodo && -cam.base > 2 && flankedPit(speedNow())) {
+    tut.step = 'under'; tut.t = 1; $('tut').classList.add('show'); $('tut').style.visibility = '';
+  }
   if (!tut.step) return;
   $('tut').style.visibility = state === 'run' ? '' : 'hidden';
   if (state !== 'run') return;
@@ -1340,10 +1369,13 @@ function tutUpdate(dt) {
       break;
     case 'wall': {
       // у первой красной стены — замедление и жест в её сторону; проехал мимо — ждём следующую
-      const d = pl.wall ? 0 : tutWallAhead(v);
-      // сначала прыжок, потом — свайп в стену (можно и сразу в стену, с земли — тоже засчитаем)
-      if (d && !tut.shown && tut.t > 0.8) { tut.wallD = Math.sign(d); tutShow('wallJump', 'up'); tut.kTo = 0.3; }
-      else if (tut.shown && !d) { tutHide(); tut.kTo = 1; }
+      if (tut.t > 0.5) tutWallHints(v, false);
+      break;
+    }
+    case 'under': {
+      // подземка: длинный провал вдоль красной стены — один раз показать, что по ней бегут
+      if (-cam.base < 1) { tutHide(); tut.kTo = 1; tut.step = null; break; } // вышли из подземки — до следующего раза
+      tutWallHints(v, true);
       break;
     }
     case 'kick': {
@@ -1371,6 +1403,8 @@ $('tut-card').addEventListener('pointerdown', (e) => e.stopPropagation());
 $('help-tut').addEventListener('click', (e) => {
   e.stopPropagation();
   tutSave('');
+  try { localStorage.removeItem('sdwg-tut-under'); } catch { /* приватный режим */ }
+  tut.underTodo = true;
   $('help').classList.remove('show');
   if (state === 'ready') start();
 });
