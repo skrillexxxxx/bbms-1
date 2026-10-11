@@ -392,6 +392,7 @@ resize();
 for (const t of [250, 1000]) setTimeout(resize, t);
 
 // ---------- UI ----------
+const tr = (...a) => window.I18N.t(...a); // тексты интерфейса — js/i18n.js
 const $ = (id) => document.getElementById(id);
 const rec = createRecorder();
 const ui = {
@@ -1051,14 +1052,14 @@ let lastRun = 0;
 
 function updateSaveButton() {
   const saved = savedSeed(seed);
-  ui.save.textContent = saved ? 'Сохранён ✓' : 'Сохранить сид';
+  ui.save.textContent = saved ? tr('seedSaved') : tr('saveSeed');
   ui.save.disabled = !!saved;
 }
 
 function saveCurrentSeed() {
   const list = loadSeeds();
   if (!list.some((e) => e.seed === seed)) {
-    list.unshift({ seed, name: `Город ${seed}`, best: lastRun, at: Date.now() });
+    list.unshift({ seed, name: tr('cityName', seed), best: lastRun, at: Date.now() });
     storeSeeds(list);
   }
   updateSaveButton();
@@ -1070,7 +1071,7 @@ function renderSeeds() {
   if (!list.length) {
     const empty = document.createElement('div');
     empty.className = 'seed-empty';
-    empty.textContent = 'Пока пусто. Сохранить город можно после забега.';
+    empty.textContent = tr('citiesEmpty');
     ui.seedList.append(empty);
     return;
   }
@@ -1084,17 +1085,17 @@ function renderSeeds() {
     name.textContent = e.name;
     const meta = document.createElement('div');
     meta.className = 'seed-meta';
-    meta.textContent = `seed ${e.seed} · рекорд ${e.best || 0} м`;
+    meta.textContent = tr('cityMeta', e.seed, e.best || 0);
     info.append(name, meta);
     const play = document.createElement('button');
-    play.textContent = 'Играть';
+    play.textContent = tr('play');
     play.addEventListener('click', () => { sound.unlock(); ui.seeds.classList.remove('show'); reset(e.seed); start(); });
     const rename = document.createElement('button');
     rename.className = 'ghost small';
     rename.textContent = '✎';
-    rename.title = 'Переименовать';
+    rename.title = tr('rename');
     rename.addEventListener('click', () => {
-      const n = prompt('Название города', e.name);
+      const n = prompt(tr('cityNamePrompt'), e.name);
       if (n === null || !n.trim()) return;
       const l = loadSeeds();
       const it = l.find((x) => x.seed === e.seed);
@@ -1104,9 +1105,9 @@ function renderSeeds() {
     const del = document.createElement('button');
     del.className = 'ghost small';
     del.textContent = '✕';
-    del.title = 'Удалить';
+    del.title = tr('del');
     del.addEventListener('click', () => {
-      if (!confirm(`Удалить «${e.name}»?`)) return;
+      if (!confirm(tr('delConfirm', e.name))) return;
       storeSeeds(loadSeeds().filter((x) => x.seed !== e.seed));
       renderSeeds();
     });
@@ -1144,10 +1145,10 @@ function die(cause = '?') {
     try { localStorage.setItem('city-best-speed', String(bestSpeed)); } catch { /* ignore */ }
   }
   const info = world.infoAt(pl.z + 1);
-  ui.overDist.textContent = `${meters} м`;
-  ui.overInfo.textContent = `seed ${seed} · ${info.name} (#${info.inst}) · ряд ${info.local + 1}/${info.total}`;
-  ui.best.textContent = `рекорд ${best} м` + (runMonkeys || totalMonkeys ? ` · обезьянки ${runMonkeys} (всего ${totalMonkeys})` : '');
-  ui.speedRec.textContent = `макс. скорость ${runMaxSpeed} км/ч · рекорд ${bestSpeed} км/ч` + (newSpeedRecord ? ' — новый!' : '');
+  ui.overDist.textContent = `${meters} ${tr('m')}`;
+  ui.overInfo.textContent = `seed ${seed} · ${info.name} (#${info.inst}) · ${tr('row')} ${info.local + 1}/${info.total}`;
+  ui.best.textContent = tr('bestLine', best) + (runMonkeys || totalMonkeys ? tr('monkLine', runMonkeys, totalMonkeys) : '');
+  ui.speedRec.textContent = tr('speedLine', runMaxSpeed, bestSpeed) + (newSpeedRecord ? tr('newRec') : '');
   if (!autopilot) syncProgress(); // прогресс и рекорды — на сервер (если вошёл в аккаунт)
   setTimeout(() => { if (state === 'dead' && !ui.seeds.classList.contains('show')) ui.over.classList.add('show'); }, 450);
 }
@@ -1168,7 +1169,7 @@ function setPauseIcon() {
   const b = $('pause');
   b.textContent = state === 'paused' ? '←' : '❚❚';
   b.classList.toggle('back', state === 'paused');
-  b.setAttribute('aria-label', state === 'paused' ? 'Назад' : 'Пауза');
+  b.setAttribute('aria-label', state === 'paused' ? tr('back') : tr('pause'));
 }
 // выход в главное меню: тот же город, стартовый экран
 function toMainMenu() {
@@ -1248,13 +1249,13 @@ function leaveAvenue() {
 // Пройдено — sdwg-tut = done; умер на стенах — в следующем забеге продолжаем со стен.
 const TUT_KEY = 'sdwg-tut';
 const TUT_TEXT = {
-  jump: ['Прыжок', 'свайп вверх', '↑ или пробел'],
-  slide: ['Подкат', 'свайп вниз', '↓'],
-  pump: ['Разгон', 'быстро свайпай вниз — двумя пальцами по очереди', 'часто жми ↓'],
-  wallJump: ['Прыгай', 'свайп вверх', '↑ или пробел'],
-  wall: ['Бег по стене', 'свайп %s — к красной стене', '%k — к красной стене'],
-  kick: ['На стену напротив', 'свайп %s — от стены', '%k — от стены'],
-  done: ['Готово! Дальше — сам', '', ''],
+  jump: ['tJump', 'tJumpT', 'tJumpK'],
+  slide: ['tSlide', 'tSlideT', 'tSlideK'],
+  pump: ['tPump', 'tPumpT', 'tPumpK'],
+  wallJump: ['tWallJump', 'tJumpT', 'tJumpK'],
+  wall: ['tWall', 'tWallT', 'tWallK'],
+  kick: ['tKick', 'tKickT', 'tKickK'],
+  done: ['tDone', '', ''],
 };
 const tut = { step: null, t: 0, shown: null, k: 1, kTo: 1, wallD: 0, doneT: 0, muf: false };
 function tutSaved() { try { return localStorage.getItem('sdwg-tut') || ''; } catch { return 'done'; } }
@@ -1272,8 +1273,8 @@ function tutStart() {
   return tut.step === 'jump';
 }
 function tutShow(name, g) {
-  const side = g === 'left' ? ['влево', '←'] : ['вправо', '→'];
-  const [h, touchTxt, keyTxt] = TUT_TEXT[name].map((t) => t.replace('%s', side[0]).replace('%k', side[1]));
+  const side = g === 'left' ? [tr('left'), '←'] : [tr('right'), '→'];
+  const [h, touchTxt, keyTxt] = TUT_TEXT[name].map((k) => (k ? tr(k) : '').replace('%s', side[0]).replace('%k', side[1]));
   const el = $('tut-hint');
   el.dataset.g = g;
   if (tut.shown) { el.classList.remove('on'); void el.offsetWidth; } // сменили подсказку — заново въезжает
@@ -1334,9 +1335,7 @@ function tutUpdate(dt) {
       // разогнался — время замирает, карточка объясняет, что это было
       if (tut.shown && pl.pump > 1.6) {
         tutHide(); tut.step = 'pumpCard'; tut.kTo = 0;
-        const touchTxt = 'Быстрые свайпы вниз в подкате разгоняют. Чем чаще — тем быстрее, предела нет. Перестанешь — скорость понемногу спадёт.<br>Быстрее всего — двумя пальцами по очереди.';
-        const keyTxt = 'Частые нажатия ↓ в подкате разгоняют. Чем чаще — тем быстрее, предела нет. Перестанешь — скорость понемногу спадёт.';
-        tutCard('Это разгон', matchMedia('(hover: hover) and (pointer: fine)').matches ? keyTxt : touchTxt);
+        tutCard(tr('tCardH'), matchMedia('(hover: hover) and (pointer: fine)').matches ? tr('tCardKey') : tr('tCardTouch'));
       }
       break;
     case 'wall': {
@@ -1669,7 +1668,7 @@ function renderLampShadow() {
   u.uShadow.value = shadowRT.depthTexture;
 }
 function updateShadowButtons() {
-  for (const id of ['shadows']) $(id).textContent = `Тени фонаря: ${shadowsOn ? 'вкл' : 'выкл'}`;
+  for (const id of ['shadows']) $(id).textContent = tr('shadowsBtn', shadowsOn);
 }
 for (const id of ['shadows']) {
   $(id).addEventListener('click', (e) => {
@@ -1730,7 +1729,7 @@ function renderSunShadow(deep) {
   u.uSunShadow.value = sunRT.depthTexture;
 }
 function updateSunButtons() {
-  for (const id of ['sun']) $(id).textContent = `Тени солнца: ${sunOn ? 'вкл' : 'выкл'}`;
+  for (const id of ['sun']) $(id).textContent = tr('sunBtn', sunOn);
 }
 for (const id of ['sun']) {
   $(id).addEventListener('click', (e) => {
@@ -1746,7 +1745,7 @@ updateSunButtons();
 let ps1On = false;
 try { ps1On = localStorage.getItem('sdwg-ps1') === '1'; } catch { /* приватный режим */ }
 function updatePs1Buttons() {
-  for (const id of ['ps1']) $(id).textContent = `PS1: ${ps1On ? 'вкл' : 'выкл'}`;
+  for (const id of ['ps1']) $(id).textContent = tr('ps1Btn', ps1On);
 }
 for (const id of ['ps1']) {
   $(id).addEventListener('click', (e) => {
@@ -1763,7 +1762,7 @@ updatePs1Buttons();
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.0; // наш город белый — с большей экспозицией ACES выжигал крыши
 function updateAutoExpButtons() {
-  for (const id of ['autoexp']) $(id).textContent = `Автоэкспозиция: ${autoExpOn ? 'вкл' : 'выкл'}`;
+  for (const id of ['autoexp']) $(id).textContent = tr('aeBtn', autoExpOn);
 }
 for (const id of ['autoexp']) {
   $(id).addEventListener('click', (e) => {
@@ -1808,7 +1807,7 @@ const gfxFmt = {
   aeStr: (v) => `${Math.round(v * 100)}%`, aeTgt: (v) => `${v > 0 ? '+' : ''}${v.toFixed(2)} EV`, aeSpd: (v) => `×${v.toFixed(2)}`,
   sunAmt: (v) => `${Math.round(v * 100)}%`, shadeAmt: (v) => `${Math.round(v * 100)}%`,
   blur: (v) => `${Math.round(v * 100)}%`, grain: (v) => `${Math.round(v * 100)}%`, ca: (v) => `${Math.round(v * 100)}%`,
-  temp: (v) => (v === 0 ? '0' : `${v > 0 ? 'теплее' : 'холоднее'} ${Math.abs(v).toFixed(2)}`),
+  temp: (v) => (v === 0 ? '0' : `${v > 0 ? tr('warmer') : tr('cooler')} ${Math.abs(v).toFixed(2)}`),
 };
 const GFX_COLORS = ['sunCol', 'shadeCol'];
 function syncGfxUI() {
@@ -1880,6 +1879,14 @@ $('gfx').addEventListener('pointerdown', (e) => {
 for (const ev of ['pointerup', 'pointercancel', 'blur']) window.addEventListener(ev, peekOff);
 $('gfx').addEventListener('change', peekOff);
 syncGfxUI();
+// язык интерфейса (js/i18n.js): кнопка в главном меню; меняется сразу, без перезагрузки
+$('lang-btn').addEventListener('click', (e) => { e.stopPropagation(); window.I18N.set(window.I18N.lang === 'ru' ? 'en' : 'ru'); });
+window.addEventListener('sdwg-lang', () => {
+  updateShadowButtons(); updateSunButtons(); updatePs1Buttons(); updateAutoExpButtons();
+  syncGfxUI(); updateSaveButton(); setPauseIcon();
+  if (ui.seeds.classList.contains('show')) renderSeeds();
+  if (tut.shown) tutShow(tut.shown, $('tut-hint').dataset.g);
+});
 applyGfx();
 
 // ---------- акустика улицы: стены рядом ----------
@@ -1974,7 +1981,7 @@ async function sendRecording() {
   if (!rec.has()) return;
   const name = `sdwg-run-${seed}-${runMeters()}m.json`;
   const res = await shareFile(name, JSON.stringify(runFile()));
-  if (res !== 'cancelled') { ui.rec.textContent = 'Запись готова ✓'; setTimeout(() => { ui.rec.textContent = 'Отправить запись'; }, 2500); }
+  if (res !== 'cancelled') { ui.rec.textContent = tr('runReady'); setTimeout(() => { ui.rec.textContent = tr('sendRun'); }, 2500); }
 }
 ui.rec.addEventListener('click', sendRecording);
 ui.flag.addEventListener('pointerdown', (e) => {
@@ -2143,10 +2150,10 @@ function frame(now) {
     const n = Math.ceil(dt * Math.max(120, speedNow() / 0.3));
     for (let i = 0; i < n && state === 'run'; i++) { if (autopilot) autopilotStep(); physicsStep(dt / n); }
     ensureWorld();
-    ui.dist.textContent = `${runMeters()} м`;
+    ui.dist.textContent = `${runMeters()} ${tr('m')}`;
     const sp = kmh(speedNow());
     if (sp > runMaxSpeed) runMaxSpeed = sp;
-    ui.spd.textContent = `${sp} км/ч`;
+    ui.spd.textContent = `${sp} ${tr('kmh')}`;
     recordFrame();
     collectMonkeys(zBefore);
     if (pl.grounded && !wasGroundedSnd) {
@@ -2332,7 +2339,7 @@ function frame(now) {
     if (fpsAcc > 0.5) { fps = Math.round(fpsN / fpsAcc); fpsAcc = 0; fpsN = 0; }
   }
   const info = world.infoAt(pl.z);
-  ui.debug.textContent = `seed ${seed} · ${info.name} #${info.inst} · ряд ${info.local + 1}/${info.total}` + (showDebug ? ` · ${fps} fps` : '');
+  ui.debug.textContent = `seed ${seed} · ${info.name} #${info.inst} · ${tr('row')} ${info.local + 1}/${info.total}` + (showDebug ? ` · ${fps} fps` : '');
 }
 
 const initialSeed = Number(params.get('seed'));

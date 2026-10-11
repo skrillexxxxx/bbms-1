@@ -3,6 +3,7 @@
 
 const $ = (id) => document.getElementById(id);
 const params = new URLSearchParams(location.search);
+const tr = (...a) => window.I18N.t(...a); // тексты интерфейса — js/i18n.js
 
 const standalone = navigator.standalone === true
   || matchMedia('(display-mode: standalone)').matches || matchMedia('(display-mode: fullscreen)').matches;
@@ -68,14 +69,14 @@ function collect() {
 
 async function exportProgress() {
   let data;
-  try { data = collect(); } catch { alert('Не получилось прочитать прогресс (приватный режим?)'); return; }
+  try { data = collect(); } catch { alert(tr('errRead')); return; }
   const now = new Date();
   const name = `sdwg-save-${now.toISOString().slice(0, 10)}.json`;
   const text = JSON.stringify({ app: 'sdwg', v: 1, at: now.toISOString(), data }, null, 1);
   const file = new File([text], name, { type: 'application/json' });
   // на iPhone — системное «Поделиться»: там «Сохранить в Файлы», AirDrop, мессенджеры
   if (navigator.canShare && navigator.canShare({ files: [file] })) {
-    try { await navigator.share({ files: [file], title: 'SDWG GAME — сохранение' }); return; } catch (err) {
+    try { await navigator.share({ files: [file], title: tr('saveTitle') }); return; } catch (err) {
       if (err && err.name === 'AbortError') return; // закрыли окно — ничего не делаем
     }
   }
@@ -92,17 +93,17 @@ async function importProgress(file) {
   let save;
   try { save = JSON.parse(await file.text()); } catch { save = null; }
   if (!save || save.app !== 'sdwg' || !save.data || typeof save.data !== 'object') {
-    alert('Это не файл сохранения SDWG GAME');
+    alert(tr('errNotSave'));
     return;
   }
   const keys = Object.keys(save.data).filter(OURS);
   const best = Number(save.data['city-best']) || 0;
-  const when = save.at ? new Date(save.at).toLocaleString('ru-RU') : '?';
-  if (!confirm(`Загрузить сохранение от ${when} (рекорд ${best} м)?\nТекущий прогресс на этом устройстве заменится.`)) return;
+  const when = save.at ? new Date(save.at).toLocaleString(window.I18N.locale()) : '?';
+  if (!confirm(tr('confirmLoad', when, best))) return;
   try {
     for (const k of Object.keys(collect())) localStorage.removeItem(k);
     for (const k of keys) localStorage.setItem(k, String(save.data[k]));
-  } catch { alert('Не получилось записать прогресс (приватный режим?)'); return; }
+  } catch { alert(tr('errWrite')); return; }
   location.reload();
 }
 

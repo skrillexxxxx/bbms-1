@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="ru">
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
@@ -49,14 +49,13 @@
     /* экран проигрыша и пауза — прозрачные, как стартовый: видно игру и то, как меняются настройки.
        Читаемость — светлым ореолом у текста и полупрозрачными кнопками */
     #over, #pause-menu { pointer-events: auto; }
-    #over button.ghost, #pause-menu button.ghost { background: rgba(255,255,255,0.6); }
     #over-dist { font-size: clamp(48px, 16vw, 96px); font-weight: 300; }
     #over-info { font: 12px "Plex Mono", ui-monospace, Menlo, monospace; opacity: 0.6; margin: 8px 0 4px; }
     #best { font-size: 14px; opacity: 0.7; margin-bottom: 28px; }
     button {
       font: inherit; font-size: 16px; font-weight: 400; letter-spacing: 0.08em;
       padding: 14px 28px; margin: 6px; border-radius: 999px; cursor: pointer;
-      border: 1.5px solid var(--ink); background: var(--ink); color: var(--paper);
+      border: 1.5px solid var(--ink); background: transparent; color: var(--ink);
     }
     button.ghost { background: transparent; color: var(--ink); }
     #hud {
@@ -140,7 +139,7 @@
     #gfx .cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 0 22px; text-align: left; }
     #gfx .sub { font-size: 12px; font-weight: 400; letter-spacing: 0.12em; text-transform: uppercase; opacity: 0.55; margin: 12px 0 0; text-align: center; }
     #gfx label { display: block; font-size: 14px; font-weight: 400; margin: 6px 0 0; }
-    #gfx label span { float: right; font: 12px "Plex Mono", ui-monospace, Menlo, monospace; opacity: 0.75; }
+    #gfx label span:not(.lt) { float: right; font: 12px "Plex Mono", ui-monospace, Menlo, monospace; opacity: 0.75; }
     #gfx input[type=range] { width: 100%; margin: 4px 0 2px; accent-color: #111; height: 28px; }
     #gfx .row { margin-top: 10px; }
     #gfx input.swatch { width: 34px; height: 18px; padding: 0; margin: 0 0 0 6px; border: 1.5px solid #111; border-radius: 4px; background: none; vertical-align: middle; cursor: pointer; }
@@ -383,143 +382,144 @@
   <canvas id="game"></canvas>
   <div id="halo"></div>
 
-  <div id="hud"><div id="hud-left"><span id="dist">0 м</span><span id="spd"></span><span id="monk"></span></div><div id="hud-right"><button id="flag" class="ghost small" aria-label="Метка: тут что-то не так">⚑</button><button id="pause" class="ghost small" aria-label="Пауза">❚❚</button></div></div>
-  <div id="rotate" title="Поверни телефон горизонтально"><svg viewBox="0 0 64 64" aria-hidden="true">
+  <div id="hud"><div id="hud-left"><span id="dist">0 m</span><span id="spd"></span><span id="monk"></span></div><div id="hud-right"><button id="flag" class="ghost small" data-ta="flag" aria-label="Mark: something is wrong here">⚑</button><button id="pause" class="ghost small" aria-label="Pause">❚❚</button></div></div>
+  <div id="rotate" data-tt="rotate" title="Turn your phone sideways"><svg viewBox="0 0 64 64" aria-hidden="true">
       <path class="arc" d="M50 20a22 22 0 0 0-30-8" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>
       <path class="arc" d="M18 6l2 6.5-6.5 1.5" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
       <g class="ph"><rect x="23" y="18" width="18" height="32" rx="4" fill="none" stroke="currentColor" stroke-width="3"/><path d="M29.5 45h5" stroke="currentColor" stroke-width="3" stroke-linecap="round"/></g>
     </svg></div>
-  <div id="soundhint"><span class="arr">➜</span><span class="ic"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 16.5V11a6 6 0 0 1 12 0v5.5l1.5 1.5h-15z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M10 20.5a2 2 0 0 0 4 0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></span><span>Включи звук</span></div>
+  <div id="soundhint"><span class="arr">➜</span><span class="ic"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 16.5V11a6 6 0 0 1 12 0v5.5l1.5 1.5h-15z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M10 20.5a2 2 0 0 0 4 0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></span><span data-t="soundHint">Turn on sound</span></div>
   <div id="debug"></div>
   <div id="fps"></div>
 
   <div id="start" class="screen">
     <h1>SDWG GAME</h1>
-    <div class="pulse">Тапни, чтобы бежать</div>
-    <div class="menu"><button id="install-open" class="ghost small" style="display:none">Установить приложение</button><button id="lb-open" class="ghost">Рекорды</button><button id="open-seeds" class="ghost">Мои города</button><button id="help-open" class="ghost small">Инструкция</button><button id="save-progress" class="ghost small">Сохранить прогресс</button><button id="load-progress" class="ghost small">Загрузить</button><br><button id="gfx-open-start" class="ghost small">Графика</button><button id="snd-open-start" class="ghost small">Звук</button></div>
+    <div class="pulse" data-t="tapToRun">Tap to run</div>
+    <div class="menu"><button id="install-open" class="ghost small" style="display:none" data-t="installApp">Install app</button><button id="lb-open" class="ghost" data-t="records">Records</button><button id="open-seeds" class="ghost" data-t="myCities">My seeds</button><button id="help-open" class="ghost small" data-t="howTo">How to play</button><button id="save-progress" class="ghost small" data-t="saveProgress">Save progress</button><button id="load-progress" class="ghost small" data-t="loadProgress">Load</button><br><button id="gfx-open-start" class="ghost small" data-t="graphics">Graphics</button><button id="snd-open-start" class="ghost small" data-t="sound">Sound</button><button id="lang-btn" class="ghost small" data-t="langBtn">Русский</button></div>
   </div>
 
   <div id="seeds" class="screen">
-    <h2>Мои города</h2>
+    <h2 data-t="myCities">My seeds</h2>
     <div id="seed-list"></div>
-    <div style="margin-top: 18px"><button id="close-seeds" class="ghost">Назад</button></div>
+    <div style="margin-top: 18px"><button id="close-seeds" class="ghost" data-t="back">Back</button></div>
   </div>
 
   <div id="over" class="screen">
-    <div id="over-dist">0 м</div>
+    <div id="over-dist">0 m</div>
     <div id="over-info"></div>
     <div id="speed-rec"></div>
     <div id="best"></div>
     <div>
-      <button id="again">Новый город</button>
-      <button id="same" class="ghost">Этот же сид</button>
+      <button id="again" data-t="newCity">New city</button>
+      <button id="same" class="ghost" data-t="sameSeed">Same seed</button>
     </div>
-    <div><button id="lb-open-over" class="ghost">Рекорды</button><button id="save" class="ghost">Сохранить сид</button><button id="open-seeds-over" class="ghost">Мои города</button><button id="to-menu-over" class="ghost">Главное меню</button></div>
-    <div><button id="gfx-open-over" class="ghost small">Графика</button><button id="snd-open-over" class="ghost small">Звук</button><button id="rec" class="ghost small">Отправить запись</button></div>
+    <div><button id="lb-open-over" class="ghost" data-t="records">Records</button><button id="save" class="ghost">Save seed</button><button id="open-seeds-over" class="ghost" data-t="myCities">My seeds</button><button id="to-menu-over" class="ghost" data-t="mainMenu">Main menu</button></div>
+    <div><button id="gfx-open-over" class="ghost small" data-t="graphics">Graphics</button><button id="snd-open-over" class="ghost small" data-t="sound">Sound</button><button id="rec" class="ghost small" data-t="sendRun">Send run log</button></div>
   </div>
 
   <div id="pause-menu" class="screen">
-    <h2>Пауза</h2>
-    <div><button id="resume">Продолжить</button></div>
-    <div><button id="restart-same" class="ghost">Заново</button><button id="restart-new" class="ghost">Новый город</button><button id="to-menu" class="ghost">Главное меню</button></div>
-    <div><button id="gfx-open" class="ghost small">Графика</button><button id="snd-open" class="ghost small">Звук</button></div>
+    <h2 data-t="paused">Paused</h2>
+    <div><button id="resume" data-t="resume">Resume</button></div>
+    <div><button id="restart-same" class="ghost" data-t="restart">Restart</button><button id="restart-new" class="ghost" data-t="newCity">New city</button><button id="to-menu" class="ghost" data-t="mainMenu">Main menu</button></div>
+    <div><button id="gfx-open" class="ghost small" data-t="graphics">Graphics</button><button id="snd-open" class="ghost small" data-t="sound">Sound</button></div>
   </div>
 
   <div id="gfx" class="screen">
     <div class="panel">
-      <h2 class="pg-gfx">Графика</h2><h2 class="pg-snd">Звук</h2>
+      <h2 class="pg-gfx" data-t="graphics">Graphics</h2><h2 class="pg-snd" data-t="sound">Sound</h2>
       <div class="pg-gfx">
-      <div class="toggles"><button id="shadows" class="ghost small">Тени фонаря: выкл</button><button id="sun" class="ghost small">Тени солнца: выкл</button><button id="ps1" class="ghost small">PS1: выкл</button><button id="autoexp" class="ghost small">Автоэкспозиция: вкл</button></div>
+      <div class="toggles"><button id="shadows" class="ghost small"></button><button id="sun" class="ghost small"></button><button id="ps1" class="ghost small"></button><button id="autoexp" class="ghost small"></button></div>
       <div class="cols"><div class="col">
-      <div class="sub">Солнце</div>
-      <label>Направление <span id="gfx-az-v"></span><input type="range" id="gfx-az" min="-180" max="180" step="1"></label>
-      <label>Высота <span id="gfx-el-v"></span><input type="range" id="gfx-el" min="8" max="88" step="1"></label>
-      <label>Яркость солнца <span id="gfx-lit-v"></span><input type="range" id="gfx-lit" min="0.5" max="1.8" step="0.02"></label>
-      <label>Затенение (сила тени) <span id="gfx-shade-v"></span><input type="range" id="gfx-shade" min="0" max="0.9" step="0.01"></label>
+      <div class="sub" data-t="gSun">Sun</div>
+      <label><span class="lt" data-t="gAz">Direction</span> <span id="gfx-az-v"></span><input type="range" id="gfx-az" min="-180" max="180" step="1"></label>
+      <label><span class="lt" data-t="gEl">Elevation</span> <span id="gfx-el-v"></span><input type="range" id="gfx-el" min="8" max="88" step="1"></label>
+      <label><span class="lt" data-t="gLit">Sun brightness</span> <span id="gfx-lit-v"></span><input type="range" id="gfx-lit" min="0.5" max="1.8" step="0.02"></label>
+      <label><span class="lt" data-t="gShade">Shadow depth</span> <span id="gfx-shade-v"></span><input type="range" id="gfx-shade" min="0" max="0.9" step="0.01"></label>
       </div><div class="col">
-      <div class="sub">Цвет</div>
-      <label>Экспозиция <span id="gfx-exp-v"></span><input type="range" id="gfx-exp" min="-2" max="2" step="0.05"></label>
-      <label>Контраст <span id="gfx-con-v"></span><input type="range" id="gfx-con" min="0.5" max="1.6" step="0.01"></label>
-      <label>Температура <span id="gfx-temp-v"></span><input type="range" id="gfx-temp" min="-1" max="1" step="0.02"></label>
-      <label>Цвет солнца <input type="color" id="gfx-sunCol" class="swatch"><span id="gfx-sunAmt-v"></span><input type="range" id="gfx-sunAmt" min="0" max="1" step="0.01"></label>
-      <label>Цвет тени <input type="color" id="gfx-shadeCol" class="swatch"><span id="gfx-shadeAmt-v"></span><input type="range" id="gfx-shadeAmt" min="0" max="1" step="0.01"></label>
+      <div class="sub" data-t="gColor">Color</div>
+      <label><span class="lt" data-t="gExp">Exposure</span> <span id="gfx-exp-v"></span><input type="range" id="gfx-exp" min="-2" max="2" step="0.05"></label>
+      <label><span class="lt" data-t="gCon">Contrast</span> <span id="gfx-con-v"></span><input type="range" id="gfx-con" min="0.5" max="1.6" step="0.01"></label>
+      <label><span class="lt" data-t="gTemp">Temperature</span> <span id="gfx-temp-v"></span><input type="range" id="gfx-temp" min="-1" max="1" step="0.02"></label>
+      <label><span class="lt" data-t="gSunCol">Sun color</span> <input type="color" id="gfx-sunCol" class="swatch"><span id="gfx-sunAmt-v"></span><input type="range" id="gfx-sunAmt" min="0" max="1" step="0.01"></label>
+      <label><span class="lt" data-t="gShadeCol">Shadow color</span> <input type="color" id="gfx-shadeCol" class="swatch"><span id="gfx-shadeAmt-v"></span><input type="range" id="gfx-shadeAmt" min="0" max="1" step="0.01"></label>
       </div><div class="col">
-      <div class="sub">Автоэкспозиция</div>
-      <label>Сила <span id="gfx-aeStr-v"></span><input type="range" id="gfx-aeStr" min="0" max="1" step="0.01"></label>
-      <label>Целевая яркость <span id="gfx-aeTgt-v"></span><input type="range" id="gfx-aeTgt" min="-1.5" max="1.5" step="0.05"></label>
-      <label>Скорость привыкания <span id="gfx-aeSpd-v"></span><input type="range" id="gfx-aeSpd" min="0.25" max="4" step="0.05"></label>
+      <div class="sub" data-t="gAE">Auto exposure</div>
+      <label><span class="lt" data-t="gAeStr">Strength</span> <span id="gfx-aeStr-v"></span><input type="range" id="gfx-aeStr" min="0" max="1" step="0.01"></label>
+      <label><span class="lt" data-t="gAeTgt">Target brightness</span> <span id="gfx-aeTgt-v"></span><input type="range" id="gfx-aeTgt" min="-1.5" max="1.5" step="0.05"></label>
+      <label><span class="lt" data-t="gAeSpd">Adaptation speed</span> <span id="gfx-aeSpd-v"></span><input type="range" id="gfx-aeSpd" min="0.25" max="4" step="0.05"></label>
       </div><div class="col">
-      <div class="sub">Эффекты</div>
-      <label>Motion blur <span id="gfx-blur-v"></span><input type="range" id="gfx-blur" min="0" max="2" step="0.05"></label>
-      <label>Шум <span id="gfx-grain-v"></span><input type="range" id="gfx-grain" min="0" max="3" step="0.05"></label>
-      <label>Хром. аберрация <span id="gfx-ca-v"></span><input type="range" id="gfx-ca" min="0" max="3" step="0.05"></label>
+      <div class="sub" data-t="gFx">Effects</div>
+      <label><span class="lt" data-t="gBlur">Motion blur</span> <span id="gfx-blur-v"></span><input type="range" id="gfx-blur" min="0" max="2" step="0.05"></label>
+      <label><span class="lt" data-t="gGrain">Grain</span> <span id="gfx-grain-v"></span><input type="range" id="gfx-grain" min="0" max="3" step="0.05"></label>
+      <label><span class="lt" data-t="gCa">Chrom. aberration</span> <span id="gfx-ca-v"></span><input type="range" id="gfx-ca" min="0" max="3" step="0.05"></label>
       </div></div>
       </div>
       <div class="pg-snd snd-cols">
-      <label>Музыка <span id="snd-music-v"></span><input type="range" id="snd-music" min="0" max="1" step="0.01"></label>
-      <label>Игровые звуки <span id="snd-game-v"></span><input type="range" id="snd-game" min="0" max="1" step="0.01"></label>
+      <label><span class="lt" data-t="sMusic">Music</span> <span id="snd-music-v"></span><input type="range" id="snd-music" min="0" max="1" step="0.01"></label>
+      <label><span class="lt" data-t="sGame">Game sounds</span> <span id="snd-game-v"></span><input type="range" id="snd-game" min="0" max="1" step="0.01"></label>
       </div>
-      <div class="row"><button id="gfx-reset" class="ghost small">Сбросить</button><button id="gfx-close" class="small">Назад</button></div>
+      <div class="row"><button id="gfx-reset" class="ghost small" data-t="reset">Reset</button><button id="gfx-close" class="small" data-t="back">Back</button></div>
     </div>
   </div>
 
   <div id="tut"><div class="tut-hint" id="tut-hint" data-g="up"><div class="tut-g"><div class="tut-f c"></div><div class="tut-f l"></div><div class="tut-f r"></div></div><div class="tut-label" id="tut-label"></div></div></div>
-  <div id="tut-card" class="screen"><h2 id="tut-card-h"></h2><p id="tut-card-p"></p><div><button id="tut-card-ok">Понятно</button></div></div>
+  <div id="tut-card" class="screen"><h2 id="tut-card-h"></h2><p id="tut-card-p"></p><div><button id="tut-card-ok" data-t="gotIt">Got it</button></div></div>
   <div id="help" class="screen">
     <div class="card">
-      <h2>Как играть</h2>
+      <h2 data-t="helpH">How to play</h2>
       <ul>
-        <li><b>Свайп влево-вправо</b> — сменить полосу</li>
-        <li><b>Свайп вверх или тап</b> — прыжок</li>
-        <li><b>Свайп вниз</b> — подкат (под мостами и трубами)</li>
-        <li><b>Свайп в красную стену</b> — бег по стене, <b>свайп от неё</b> — прыжок на стену напротив</li>
-        <li>Не врезайся в здания</li>
+        <li data-th="help1"></li>
+        <li data-th="help2"></li>
+        <li data-th="help3"></li>
+        <li data-th="help4"></li>
+        <li data-th="help5"></li>
       </ul>
-      <div class="row"><button id="help-tut" class="ghost">Пройти обучение</button><button id="help-ok" class="ghost">Понятно</button></div>
+      <div class="row"><button id="help-tut" class="ghost" data-t="replayTut">Replay tutorial</button><button id="help-ok" class="ghost" data-t="gotIt">Got it</button></div>
     </div>
   </div>
   <div id="lb" class="screen">
-    <h2>Рекорды</h2>
+    <h2 data-t="records">Records</h2>
     <div id="lb-scroll"><table>
-      <thead><tr><th>#</th><th class="name">Игрок</th><th data-by="dist">Метры</th><th data-by="speed">км/ч</th><th data-by="monkeys" aria-label="Обезьянки"><span class="monk-ic"></span></th></tr></thead>
+      <thead><tr><th>#</th><th class="name" data-t="player">Player</th><th data-by="dist" data-t="meters">Meters</th><th data-by="speed" data-t="kmh">km/h</th><th data-by="monkeys" data-ta="monkeys" aria-label="Monkeys"><span class="monk-ic"></span></th></tr></thead>
       <tbody id="lb-body"></tbody>
     </table><div id="lb-note"></div></div>
     <div id="lb-me"></div>
-    <div style="margin-top: 8px"><button id="lb-close" class="ghost">Назад</button></div>
+    <div style="margin-top: 8px"><button id="lb-close" class="ghost" data-t="back">Back</button></div>
   </div>
   <div id="nick" class="screen">
     <div class="card">
-      <h2 id="nick-h">Как тебя зовут?</h2>
+      <h2 id="nick-h"></h2>
       <div class="why" id="nick-why"></div>
       <div class="fields">
-        <input id="nick-input" type="text" maxlength="16" autocomplete="username" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="next" placeholder="Ник">
-        <input id="nick-pass" type="password" maxlength="64" autocomplete="new-password" enterkeyhint="done" placeholder="Пароль">
+        <input id="nick-input" type="text" maxlength="16" autocomplete="username" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="next" placeholder="Nickname">
+        <input id="nick-pass" type="password" maxlength="64" autocomplete="new-password" enterkeyhint="done" placeholder="Password">
       </div>
       <div id="nick-err"></div>
-      <div class="row"><button id="nick-ok">Готово</button><button id="nick-skip" class="ghost">Позже</button></div>
-      <button id="nick-swap">Уже есть аккаунт? Войти</button>
+      <div class="row"><button id="nick-ok"></button><button id="nick-skip" class="ghost"></button></div>
+      <button id="nick-swap"></button>
     </div>
   </div>
   <div id="install" class="screen">
     <div class="card">
-      <h2>Установи игру на экран «Домой»</h2>
-      <div class="why">Так она откроется на весь экран, без панелей браузера,<br>и свайпы не будут дёргать страницу.</div>
+      <h2 data-t="installH"></h2>
+      <div class="why" data-th="installWhy"></div>
       <ol id="install-ios">
-        <li><span class="ic"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12M7.5 7.5 12 3l4.5 4.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M8 10H6.5A1.5 1.5 0 0 0 5 11.5v8A1.5 1.5 0 0 0 6.5 21h11a1.5 1.5 0 0 0 1.5-1.5v-8A1.5 1.5 0 0 0 17.5 10H16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></span><span>Нажми «Поделиться» в Safari<small>в новых iOS: кнопка ••• → «Поделиться»</small></span></li>
-        <li><span class="ic"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="3.5" width="17" height="17" rx="4" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 8v8M8 12h8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></span><span>Выбери «На экран „Домой“»<small>если не видно — пролистай список вниз</small></span></li>
-        <li><span class="ic"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5 10 17.5 19 7" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg></span><span>Нажми «Добавить» и запускай с иконки SDWG</span></li>
+        <li><span class="ic"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12M7.5 7.5 12 3l4.5 4.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M8 10H6.5A1.5 1.5 0 0 0 5 11.5v8A1.5 1.5 0 0 0 6.5 21h11a1.5 1.5 0 0 0 1.5-1.5v-8A1.5 1.5 0 0 0 17.5 10H16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></span><span data-th="iosStep1"></span></li>
+        <li><span class="ic"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="3.5" width="17" height="17" rx="4" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 8v8M8 12h8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></span><span data-th="iosStep2"></span></li>
+        <li><span class="ic"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5 10 17.5 19 7" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg></span><span data-th="iosStep3"></span></li>
       </ol>
       <ol id="install-other">
-        <li><span class="ic">⋮</span><span>Открой меню браузера</span></li>
-        <li><span class="ic"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="3.5" width="17" height="17" rx="4" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 8v8M8 12h8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></span><span>«Установить приложение» или «Добавить на главный экран»</span></li>
-        <li><span class="ic"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5 10 17.5 19 7" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg></span><span>Запускай с иконки SDWG</span></li>
+        <li><span class="ic">⋮</span><span data-th="andStep1"></span></li>
+        <li><span class="ic"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="3.5" width="17" height="17" rx="4" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 8v8M8 12h8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></span><span data-th="andStep2"></span></li>
+        <li><span class="ic"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5 10 17.5 19 7" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg></span><span data-th="andStep3"></span></li>
       </ol>
-      <div class="note">Прогресс браузера и приложения хранится отдельно — перенеси его кнопками<br>«Сохранить прогресс» и «Загрузить» в главном меню.</div>
-      <div class="row"><button id="install-native" style="display:none">Установить</button><button id="install-ok" class="ghost">Понятно</button></div>
+      <div class="note" data-th="installNote"></div>
+      <div class="row"><button id="install-native" style="display:none" data-t="install">Install</button><button id="install-ok" class="ghost" data-t="gotIt">Got it</button></div>
     </div>
   </div>
   <input type="file" id="load-file" style="display:none">
 
+  <script src="js/i18n.js"></script>
   <script>
     // Запуск. Первый тап — это жест: в нём включаем звук (AudioContext), и только потом грузим игру.
     // В мобильном браузере вместо «Тапни» сразу окно «Установи на экран „Домой“»: «Играть в браузере» — тот же тап.
@@ -570,7 +570,7 @@
           window.dispatchEvent(new Event('sdwg-reveal'));
           setTimeout(function () {
             // окно установки — обратно на своё место (кнопка «Установить приложение» в меню)
-            var ins = $('install'); ins.classList.remove('show'); $('install-ok').textContent = 'Понятно'; document.body.appendChild(ins);
+            var ins = $('install'); ins.classList.remove('show'); $('install-ok').textContent = I18N.t('gotIt'); document.body.appendChild(ins);
             boot.remove();
           }, 1000);
         }, 300);
@@ -605,7 +605,7 @@
         boot.appendChild(ins);
         $('install-ios').style.display = ios ? '' : 'none';
         $('install-other').style.display = ios ? 'none' : '';
-        $('install-ok').textContent = 'Играть в браузере';
+        $('install-ok').textContent = I18N.t('playInBrowser');
         ins.classList.add('show');
         boot.classList.add('install');
         try { sessionStorage.setItem('sdwg-install-seen', '1'); } catch (e) { /* приватный режим */ }
