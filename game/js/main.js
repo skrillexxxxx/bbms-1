@@ -356,6 +356,8 @@ function reset(s) {
   built = 0;
   world = new World(seed);
   // для проверки: ?under=dark,balls,balloons,sparks,carts — эти особенности во всех переходах
+  // ?ruin=1 — разруха везде, ?ruin=0 — нигде
+  if (params.get('ruin') !== null) world.ruinOverride = params.get('ruin') === '1';
   if (params.get('under')) world.featOverride = Object.fromEntries(params.get('under').split(',').map((k) => [k, true]));
   Object.assign(pl, {
     x: 6 * CELL + CELL / 2, z: ROW * 0.5, y: 0, vx: 0, vy: 0, grounded: true,

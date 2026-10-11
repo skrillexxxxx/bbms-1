@@ -303,6 +303,8 @@ export class World {
     if (under && !this._inUnder) this.underIdx = (this.underIdx ?? -1) + 1;
     this._inUnder = under;
     inst.feat = under ? (this.featOverride || underFeatures(this.seed, this.underIdx)) : null;
+    // разруха: иногда целый участок города (~240 м) — постапокалипсис: разбитые дома, рваные края, арматура
+    inst.ruin = !under && (this.ruinOverride ?? ruinZone(this.seed, inst.rowStart));
     rows.forEach((r, i) => {
       this.rows.push(r);
       this.reach.push(reach[i]);
@@ -463,6 +465,12 @@ export function hash2(a, b) {
   let h = Math.imul(a ^ 0x9e3779b9, 0x85ebca6b) ^ Math.imul(b + 0x632be59b, 0xc2b2ae35);
   h ^= h >>> 13; h = Math.imul(h, 0x27d4eb2d); h ^= h >>> 15;
   return (h >>> 0) / 4294967296;
+}
+
+// Участок разрухи: зоны по 60 рядов, первая (старт) — всегда целый город
+export function ruinZone(seed, row) {
+  const zone = Math.floor(row / 60);
+  return zone >= 1 && hash2(seed + 555, zone) < 0.3;
 }
 
 // Особенности подземного перехода: каждая выпадает сама по себе (могут совпасть).

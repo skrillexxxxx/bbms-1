@@ -96,7 +96,7 @@ const frag = /* glsl */ `
   uniform float uHigh;
   uniform float uNight;   // 0 — день, 1 — ночь
   uniform vec3 uStreetL[12]; // уличные фонари рядом: x, z относительно игрока, y — высота плафона
-  varying float vDark;    // тёмный переход: свет не работает
+  varying float vDark;    // 1 — тёмный переход: свет не работает; 2 — разруха (постапокалипсис)
   uniform float uLamp;    // фонарь бегуна: ночью на улице 1, в подземке гаснет
   uniform vec3 uLampP;    // смещение луча (тряска на бегу) xy и радиус пятна z
   uniform sampler2D uCookie; // маска фонаря — снимок пятна реального фонаря
@@ -185,6 +185,15 @@ const frag = /* glsl */ `
       // свет с неба падает туда, куда нужно бежать: светлое пятно = путь
       // мягко и ниже порога блума — иначе пятно раздувается на полэкрана
       col = min(col * (1.0 + vLight * 0.3) + vLight * 0.05, 0.84);
+      if (vDark > 1.5) {
+        // разруха: асфальт в трещинах и грязных пятнах
+        vec2 q = vPos.xz;
+        float cr = abs(fract(q.x * 0.23 + q.y * 0.11 + 0.35 * sin(q.y * 0.6 + q.x * 0.21)) - 0.5);
+        float cr2 = abs(fract(q.y * 0.19 - q.x * 0.07 + 0.3 * sin(q.x * 0.8)) - 0.5);
+        float m = step(0.45, h21(floor(q / 5.0) + 2.0));
+        col *= mix(1.0, mix(0.4, 1.0, smoothstep(0.0, 0.015, min(cr, cr2))), m);
+        col *= mix(0.72, 1.0, h21(floor(q / 1.7)));
+      }
       if (uNight > 0.0) {
         // улица ночью: широкие мягкие тёплые пятна (фонари, витрины) — гуще на пути, но и вокруг есть
         float onPath = smoothstep(0.03, 0.2, vLight);
@@ -230,6 +239,9 @@ const frag = /* glsl */ `
       col = 1.0;
       ballCol = PALETTE(fract(vTop * 0.618));
       ballShade = 0.55 + 0.45 * max(dot(n, normalize(vec3(-0.3, 0.6, -0.7))), 0.0) + 0.35 * pow(max(dot(n, normalize(vec3(-0.4, 0.5, -0.75))), 0.0), 18.0);
+    } else if (st == 27) {
+      // бетонные обломки: серые, пятнами, сколы светлее
+      col = 0.5 * (0.8 + 0.2 * abs(n.y)) * mix(0.75, 1.1, h21(floor(vPos.xz * 2.3) + floor(vPos.y * 2.3)));
     } else if (st == 26) {
       // мусорный контейнер: белый пластик, у земли грязнее, рёбра на боках
       col = 0.84 * mix(0.7, 1.0, smoothstep(0.1, 0.6, y - uB));
@@ -329,6 +341,24 @@ const frag = /* glsl */ `
             // большинство тёплые, некоторые — холодный свет экранов
             vec3 wc = winColor(h21(vec2(floor((u - uMin) / 2.6) + 5.1, floor(y / floorH)) + bid));
             if (h > 0.84) emit += wc * winK * (1.25 + 1.6 * (h - 0.84)) * uNight;
+          }
+        }
+        if (vDark > 1.5 && st >= 1 && st <= 3) {
+          // разруха: стёкла выбиты (света нет), копоть пятнами, трещины, сквозные пробоины;
+          // изредка в окне — огонь
+          emit = vec3(0.0);
+          col *= mix(0.6, 0.92, h21(vec2(floor(u / 1.1), floor(y / 7.0)) + bid));
+          float cr = abs(fract((u - uMin) * 0.21 + y * 0.13 + 0.4 * sin(y * 0.7 + u * 0.3)) - 0.5);
+          if (h21(floor(vec2(u / 6.0, y / 8.0)) + bid + 9.0) > 0.55) col *= mix(0.35, 1.0, smoothstep(0.0, 0.014, cr));
+          vec2 hp = vec2((u - uMin) / 5.0, y / 6.0);
+          vec2 fp = fract(hp) - 0.5;
+          float hh = h21(floor(hp) + bid * 0.3 + 3.3);
+          float shape = length(fp * vec2(1.0, 1.3)) + 0.16 * sin(atan(fp.y, fp.x) * 5.0 + hh * 20.0);
+          if (hh > 0.8 && shape < 0.34 && y > 2.5 && edge > 0.6) col = 0.025;
+          float fire = h21(vec2(floor((u - uMin) / 2.6), floor(y / floorH)) + bid + 17.0);
+          if (inBody && fire > 0.988 && fy > 0.28 && fy < 0.8) {
+            col = 0.1;
+            emit = vec3(1.0, 0.42, 0.1) * (1.0 + 0.45 * sin(uTime * 13.0 + fire * 60.0) + 0.3 * sin(uTime * 23.0)) * (0.35 + 0.9 * uNight);
           }
         }
         float dt = vTop - y; // расстояние от верха предмета
@@ -441,6 +471,7 @@ const frag = /* glsl */ `
     else if (vTint > 1.5 && vTint < 2.5) c3 = col * vec3(0.8, 0.97, 1.04);     // бирюзовая плитка
     else if (vTint > 2.5 && vTint < 3.5) c3 = col * vec3(0.62, 0.9, 1.0);      // вода
     else if (vTint > 5.5 && vTint < 6.5) c3 = col < 0.9 ? col * red * 1.2 : vec3(col); // трамплин
+    else if (vTint > 6.5 && vTint < 7.5) c3 = col * vec3(0.78, 0.48, 0.34);   // ржавая арматура
     // красные подсказки «переливаются»: по ним бегут вперёд волны — показывают, куда бежать
     float redWave = 0.0;
     if (vTint > 0.5 && vTint < 1.5 || vTint > 3.5 && vTint < 6.5) {
@@ -474,7 +505,7 @@ const frag = /* glsl */ `
       dark += c3 * WARM * streetL * 1.15; // пятно от уличного фонаря
       // препятствия у земли (то, через что прыгаем и под чем катимся) ночью не проваливаются в черноту:
       // тёплый свет с улицы, ярче на гранях к нам и сверху — видно издалека, ещё до фонаря
-      bool obstacle = (st == 4 || st == 5 || (st >= 11 && st <= 13) || st == 26) && vTop - uB < 4.0;
+      bool obstacle = (st == 4 || st == 5 || (st >= 11 && st <= 13) || st == 26 || st == 27) && vTop - uB < 4.0;
       if (obstacle) {
         float of = n.y > 0.5 ? 0.9 : (n.y < -0.5 ? 0.25 : 0.45 + 0.55 * max(-n.z, 0.0));
         dark += (c3 * 0.42 + 0.07) * WARM * of; // + ровная добавка — тёмные части (стекло, решётки) тоже видно
@@ -485,7 +516,7 @@ const frag = /* glsl */ `
       c3 = mix(c3, dark + emit, uNight);
     }
     // тёмный переход: свет не работает — почти темнота, только красное чуть видно и неисправная лампа
-    if (vDark > 0.5 && st != 23) {
+    if (vDark > 0.5 && vDark < 1.5 && st != 23) {
       float redness = clamp((alb.r - max(alb.g, alb.b)) * 2.2, 0.0, 1.0);
       c3 = alb * vec3(0.045, 0.045, 0.055) + vec3(0.35, 0.05, 0.04) * redness * near;
     }
@@ -961,6 +992,32 @@ class Builder {
 
   // брошенная тележка из супермаркета: корзина-решётка на рамке, ручка, четыре колёсика.
   // Поставлена боком у стены, может стоять криво (rot)
+  // прямоугольная балка/плита от a до b: ширина w, толщина h, с торцами (обломки, перекрытия)
+  slab(a, bb, w, h, style) {
+    const d = norm(sub(bb, a));
+    const t = norm(cross(d, Math.abs(d[1]) < 0.9 ? [0, 1, 0] : [1, 0, 0]));
+    const u = cross(t, d);
+    const P = (p, sx, sy) => [0, 1, 2].map((k) => p[k] + t[k] * sx * w / 2 + u[k] * sy * h / 2);
+    const neg = (v) => v.map((x) => -x);
+    this.quad4(P(a, -1, 1), P(a, 1, 1), P(bb, -1, 1), P(bb, 1, 1), 1, 1, u, style, 0, [0, 0, 0, 0]);
+    this.quad4(P(a, -1, -1), P(a, 1, -1), P(bb, -1, -1), P(bb, 1, -1), 1, 1, neg(u), style, 0, [0, 0, 0, 0]);
+    this.quad4(P(a, 1, -1), P(a, 1, 1), P(bb, 1, -1), P(bb, 1, 1), 1, 1, t, style, 0, [0, 0, 0, 0]);
+    this.quad4(P(a, -1, -1), P(a, -1, 1), P(bb, -1, -1), P(bb, -1, 1), 1, 1, neg(t), style, 0, [0, 0, 0, 0]);
+    this.quad4(P(a, -1, -1), P(a, 1, -1), P(a, -1, 1), P(a, 1, 1), 1, 1, neg(d), style, 0, [0, 0, 0, 0]);
+    this.quad4(P(bb, -1, -1), P(bb, 1, -1), P(bb, -1, 1), P(bb, 1, 1), 1, 1, d, style, 0, [0, 0, 0, 0]);
+  }
+
+  // гнутый прут арматуры: от p в сторону dir, конец загнут вниз
+  rebar(p, dir, len, rr) {
+    const m = [p[0] + dir[0] * len * 0.6, p[1] + dir[1] * len * 0.6, p[2] + dir[2] * len * 0.6];
+    const e = [m[0] + dir[0] * len * 0.4 + (rr() - 0.5) * 0.3, m[1] - len * (0.15 + rr() * 0.35), m[2] + dir[2] * len * 0.4 + (rr() - 0.5) * 0.3];
+    const tint = this.tint;
+    this.tint = 7;
+    this.prism(p, m, 0.025, 0.025, 4, 22);
+    this.prism(m, e, 0.025, 0.02, 4, 22);
+    this.tint = tint;
+  }
+
   // большой мусорный контейнер спиной к стене (side: −1 — стена слева, +1 — справа):
   // одна крышка закрыта, вторая откинута к стене
   dumpster(xw, y, z0, side, open) {
@@ -1026,6 +1083,39 @@ class Builder {
 }
 
 // Жадно собирает одинаковые (по ключу) клетки в прямоугольники.
+// Разрушенная башня: обломана на разной высоте, сверху — неровные куски стен и торчащая арматура,
+// сбоку — кривая балка перекрытия. Всё выше пути: на бег не влияет.
+function ruinTower(b, x0, x1, z0, z1, H, style, minTop, seed) {
+  const rr = mulberry32(seed);
+  const cut = Math.max(minTop + 12, H * (0.4 + rr() * 0.35));
+  b.boxGeo(x0, x1, z0, z1, cut, style);
+  const w = x1 - x0, d = z1 - z0;
+  const n = 2 + Math.floor(rr() * 3);
+  for (let i = 0; i < n; i++) {
+    const cw = w * (0.22 + rr() * 0.45), cd = d * (0.22 + rr() * 0.45);
+    const ax = rr() < 0.5 ? x0 : x1 - cw, az = rr() < 0.5 ? z0 : z1 - cd;
+    const top = cut + Math.max(3, (H - cut) * (0.15 + rr() * 0.7));
+    b.boxGeo(ax, ax + cw, az, az + cd, top, style, cut);
+    b.tint = 7;
+    for (let k = 0; k < 4; k++) {
+      const px = ax + rr() * cw, pz = az + rr() * cd;
+      b.prism([px, top, pz], [px + (rr() - 0.5) * 1.2, top + 0.8 + rr() * 1.8, pz + (rr() - 0.5) * 1.2], 0.03, 0.025, 4, 22);
+    }
+    b.tint = 0;
+  }
+  // плита перекрытия свисает с края излома
+  if (rr() < 0.7) {
+    const left = rr() < 0.5, sx = left ? x0 : x1, dir = left ? -1 : 1;
+    const zc = z0 + d * (0.2 + rr() * 0.6), yb = cut - 0.3;
+    b.slab([sx - dir * 1.5, yb, zc], [sx + dir * (1.2 + rr() * 1.8), yb - 0.6 - rr() * 2.2, zc + (rr() - 0.5) * 1.5], 1.6 + rr() * 1.5, 0.3, 27);
+  }
+  // кривая балка торчит вверх из излома
+  if (rr() < 0.5) {
+    const px = x0 + w * (0.2 + rr() * 0.6), pz = z0 + d * (0.2 + rr() * 0.6);
+    b.slab([px, cut - 1, pz], [px + (rr() - 0.5) * 4, cut + 3 + rr() * 4, pz + (rr() - 0.5) * 4], 0.35, 0.35, 27);
+  }
+}
+
 function greedy(nRows, key, emit, maxH = () => 99) {
   const used = Array.from({ length: nRows }, () => new Uint8Array(COLS));
   for (let r = 0; r < nRows; r++) {
@@ -1101,7 +1191,7 @@ export function buildInstanceMesh(inst, materials, world) {
   const rng = mulberry32(inst.seed ^ 0x5bd1e995);
   const flatStreet = (row) => row.b0 === 0 && row.b1 === 0;
   const feat = inst.feat || {};
-  b.dark = feat.dark ? 1 : 0;
+  b.dark = feat.dark ? 1 : inst.ruin ? 2 : 0;
 
   // затенение пола: чем ближе к стене/препятствию, тем темнее (смотрим и соседние паттерны)
   b.aoFn = (x, zl) => {
@@ -1197,7 +1287,9 @@ export function buildInstanceMesh(inst, materials, world) {
     // башня всегда заметно выше пола своих рядов (на верхушках небоскрёбов — тоже)
     let top = 0;
     for (let rr = r; rr < r + h; rr++) top = Math.max(top, rows[rr].b0, rows[rr].b1);
-    b.boxGeo(x0 + 0.15, x1 - 0.15, zA + 0.15, zB - 0.15, Math.max(24 + rnd * 56, top + 12 + rnd * 35), style);
+    const H = Math.max(24 + rnd * 56, top + 12 + rnd * 35);
+    if (inst.ruin) ruinTower(b, x0 + 0.15, x1 - 0.15, zA + 0.15, zB - 0.15, H, style, top, (inst.seed ^ (r * 131 + c * 7919)) >>> 0);
+    else b.boxGeo(x0 + 0.15, x1 - 0.15, zA + 0.15, zB - 0.15, H, style);
     if (k === 9) {
       // красная стена: панели на гранях, вдоль которых бегут
       b.tint = 5;
@@ -1421,6 +1513,13 @@ export function buildInstanceMesh(inst, materials, world) {
     if (cc < 0) continue;
     const z = r * ROW + 2;
     const xp = side < 0 ? cc * CELL + 0.3 : (cc + 1) * CELL - 0.3; // столб — вплотную к стене
+    if (inst.ruin) {
+      // в разрухе фонарь покосился и не горит; плафона нет — только погнутая консоль
+      const tz = (hash2(ri, 79) - 0.5) * 2.2, tx = -side * (0.6 + hash2(ri, 80) * 1.2), top = 6.6;
+      b.prism([xp, 0, z], [xp + tx, top, z + tz], 0.11, 0.08, 6, 24);
+      b.prism([xp + tx, top - 0.05, z + tz], [xp + tx - side * 1.3, top - 0.9, z + tz + 0.4], 0.06, 0.06, 4, 24);
+      continue;
+    }
     const xh = xp - side * 1.7, top = 7.2;
     b.prism([xp, 0, z], [xp, top, z], 0.11, 0.08, 6, 24);
     b.prism([xp, top - 0.05, z], [xh, top, z], 0.06, 0.06, 4, 24);
@@ -1444,6 +1543,83 @@ export function buildInstanceMesh(inst, materials, world) {
       b.dumpster(side < 0 ? c * CELL : (c + 1) * CELL, 0, r * ROW + 0.5 + hash2(ri, c + 3) * 1.4, side, hash2(ri, c + 9) < 0.5);
       lastBin = r;
       break;
+    }
+  }
+
+  // 7з. разруха: рваные края у провалов (куски плиты, арматура, трубы), обрушенные мосты над улицей,
+  //     обломки в закутках. Всё — ниже уровня пола у краёв или высоко над головой: бегу не мешает
+  if (inst.ruin) {
+    const rr = mulberry32(inst.seed ^ 0x7f4a7c15);
+    const at = (r, c) => { const rw = rows[r] || world.rows[R0 + r]; return rw ? rw[((c % COLS) + COLS) % COLS] : undefined; };
+    const hole = (v) => v === VOID || v === POOL;
+    for (let r = 0; r < nRows; r++) {
+      const row = rows[r];
+      const base = Math.min(row.b0, row.b1);
+      if (row.b0 !== row.b1) continue;
+      for (let c = 0; c < COLS; c++) {
+        const v = row[c];
+        if (!walk(v) || v === BRIDGE || v === LAUNCH) continue;
+        const fy = base + lv(v) * LEVEL;
+        const x0 = c * CELL, zA = r * ROW;
+        // четыре стороны клетки: [соседняя клетка, точка на краю, направление в пропасть, вдоль края]
+        const edges = [
+          [at(r, c - 1), [x0, fy, zA], [-1, 0, 0], [0, 0, 1]],
+          [at(r, c + 1), [x0 + CELL, fy, zA], [1, 0, 0], [0, 0, 1]],
+          [at(r - 1, c), [x0, fy, zA], [0, 0, -1], [1, 0, 0]],
+          [at(r + 1, c), [x0, fy, zA + ROW], [0, 0, 1], [1, 0, 0]],
+        ];
+        for (const [nv, p0, out, along] of edges) {
+          if (!hole(nv)) continue;
+          const len = along[0] ? CELL : ROW;
+          // обломки плиты: неровная «бахрома» края, чуть ниже пола
+          for (let s = 0.2; s < len - 0.3; s += 0.5 + rr() * 0.7) {
+            const ow = 0.4 + rr() * 0.9, depth = 0.35 + rr() * 0.9, wl = 0.4 + rr() * 0.7;
+            const a = [p0[0] + along[0] * s, fy - 0.06 - rr() * 0.12, p0[2] + along[2] * s];
+            const tip = [a[0] + out[0] * ow + along[0] * wl * 0.5, a[1] - depth * (0.3 + rr()), a[2] + out[2] * ow + along[2] * wl * 0.5];
+            b.slab(a, tip, wl, 0.22 + rr() * 0.2, 27);
+            if (rr() < 0.55) b.rebar([a[0] + out[0] * 0.05, a[1] - 0.15, a[2] + out[2] * 0.05], [out[0], -0.1, out[2]], 0.6 + rr() * 1.3, rr);
+          }
+          // разорванная труба из-под плиты
+          if (rr() < 0.35) {
+            const s = 0.5 + rr() * (len - 1);
+            const a = [p0[0] + along[0] * s - out[0] * 0.4, fy - 0.9, p0[2] + along[2] * s - out[2] * 0.4];
+            b.prism(a, [a[0] + out[0] * (0.8 + rr() * 1.2), a[1] - 0.3 - rr() * 0.8, a[2] + out[2] * (0.8 + rr() * 1.2)], 0.13, 0.13, 8, 22);
+          }
+        }
+      }
+    }
+    // обрушенные пешеходные мосты высоко над улицей: от стен — обрубки, середина рухнула
+    for (let r = 1; r < nRows - 1; r++) {
+      const row = rows[r];
+      if (row.cover || row.b0 !== 0 || row.b1 !== 0 || rr() > 0.13) continue;
+      let cL = -1, cR = -1;
+      for (let c = 0; c < COLS; c++) if (walk(row[c])) { if (cL < 0) cL = c; cR = c; }
+      if (cL < 0 || row[(cL + COLS - 1) % COLS] !== WALL || row[(cR + 1) % COLS] !== WALL) continue;
+      const xL = cL * CELL, xR = (cR + 1) * CELL, span = xR - xL;
+      const yb = 13 + rr() * 9, zc = r * ROW + ROW / 2;
+      for (const [xw, dir] of [[xL, 1], [xR, -1]]) {
+        const l = span * (0.18 + rr() * 0.22);
+        b.boxGeo(Math.min(xw, xw + dir * l), Math.max(xw, xw + dir * l), zc - 1.3, zc + 1.3, yb, 27, yb - 0.6);
+        // обломанный край: висящий кусок пролёта и арматура
+        const xe = xw + dir * l;
+        b.slab([xe - dir * 0.2, yb - 0.3, zc + (rr() - 0.5)], [xe + dir * (0.6 + rr()), yb - 1.5 - rr() * 2.5, zc + (rr() - 0.5) * 1.5], 1.4 + rr(), 0.35, 27);
+        for (let k = 0; k < 5; k++) b.rebar([xe, yb - 0.3, zc - 1 + rr() * 2], [dir, -0.2, 0], 0.8 + rr() * 1.5, rr);
+        for (const zr of [zc - 1.2, zc + 1.2]) b.boxGeo(Math.min(xw, xe), Math.max(xw, xe), zr - 0.05, zr + 0.05, yb + 1.05, 4, yb + 0.95);
+      }
+    }
+    // обломки в закутках: плиты и колонны вкривь у стен, где путь не проходит
+    for (let r = 0; r < nRows; r++) {
+      const row = rows[r], ri = R0 + r;
+      if (row.cover || row.b0 !== 0 || row.b1 !== 0) continue;
+      const lr = light[ri - la];
+      if (!lr) continue;
+      for (let c = 0; c < COLS; c++) {
+        const v = row[c];
+        if (!walk(v) || lv(v) !== 0 || v === BRIDGE || v === LAUNCH || lr[c] > 0 || rr() > 0.5) continue;
+        const x = c * CELL + 0.8 + rr() * 2.4, z = r * ROW + 0.8 + rr() * 2.4;
+        if (rr() < 0.5) b.slab([x, 0, z], [x + (rr() - 0.5) * 2, 1.2 + rr() * 2.5, z + (rr() - 0.5) * 3], 1.2 + rr(), 0.25, 27);
+        else b.slab([x, 0.3, z], [x + (rr() - 0.5) * 3, 0.5 + rr() * 0.6, z + (rr() - 0.5) * 3], 0.6, 0.6, 27);
+      }
     }
   }
 
