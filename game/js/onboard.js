@@ -118,3 +118,33 @@ $('load-file').addEventListener('change', (e) => {
 $('help-open').addEventListener('click', (e) => { e.stopPropagation(); $('help').classList.add('show'); });
 $('help-ok').addEventListener('click', (e) => { e.stopPropagation(); $('help').classList.remove('show'); });
 for (const ev of ['pointerdown', 'click']) $('help').addEventListener(ev, (e) => e.stopPropagation());
+
+// ---------- «включи звук» ----------
+// На iPhone переключатель «Звонок/Бесшумно» (или кнопка действия) глушит звук страницы.
+// Узнать его положение нельзя — при запуске показываем подсказку со стрелкой туда, где он:
+// левый бок у верхнего края; телефон повёрнут — на нижнем или верхнем крае экрана.
+function soundSide() {
+  if (innerHeight >= innerWidth) return 'left';
+  const a = screen.orientation && typeof screen.orientation.angle === 'number' ? screen.orientation.angle
+    : (typeof window.orientation === 'number' ? (window.orientation + 360) % 360 : 90);
+  return a === 270 ? 'top' : 'bottom'; // повернули по часовой — бок сверху, против — снизу
+}
+function placeSoundHint() { $('soundhint').dataset.side = soundSide(); }
+const wantSoundHint = params.get('soundhint') === '1'
+  || (ios && mobile && params.get('sound') !== '0' && !params.has('auto'));
+if (wantSoundHint) {
+  const el = $('soundhint');
+  let hideT = 0;
+  const hide = () => { el.classList.remove('show'); clearTimeout(hideT); };
+  const tryShow = () => {
+    if ($('install').classList.contains('show')) { setTimeout(tryShow, 400); return; } // сначала — установка
+    placeSoundHint();
+    el.classList.add('show');
+    hideT = setTimeout(hide, 9000);
+    // первый тап (старт забега, кнопка меню) — убираем
+    setTimeout(() => window.addEventListener('pointerdown', hide, { once: true, capture: true }), 300);
+  };
+  setTimeout(tryShow, 900);
+  addEventListener('resize', placeSoundHint);
+  if (screen.orientation) screen.orientation.addEventListener?.('change', placeSoundHint);
+}
