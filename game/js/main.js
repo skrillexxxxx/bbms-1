@@ -1330,7 +1330,7 @@ window.addEventListener('keydown', (e) => {
 
 // iOS: не даём странице зумиться и скроллиться
 document.addEventListener('gesturestart', (e) => e.preventDefault());
-document.addEventListener('touchmove', (e) => { if (!e.target.closest?.('#seed-list, #gfx .panel, #install')) e.preventDefault(); }, { passive: false });
+document.addEventListener('touchmove', (e) => { if (!e.target.closest?.('#seed-list, #gfx, #install')) e.preventDefault(); }, { passive: false });
 
 // ---------- погода ----------
 // Виды погоды по очереди и случайно: «ясно», «туман», «дождь».
@@ -1483,9 +1483,9 @@ function renderLampShadow() {
   u.uShadow.value = shadowRT.depthTexture;
 }
 function updateShadowButtons() {
-  for (const id of ['shadows', 'shadows-over', 'shadows-pause']) $(id).textContent = `Тени фонаря: ${shadowsOn ? 'вкл' : 'выкл'}`;
+  for (const id of ['shadows']) $(id).textContent = `Тени фонаря: ${shadowsOn ? 'вкл' : 'выкл'}`;
 }
-for (const id of ['shadows', 'shadows-over', 'shadows-pause']) {
+for (const id of ['shadows']) {
   $(id).addEventListener('click', (e) => {
     e.stopPropagation();
     shadowsOn = !shadowsOn;
@@ -1544,9 +1544,9 @@ function renderSunShadow(deep) {
   u.uSunShadow.value = sunRT.depthTexture;
 }
 function updateSunButtons() {
-  for (const id of ['sun', 'sun-over', 'sun-pause']) $(id).textContent = `Тени солнца: ${sunOn ? 'вкл' : 'выкл'}`;
+  for (const id of ['sun']) $(id).textContent = `Тени солнца: ${sunOn ? 'вкл' : 'выкл'}`;
 }
-for (const id of ['sun', 'sun-over', 'sun-pause']) {
+for (const id of ['sun']) {
   $(id).addEventListener('click', (e) => {
     e.stopPropagation();
     sunOn = !sunOn;
@@ -1560,9 +1560,9 @@ updateSunButtons();
 let ps1On = false;
 try { ps1On = localStorage.getItem('sdwg-ps1') === '1'; } catch { /* приватный режим */ }
 function updatePs1Buttons() {
-  for (const id of ['ps1', 'ps1-over', 'ps1-pause']) $(id).textContent = `PS1: ${ps1On ? 'вкл' : 'выкл'}`;
+  for (const id of ['ps1']) $(id).textContent = `PS1: ${ps1On ? 'вкл' : 'выкл'}`;
 }
-for (const id of ['ps1', 'ps1-over', 'ps1-pause']) {
+for (const id of ['ps1']) {
   $(id).addEventListener('click', (e) => {
     e.stopPropagation();
     ps1On = !ps1On;
@@ -1577,9 +1577,9 @@ updatePs1Buttons();
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.0; // наш город белый — с большей экспозицией ACES выжигал крыши
 function updateAutoExpButtons() {
-  for (const id of ['autoexp', 'autoexp-over', 'autoexp-pause', 'autoexp-gfx']) $(id).textContent = `Автоэкспозиция: ${autoExpOn ? 'вкл' : 'выкл'}`;
+  for (const id of ['autoexp']) $(id).textContent = `Автоэкспозиция: ${autoExpOn ? 'вкл' : 'выкл'}`;
 }
-for (const id of ['autoexp', 'autoexp-over', 'autoexp-pause', 'autoexp-gfx']) {
+for (const id of ['autoexp']) {
   $(id).addEventListener('click', (e) => {
     e.stopPropagation();
     autoExpOn = !autoExpOn;
@@ -1621,10 +1621,11 @@ for (const k of Object.keys(gfxFmt)) {
   $(`gfx-${k}`).addEventListener('change', saveGfx);
 }
 $('gfx-reset').addEventListener('click', (e) => { e.stopPropagation(); Object.assign(gfx, GFX_DEFAULT); syncGfxUI(); applyGfx(); saveGfx(); });
-// открывается из паузы и из главного меню; «Назад» возвращает туда, откуда пришли
+// открывается из паузы, главного меню и экрана конца забега; «Назад» возвращает туда, откуда пришли
 function openGfx() {
   $('pause-menu').classList.remove('show');
   ui.start.classList.remove('show');
+  ui.over.classList.remove('show');
   syncGfxUI();
   $('gfx').classList.add('show');
 }
@@ -1632,8 +1633,9 @@ function closeGfx() {
   $('gfx').classList.remove('show');
   if (state === 'paused') $('pause-menu').classList.add('show');
   else if (state === 'ready') ui.start.classList.add('show');
+  else if (state === 'dead') ui.over.classList.add('show');
 }
-for (const id of ['gfx-open', 'gfx-open-start']) $(id).addEventListener('click', (e) => { e.stopPropagation(); openGfx(); });
+for (const id of ['gfx-open', 'gfx-open-start', 'gfx-open-over']) $(id).addEventListener('click', (e) => { e.stopPropagation(); openGfx(); });
 $('gfx-close').addEventListener('click', (e) => { e.stopPropagation(); closeGfx(); });
 $('gfx').addEventListener('pointerdown', (e) => e.stopPropagation());
 syncGfxUI();
