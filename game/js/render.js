@@ -675,13 +675,13 @@ function coneGeometry(lamps) {
   const pos = [], nor = [], v = [], idx = [];
   const SEG = 14;
   for (const [x, z, y] of lamps) {
-    const R = 2.6, h = y, base = pos.length / 3;
+    const R = 4.6, h = y, base = pos.length / 3; // широкий конус, как у настоящего уличного фонаря
     const slope = R / h;
     for (let i = 0; i <= SEG; i++) {
       const a = (i / SEG) * Math.PI * 2, ca = Math.cos(a), sa = Math.sin(a);
       const nl = Math.hypot(1, slope);
       const n = [ca / nl, slope / nl, sa / nl];
-      pos.push(x + ca * 0.12, y, z + sa * 0.12); nor.push(...n); v.push(0);
+      pos.push(x + ca * 0.25, y, z + sa * 0.25); nor.push(...n); v.push(0);
       pos.push(x + ca * R, 0.02, z + sa * R); nor.push(...n); v.push(1);
     }
     for (let i = 0; i < SEG; i++) {
