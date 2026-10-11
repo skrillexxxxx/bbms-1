@@ -1251,6 +1251,7 @@ const TUT_TEXT = {
   jump: ['Прыжок', 'свайп вверх', '↑ или пробел'],
   slide: ['Подкат', 'свайп вниз', '↓'],
   pump: ['Разгон', 'быстро свайпай вниз — двумя пальцами по очереди', 'часто жми ↓'],
+  wallJump: ['Прыгай', 'свайп вверх', '↑ или пробел'],
   wall: ['Бег по стене', 'свайп %s — к красной стене', '%k — к красной стене'],
   kick: ['На стену напротив', 'свайп %s — от стены', '%k — от стены'],
   done: ['Готово! Дальше — сам', '', ''],
@@ -1276,6 +1277,7 @@ function tutShow(name, g) {
   const [h, touchTxt, keyTxt] = TUT_TEXT[name].map((t) => t.replace('%s', side[0]).replace('%k', side[1]));
   const el = $('tut-hint');
   el.dataset.g = g;
+  if (tut.shown) { el.classList.remove('on'); void el.offsetWidth; } // сменили подсказку — заново въезжает
   $('tut-label').innerHTML = h + (touchTxt ? `<small><span class="tut-touch">${touchTxt}</span><span class="tut-key">${keyTxt}</span></small>` : '');
   el.classList.add('on');
   tut.shown = name;
@@ -1296,6 +1298,7 @@ function tutEvent(a) {
   if (!tut.step || state !== 'run') return;
   if (tut.shown === 'jump' && a === 'jump') tutNext('slide');
   else if (tut.shown === 'slide' && a === 'slide') tutNext('pump');
+  else if (tut.shown === 'wallJump' && a === 'jump') tutShow('wall', tut.wallD < 0 ? 'left' : 'right');
   else if (tut.step === 'wall' && a === 'wall') { tut.kTo = 1; tutNext('kick'); tut.wallD = pl.wall; }
   else if (tut.step === 'kick' && a === 'kick') tutEnd(false);
 }
@@ -1342,7 +1345,8 @@ function tutUpdate(dt) {
     case 'wall': {
       // у первой красной стены — замедление и жест в её сторону; проехал мимо — ждём следующую
       const d = pl.wall ? 0 : tutWallAhead(v);
-      if (d && !tut.shown && tut.t > 0.8) { tut.wallD = Math.sign(d); tutShow('wall', d < 0 ? 'left' : 'right'); tut.kTo = 0.3; }
+      // сначала прыжок, потом — свайп в стену (можно и сразу в стену, с земли — тоже засчитаем)
+      if (d && !tut.shown && tut.t > 0.8) { tut.wallD = Math.sign(d); tutShow('wallJump', 'up'); tut.kTo = 0.3; }
       else if (tut.shown && !d) { tutHide(); tut.kTo = 1; }
       break;
     }
