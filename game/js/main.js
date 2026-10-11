@@ -681,7 +681,14 @@ function physicsStep(dt) {
     const s = blockOf(solidsAt(pl.x + ox, nz + r), pl.y, h);
     if (!s) continue;
     const [lo, hi] = s;
-    if (!pl.grounded && hi !== INF && hi - pl.y <= P.mantle && lo <= pl.y + 0.5) {
+    if (!pl.grounded && hi !== INF && hi - pl.y <= P.mantle && lo <= pl.y + 0.5 && pl.vy > 3 && !pl.wall) {
+      // ещё летим вверх — перескакиваем край, не гася прыжок: оставшаяся скорость (как если бы
+      // мы честно поднялись на эту высоту) несёт дальше — лесенку 0→1→2 берём одним прыжком
+      const js = jumpScale(v), g = P.gravityUp * js * js;
+      pl.vy = Math.sqrt(Math.max(0, pl.vy * pl.vy - 2 * g * (hi - pl.y)));
+      pl.y = hi;
+      cam.dip = Math.max(cam.dip, 0.12);
+    } else if (!pl.grounded && hi !== INF && hi - pl.y <= P.mantle && lo <= pl.y + 0.5) {
       // в прыжке и край чуть выше ног — забираемся (паркур)
       pl.y = hi; pl.vy = 0; pl.grounded = true;
       if (pl.wall) endWallRun();
