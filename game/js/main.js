@@ -10,6 +10,7 @@ import {
   canStep, canJumpOver, aliveBackward, walk, lv,
 } from './world.js';
 import './onboard.js';
+import { openBoard, submitBest } from './leaderboard.js';
 import { createMaterial, createStarMaterial, createDepthMaterial, createSunDepthMaterial, createSparkMaterial, createConeMaterial, buildInstanceMesh } from './render.js';
 import { createSound } from './sound.js';
 import { createRecorder, shareFile } from './recorder.js';
@@ -326,9 +327,13 @@ class ExposurePass extends Pass {
 let autoExpOn = true;
 // настройки из меню «Графика»: солнце (азимут/высота, градусы), экспозиция (EV), контраст, температура
 // + яркость солнца, глубина солнечной тени; автоэкспозиция: сила, целевая яркость (EV), скорость
-const GFX_DEFAULT = { az: 56, el: 58, lit: 1, shade: 0.38, exp: 0, con: 1, temp: 0, aeStr: 0.5, aeTgt: 0, aeSpd: 1 };
+const GFX_DEFAULT = { az: 56, el: 74, lit: 1, shade: 0.38, exp: 0, con: 1, temp: 0, aeStr: 0.5, aeTgt: 0, aeSpd: 1 };
 const gfx = { ...GFX_DEFAULT };
-try { Object.assign(gfx, JSON.parse(localStorage.getItem('sdwg-gfx') || '{}')); } catch { /* приватный режим */ }
+try {
+  const saved = JSON.parse(localStorage.getItem('sdwg-gfx') || '{}');
+  if (saved.el === 58) delete saved.el; // старая высота солнца по умолчанию — теперь 74°
+  Object.assign(gfx, saved);
+} catch { /* приватный режим */ }
 try { autoExpOn = localStorage.getItem('sdwg-autoexp') !== '0'; } catch { /* приватный режим */ }
 
 let composer = null, bloom = null, exposurePass = null;
@@ -1128,6 +1133,7 @@ function die(cause = '?') {
   ui.overInfo.textContent = `seed ${seed} · ${info.name} (#${info.inst}) · ряд ${info.local + 1}/${info.total}`;
   ui.best.textContent = `рекорд ${best} м` + (runMonkeys || totalMonkeys ? ` · обезьянки ${runMonkeys} (всего ${totalMonkeys})` : '');
   ui.speedRec.textContent = `макс. скорость ${runMaxSpeed} км/ч · рекорд ${bestSpeed} км/ч` + (newSpeedRecord ? ' — новый!' : '');
+  if (!autopilot) submitBest(); // в общую таблицу (если есть ник)
   setTimeout(() => { if (state === 'dead' && !ui.seeds.classList.contains('show')) ui.over.classList.add('show'); }, 450);
 }
 
@@ -1332,6 +1338,7 @@ canvas.addEventListener('pointercancel', endTouch);
 window.addEventListener('keydown', (e) => {
   sound.unlock();
   if (e.target.type === 'range' && e.code !== 'Escape') return;
+  if ($('lb').classList.contains('show') || $('nick').classList.contains('show')) return; // рекорды, ввод ника
   if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'KeyA', 'KeyD', 'KeyW', 'KeyS', 'Space'].includes(e.code)) e.preventDefault();
   if (state === 'ready' && (e.code === 'Space' || e.code === 'Enter') && !$('gfx').classList.contains('show')) { start(); return; }
   if (state === 'dead' && ui.over.classList.contains('show') && e.code === 'Enter') { restart(false); return; }
@@ -1773,6 +1780,13 @@ $('close-seeds').addEventListener('click', () => {
   if (state === 'dead') ui.over.classList.add('show'); // вернулись к экрану после смерти
 });
 $('same').addEventListener('click', () => { sound.unlock(); restart(true); });
+// общая таблица рекордов: из главного меню и с экрана смерти (назад — туда же)
+$('lb-open').addEventListener('click', (e) => { e.stopPropagation(); openBoard(); });
+$('lb-open-over').addEventListener('click', (e) => {
+  e.stopPropagation();
+  ui.over.classList.remove('show');
+  openBoard(() => { if (state === 'dead') ui.over.classList.add('show'); });
+});
 
 // ---------- камера ----------
 function tierFloor() {

@@ -138,7 +138,8 @@ if (wantSoundHint) {
   const hide = () => { el.classList.remove('show'); clearTimeout(hideT); };
   const tryShow = () => {
     if ($('hud').classList.contains('show')) return; // забег уже идёт — не показываем
-    if ($('install').classList.contains('show')) { setTimeout(tryShow, 400); return; } // сначала — установка
+    // сначала — установка и ник
+    if ($('install').classList.contains('show') || $('nick').classList.contains('show')) { setTimeout(tryShow, 400); return; }
     placeSoundHint();
     el.classList.add('show');
     hideT = setTimeout(hide, 9000);
