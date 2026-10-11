@@ -3,6 +3,7 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { Pass, FullScreenQuad } from 'three/addons/postprocessing/Pass.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import {
   World, CELL, ROW, W, L, LZ, COLS, WALL, BRIDGE, VOID, RUNWALL, POOL, LAUNCH, LAUNCH_ROWS, LEVEL, BRIDGE_BOTTOM, BRIDGE_TOP, CEIL_H,
@@ -248,12 +249,71 @@ function createBlurPass() {
   return blurPass;
 }
 
-let composer = null, bloom = null;
+// Автоэкспозиция, как у глаза или камеры: несколько раз в секунду кадр ужимается до 16×9,
+// средняя яркость читается асинхронно (без остановки видеокарты), и экспозиция плавно тянется
+// к нужной: из тёмного переулка на солнце — сначала пересвет, потом глаз привыкает.
+class ExposurePass extends Pass {
+  constructor() {
+    super();
+    this.exposure = 1;
+    this.avg = -1;          // средняя яркость кадра (линейная), −1 — ещё не мерили
+    this.pending = false;
+    this.next = 0;
+    this.small = new THREE.WebGLRenderTarget(16, 9, { type: THREE.UnsignedByteType, depthBuffer: false });
+    this.buf = new Uint8Array(16 * 9 * 4);
+    this.down = new FullScreenQuad(new THREE.ShaderMaterial({
+      uniforms: { tDiffuse: { value: null } },
+      vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
+      fragmentShader: `
+        uniform sampler2D tDiffuse; varying vec2 vUv;
+        void main() {
+          // 4×4 выборки на клетку 16×9: средняя яркость, сжатая в 8 бит (log, 0…1 ↔ 1/256…4)
+          float s = 0.0;
+          for (int i = 0; i < 4; i++) for (int j = 0; j < 4; j++) {
+            vec2 o = (vec2(float(i), float(j)) - 1.5) / vec2(64.0, 36.0);
+            vec3 c = texture2D(tDiffuse, vUv + o).rgb;
+            s += log2(max(dot(c, vec3(0.2126, 0.7152, 0.0722)), 1.0 / 256.0));
+          }
+          gl_FragColor = vec4(vec3((s / 16.0 + 8.0) / 10.0), 1.0);
+        }`,
+    }));
+    this.quad = new FullScreenQuad(new THREE.ShaderMaterial({
+      uniforms: { tDiffuse: { value: null }, uExposure: { value: 1 } },
+      vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
+      fragmentShader: 'uniform sampler2D tDiffuse; uniform float uExposure; varying vec2 vUv; void main() { vec4 c = texture2D(tDiffuse, vUv); gl_FragColor = vec4(c.rgb * uExposure, c.a); }',
+    }));
+  }
+  render(renderer, writeBuffer, readBuffer) {
+    const now = performance.now();
+    if (autoExpOn && !this.pending && now > this.next && renderer.readRenderTargetPixelsAsync) {
+      this.down.material.uniforms.tDiffuse.value = readBuffer.texture;
+      renderer.setRenderTarget(this.small);
+      this.down.render(renderer);
+      this.pending = true;
+      this.next = now + 150;
+      renderer.readRenderTargetPixelsAsync(this.small, 0, 0, 16, 9, this.buf).then(() => {
+        let s = 0;
+        for (let i = 0; i < 16 * 9; i++) s += this.buf[i * 4] / 255;
+        this.avg = Math.pow(2, (s / (16 * 9)) * 10 - 8);
+      }).catch(() => {}).finally(() => { this.pending = false; });
+    }
+    this.quad.material.uniforms.uExposure.value = autoExpOn ? this.exposure : 1;
+    this.quad.material.uniforms.tDiffuse.value = readBuffer.texture;
+    renderer.setRenderTarget(this.renderToScreen ? null : writeBuffer);
+    this.quad.render(renderer);
+  }
+}
+let autoExpOn = true;
+try { autoExpOn = localStorage.getItem('sdwg-autoexp') !== '0'; } catch { /* приватный режим */ }
+
+let composer = null, bloom = null, exposurePass = null;
 if (useBloom) {
   composer = new EffectComposer(renderer);
   composer.addPass(new RenderPass(scene, camera));
   bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.45, 0.55, 0.9);
   composer.addPass(bloom);
+  exposurePass = new ExposurePass();
+  composer.addPass(exposurePass);
   if (useBlur) composer.addPass(createBlurPass());
   composer.addPass(new OutputPass());
 }
@@ -1443,6 +1503,39 @@ for (const id of ['ps1', 'ps1-over', 'ps1-pause']) {
 }
 updatePs1Buttons();
 
+// ---------- цветовой профиль (тонмаппинг на выходе) и автоэкспозиция ----------
+const TONES = [
+  ['none', 'обычный', THREE.NoToneMapping, 1],
+  ['aces', 'ACES', THREE.ACESFilmicToneMapping, 1.3],
+  ['agx', 'AgX', THREE.AgXToneMapping, 1.25],
+];
+let toneIdx = 0;
+try { toneIdx = Math.max(0, TONES.findIndex((t) => t[0] === localStorage.getItem('sdwg-tone'))); } catch { /* приватный режим */ }
+function applyTone() {
+  renderer.toneMapping = TONES[toneIdx][2];
+  renderer.toneMappingExposure = TONES[toneIdx][3];
+  for (const id of ['tone', 'tone-over', 'tone-pause']) $(id).textContent = `Цвет: ${TONES[toneIdx][1]}`;
+  for (const id of ['autoexp', 'autoexp-over', 'autoexp-pause']) $(id).textContent = `Автоэкспозиция: ${autoExpOn ? 'вкл' : 'выкл'}`;
+}
+for (const id of ['tone', 'tone-over', 'tone-pause']) {
+  $(id).addEventListener('click', (e) => {
+    e.stopPropagation();
+    toneIdx = (toneIdx + 1) % TONES.length;
+    try { localStorage.setItem('sdwg-tone', TONES[toneIdx][0]); } catch { /* приватный режим */ }
+    applyTone();
+  });
+}
+for (const id of ['autoexp', 'autoexp-over', 'autoexp-pause']) {
+  $(id).addEventListener('click', (e) => {
+    e.stopPropagation();
+    autoExpOn = !autoExpOn;
+    try { localStorage.setItem('sdwg-autoexp', autoExpOn ? '1' : '0'); } catch { /* приватный режим */ }
+    if (exposurePass) exposurePass.exposure = 1;
+    applyTone();
+  });
+}
+applyTone();
+
 // ---------- акустика улицы: стены рядом ----------
 // Короткое эхо со стороны стены (бежим вдоль башни или по красной стене) и отовсюду в узком месте.
 // В подземке своё длинное эхо, там это не нужно.
@@ -1825,6 +1918,17 @@ function frame(now) {
     blurPass.uniforms.uVig.value = 0.6 * materials.main.uniforms.uNight.value;
     blurPass.uniforms.uRain.value = weather.r * (1 - deep);
   }
+  if (exposurePass && exposurePass.avg > 0) {
+    // целимся в среднюю яркость обычной дневной улицы (~0.06 линейной), но наполовину:
+    // тёмное остаётся тёмным, просто не провалом; светлое чуть гасится.
+    // Ночью и в тёмном переходе почти не вытягиваем — там темнота нужна
+    const nightK = materials.main.uniforms.uNight.value;
+    const maxE = (1.4 - 0.3 * nightK) * (1 - 0.3 * darkAmt);
+    const target = Math.min(maxE, Math.max(0.78, Math.pow(0.06 / exposurePass.avg, 0.5)));
+    // на свет глаз привыкает быстро (~0.5 с), к темноте — медленнее (~2 с)
+    const rate = target < exposurePass.exposure ? 2.2 : 0.7;
+    exposurePass.exposure += (target - exposurePass.exposure) * (1 - Math.exp(-rate * dt));
+  }
   renderLampShadow();
   renderSunShadow(Math.min(1, Math.max(0, -cam.base / 5)));
   if (composer) composer.render(); else renderer.render(scene, camera);
@@ -1843,4 +1947,4 @@ ui.start.classList.add('show');
 requestAnimationFrame(frame);
 
 // для автотестов
-window.__game = { materials, cam, laneShift, setAuto: (v) => { autopilot = v; }, get state() { return state; }, pl, start, die, jump, runFile, get monkeys() { return monkeys; }, slide, get seed() { return seed; }, get world() { return world; }, get meshes() { return meshes; } };
+window.__game = { materials, cam, laneShift, setAuto: (v) => { autopilot = v; }, get state() { return state; }, pl, start, die, jump, runFile, get monkeys() { return monkeys; }, slide, get seed() { return seed; }, get world() { return world; }, get meshes() { return meshes; }, get exposure() { return exposurePass ? [exposurePass.exposure, exposurePass.avg] : null; } };
