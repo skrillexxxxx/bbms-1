@@ -167,6 +167,10 @@
     @keyframes arc { 0%, 15% { opacity: 1; } 40%, 100% { opacity: 0; } }
     #hud.show ~ #rotate { width: 40px; height: 40px; opacity: 0.8; top: calc(env(safe-area-inset-top) + 8px); }
     @media (orientation: portrait) and (pointer: coarse) { #rotate { display: block; } }
+    /* при запуске в портрете — крупно, по центру экрана и поверх всего (окна установки, ника…);
+       первый тап или поворот — значок плавно уезжает на своё место наверху */
+    #rotate { transition: top 0.5s cubic-bezier(.2,.7,.2,1), width 0.5s cubic-bezier(.2,.7,.2,1), height 0.5s cubic-bezier(.2,.7,.2,1), transform 0.5s cubic-bezier(.2,.7,.2,1), opacity 0.45s ease; }
+    body.rot-first #rotate, body.rot-first #hud.show ~ #rotate { z-index: 1000; top: 50%; width: 136px; height: 136px; opacity: 1; transform: translate(-50%, -50%); box-shadow: 0 6px 30px rgba(0,0,0,0.3); }
     /* в портрете все экраны начинаются ниже значка — он не наезжает на заголовки
        (стартовый, «Мои города», пауза, «Графика», конец забега) */
     @media (orientation: portrait) and (pointer: coarse) {
