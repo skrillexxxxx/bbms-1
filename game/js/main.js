@@ -324,7 +324,8 @@ class ExposurePass extends Pass {
 }
 let autoExpOn = true;
 // настройки из меню «Графика»: солнце (азимут/высота, градусы), экспозиция (EV), контраст, температура
-const GFX_DEFAULT = { az: 56, el: 58, exp: 0, con: 1, temp: 0 };
+// + яркость солнца, глубина солнечной тени; автоэкспозиция: сила, целевая яркость (EV), скорость
+const GFX_DEFAULT = { az: 56, el: 58, lit: 1, shade: 0.38, exp: 0, con: 1, temp: 0, aeStr: 0.5, aeTgt: 0, aeSpd: 1 };
 const gfx = { ...GFX_DEFAULT };
 try { Object.assign(gfx, JSON.parse(localStorage.getItem('sdwg-gfx') || '{}')); } catch { /* приватный режим */ }
 try { autoExpOn = localStorage.getItem('sdwg-autoexp') !== '0'; } catch { /* приватный режим */ }
@@ -1535,9 +1536,9 @@ updatePs1Buttons();
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.0; // наш город белый — с большей экспозицией ACES выжигал крыши
 function updateAutoExpButtons() {
-  for (const id of ['autoexp', 'autoexp-over', 'autoexp-pause']) $(id).textContent = `Автоэкспозиция: ${autoExpOn ? 'вкл' : 'выкл'}`;
+  for (const id of ['autoexp', 'autoexp-over', 'autoexp-pause', 'autoexp-gfx']) $(id).textContent = `Автоэкспозиция: ${autoExpOn ? 'вкл' : 'выкл'}`;
 }
-for (const id of ['autoexp', 'autoexp-over', 'autoexp-pause']) {
+for (const id of ['autoexp', 'autoexp-over', 'autoexp-pause', 'autoexp-gfx']) {
   $(id).addEventListener('click', (e) => {
     e.stopPropagation();
     autoExpOn = !autoExpOn;
@@ -1552,13 +1553,18 @@ updateAutoExpButtons();
 // Пауза продолжает рисовать кадр, так что изменения видны сразу
 function applyGfx() {
   const az = gfx.az * Math.PI / 180, el = gfx.el * Math.PI / 180;
-  materials.main.uniforms.uSunDir.value.set(Math.cos(el) * Math.sin(az), Math.sin(el), Math.cos(el) * Math.cos(az));
+  const u = materials.main.uniforms;
+  u.uSunDir.value.set(Math.cos(el) * Math.sin(az), Math.sin(el), Math.cos(el) * Math.cos(az));
+  u.uSunLit.value = gfx.lit;
+  u.uSunShade.value = gfx.shade;
   // без композера (?bloom=0) есть только экспозиция — через ACES
   if (!composer) renderer.toneMappingExposure = Math.pow(2, gfx.exp);
 }
 const gfxFmt = {
   az: (v) => `${v}°`, el: (v) => `${v}°`,
+  lit: (v) => `×${v.toFixed(2)}`, shade: (v) => `${Math.round(v * 100)}%`,
   exp: (v) => `${v > 0 ? '+' : ''}${v.toFixed(2)} EV`, con: (v) => v.toFixed(2),
+  aeStr: (v) => `${Math.round(v * 100)}%`, aeTgt: (v) => `${v > 0 ? '+' : ''}${v.toFixed(2)} EV`, aeSpd: (v) => `×${v.toFixed(2)}`,
   temp: (v) => (v === 0 ? '0' : `${v > 0 ? 'теплее' : 'холоднее'} ${Math.abs(v).toFixed(2)}`),
 };
 function syncGfxUI() {
@@ -1972,10 +1978,12 @@ function frame(now) {
     // тёмное остаётся тёмным, просто не провалом; светлое чуть гасится.
     // Ночью и в тёмном переходе почти не вытягиваем — там темнота нужна
     const nightK = materials.main.uniforms.uNight.value;
-    const maxE = (1.4 - 0.3 * nightK) * (1 - 0.3 * darkAmt);
-    const target = Math.min(maxE, Math.max(0.78, Math.pow(0.06 / exposurePass.avg, 0.5)));
+    // сила/цель/скорость — из меню «Графика»; при силе 50% и цели 0 EV — как было
+    const k = gfx.aeStr * 2;
+    const maxE = Math.pow((1.4 - 0.3 * nightK) * (1 - 0.3 * darkAmt), k);
+    const target = Math.min(maxE, Math.max(Math.pow(0.78, k), Math.pow(0.06 * Math.pow(2, gfx.aeTgt) / exposurePass.avg, gfx.aeStr)));
     // на свет глаз привыкает быстро (~0.5 с), к темноте — медленнее (~2 с)
-    const rate = target < exposurePass.exposure ? 2.2 : 0.7;
+    const rate = (target < exposurePass.exposure ? 2.2 : 0.7) * gfx.aeSpd;
     exposurePass.exposure += (target - exposurePass.exposure) * (1 - Math.exp(-rate * dt));
   }
   renderLampShadow();

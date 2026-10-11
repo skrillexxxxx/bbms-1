@@ -184,10 +184,17 @@
       <div class="sub">Солнце</div>
       <label>Направление <span id="gfx-az-v"></span><input type="range" id="gfx-az" min="-180" max="180" step="1"></label>
       <label>Высота <span id="gfx-el-v"></span><input type="range" id="gfx-el" min="8" max="88" step="1"></label>
+      <label>Яркость солнца <span id="gfx-lit-v"></span><input type="range" id="gfx-lit" min="0.5" max="1.8" step="0.02"></label>
+      <label>Затенение (сила тени) <span id="gfx-shade-v"></span><input type="range" id="gfx-shade" min="0" max="0.9" step="0.01"></label>
       <div class="sub">Цвет</div>
       <label>Экспозиция <span id="gfx-exp-v"></span><input type="range" id="gfx-exp" min="-2" max="2" step="0.05"></label>
       <label>Контраст <span id="gfx-con-v"></span><input type="range" id="gfx-con" min="0.5" max="1.6" step="0.01"></label>
       <label>Температура <span id="gfx-temp-v"></span><input type="range" id="gfx-temp" min="-1" max="1" step="0.02"></label>
+      <div class="sub">Автоэкспозиция</div>
+      <div class="row" style="margin-top: 4px"><button id="autoexp-gfx" class="ghost small">Автоэкспозиция: вкл</button></div>
+      <label>Сила <span id="gfx-aeStr-v"></span><input type="range" id="gfx-aeStr" min="0" max="1" step="0.01"></label>
+      <label>Целевая яркость <span id="gfx-aeTgt-v"></span><input type="range" id="gfx-aeTgt" min="-1.5" max="1.5" step="0.05"></label>
+      <label>Скорость привыкания <span id="gfx-aeSpd-v"></span><input type="range" id="gfx-aeSpd" min="0.25" max="4" step="0.05"></label>
       <div class="row"><button id="gfx-reset" class="ghost small">Сбросить</button><button id="gfx-close" class="small">Назад</button></div>
     </div>
   </div>

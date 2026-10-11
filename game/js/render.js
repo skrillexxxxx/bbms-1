@@ -112,6 +112,8 @@ const frag = /* glsl */ `
   uniform sampler2D uSunShadow; // глубина с точки зрения солнца
   uniform float uSun;           // 0 — без солнечных теней (выкл, ночь, подземка)
   uniform vec3 uSunDir;         // направление на солнце
+  uniform float uSunLit;        // яркость освещённого солнцем (1 — как задумано)
+  uniform float uSunShade;      // насколько темнит солнечная тень: 0 — нет тени, 1 — чёрная
   varying vec4 vSunPos;
   uniform float uCookieOn;
   varying float vTint;
@@ -443,7 +445,7 @@ const frag = /* glsl */ `
       } else sl = 1.0;
       sl *= smoothstep(-0.05, 0.15, facing);
       // контраст солнца: освещённое заметно ярче (но ниже порога блума), тень — глубже
-      col *= mix(1.0, mix(0.62, min(1.4, 0.93 / max(col, 0.01)), sl), uSun);
+      col *= mix(1.0, mix(1.0 - uSunShade, min(1.4, 0.93 / max(col, 0.01)) * uSunLit, sl), uSun);
     }
 
     // под землёй темнее — чем глубже, тем сильнее; светильники не трогаем
@@ -656,6 +658,8 @@ export function createMaterial({ linearOut }) {
       uSunMat: { value: new THREE.Matrix4() },
       uSunShadow: { value: null },
       uSun: { value: 0 },
+      uSunLit: { value: 1 },
+      uSunShade: { value: 0.38 },
       uSunDir: { value: new THREE.Vector3(0.75, 1.45, 0.5).normalize() }, // спереди-сбоку: тени отбрасывает то, что впереди и всегда есть
     },
   });
