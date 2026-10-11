@@ -1301,6 +1301,9 @@ function autopilotStep() {
 }
 
 // ---------- управление ----------
+// звук: браузер разрешает его только после жеста пользователя. Ловим любой жест где угодно
+// (кнопки меню глотают события, а iOS не считает жестом касание-начало — только отпускание и клик)
+for (const ev of ['pointerup', 'touchend', 'click', 'keydown']) window.addEventListener(ev, () => sound.unlock(), { capture: true, passive: true });
 let touch = null;
 const SWIPE = 28; // пикселей
 canvas.addEventListener('pointerdown', (e) => {
