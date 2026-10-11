@@ -41,6 +41,8 @@ const P = {
   slideBoost: 4,       // подкат разгоняет…
   boostMax: 8,
   boostDecay: 2.5,     // …и разгон тает, но не в воздухе после slide-hop
+  pumpGain: 1.2,       // свайп вниз в подкате на земле: +скорость, копится без предела
+  pumpDecay: 0.6,      // перестал качать — накачка тает (доля в секунду, но не медленнее 2 м/с²)
   coyote: 0.1,
   jumpBuffer: 0.15,
   // бег по стене (как в VHOLUME): касание стены даёт разгон, держаться можно недолго —
@@ -294,7 +296,7 @@ try { totalMonkeys = Number(localStorage.getItem('sdwg-monkeys')) || 0; } catch 
 const pl = {
   x: 0, z: 0, y: 0, vx: 0, vy: 0, grounded: true,
   lane: 6, pending: 0, pendT: 0,
-  coyote: 0, jumpBuf: 0, slideT: 0, slideQueued: false, boost: 0, hopKeep: false,
+  coyote: 0, jumpBuf: 0, slideT: 0, slideQueued: false, boost: 0, pump: 0, hopKeep: false,
   slideChain: 0, slideEndAt: -9,
   wall: 0, wallT: 0, wallCool: 0, wallLast: 0, autoAttach: 0, autoT: 0, grabT: 0, launch: null, glideT: 0, longT: 0, longG: 1, hover: 0, longLane: null,
 };
@@ -332,7 +334,7 @@ function reset(s) {
   if (params.get('under')) world.featOverride = Object.fromEntries(params.get('under').split(',').map((k) => [k, true]));
   Object.assign(pl, {
     x: 6 * CELL + CELL / 2, z: ROW * 0.5, y: 0, vx: 0, vy: 0, grounded: true,
-    coyote: 0, jumpBuf: 0, slideT: 0, slideQueued: false, boost: 0, hopKeep: false,
+    coyote: 0, jumpBuf: 0, slideT: 0, slideQueued: false, boost: 0, pump: 0, hopKeep: false,
     slideChain: 0, slideEndAt: -9, wall: 0, wallT: 0, wallCool: 0, wallLast: 0, autoAttach: 0, autoT: 0, grabT: 0, launch: null, glideT: 0, longT: 0, hover: 0, longLane: null, fromLong: false,
   });
   Object.assign(pl, { lane: 6, pending: 0, pendT: 0 });
@@ -372,7 +374,7 @@ const wrapX = (x) => ((x % W) + W) % W;
 
 function speedNow() {
   // от пройденного пути скорость не растёт — только разгон от подкатов, стен и толчков
-  const v = P.speedStart + pl.boost;
+  const v = P.speedStart + pl.boost + pl.pump;
   // после зацепа за край скорость проседает и плавно возвращается
   const g = pl.grabT / P.grabTime;
   return v * (1 - 0.6 * g * g);
@@ -795,6 +797,8 @@ function physicsStep(dt) {
 
   // инерция разгона: тает на земле, держится в воздухе после прыжка из подката
   if (!(pl.hopKeep && !pl.grounded) && !sliding() && !pl.wall) pl.boost = Math.max(0, pl.boost - P.boostDecay * dt);
+  // накачка держится, пока скользим (и в прыжке из подката); дальше плавно тает до обычной скорости
+  if (pl.pump > 0 && !sliding() && !(pl.hopKeep && !pl.grounded)) pl.pump = Math.max(0, pl.pump - Math.max(2, pl.pump * P.pumpDecay) * dt);
 
   pl.coyote = pl.grounded ? P.coyote : pl.coyote - dt;
   pl.jumpBuf -= dt;
@@ -868,6 +872,8 @@ function startSlide() {
   // серия: новый подкат во время предыдущего или сразу после — копится; от 2 подряд — полосы скорости
   pl.slideChain = sliding() || gameTime - pl.slideEndAt < 0.45 ? pl.slideChain + 1 : 1;
   if (pl.slideT <= 0) cam.slideSide = pl.vx > 2 ? -1 : pl.vx < -2 ? 1 : (Math.random() < 0.5 ? -1 : 1);
+  // подкат прямо из подката на земле — «накачка»: каждый свайп вниз добавляет скорость, без предела
+  if (sliding() && pl.grounded) pl.pump += P.pumpGain;
   pl.slideT = P.slideTime;
   pl.boost = Math.min(P.boostMax, pl.boost + P.slideBoost);
 }
@@ -1560,7 +1566,8 @@ function frame(now) {
   const zBefore = pl.z;
   if (state === 'run') {
     // мелкие шаги — чтобы на высокой скорости не проскакивать сквозь стены
-    const n = Math.ceil(dt / (1 / 120));
+    // (на большой накачке — ещё мельче: не больше ~0.3 м за шаг)
+    const n = Math.ceil(dt * Math.max(120, speedNow() / 0.3));
     for (let i = 0; i < n && state === 'run'; i++) { if (autopilot) autopilotStep(); physicsStep(dt / n); }
     ensureWorld();
     ui.dist.textContent = `${Math.floor(pl.z)} м`;
