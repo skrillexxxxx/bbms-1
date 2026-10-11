@@ -93,6 +93,7 @@ const frag = /* glsl */ `
   uniform float uRow;
   uniform float uTime;
   uniform float uRunZ;
+  uniform float uDarkZ;   // где начинается тёмный переход (относительно игрока)
   uniform float uHigh;
   uniform float uNight;   // 0 — день, 1 — ночь
   uniform vec3 uStreetL[12]; // уличные фонари рядом: x, z относительно игрока, y — высота плафона
@@ -515,15 +516,13 @@ const frag = /* glsl */ `
     // тёмный переход: свет не работает — почти темнота, только красное чуть видно и неисправная лампа
     if (vDark > 0.5 && vDark < 1.5 && st != 23) {
       float redness = clamp((alb.r - max(alb.g, alb.b)) * 2.2, 0.0, 1.0);
-      c3 = alb * vec3(0.045, 0.045, 0.055) + vec3(0.35, 0.05, 0.04) * redness * near;
-      // аварийная подсветка: тонкая красная полоса по низу стен тоннеля — изгибы и тупики
-      // видно издалека, ещё до фонаря (иначе с улицы тёмный переход — просто чёрная дыра)
-      if (st == 9 && abs(n.y) < 0.5) {
-        float yy = y - -6.0;
-        float fw = fwidth(yy) + 1e-3;
-        float strip = smoothstep(0.26 - fw, 0.26 + fw, yy) * (1.0 - smoothstep(0.4 - fw, 0.4 + fw, yy));
-        c3 += vec3(1.0, 0.1, 0.06) * strip * 2.2;
-      }
+      vec3 darkC = alb * vec3(0.045, 0.045, 0.055) + vec3(0.35, 0.05, 0.04) * redness * near;
+      // вход освещён: дневной свет с улицы заходит на первые метры, у самого входа — лампа над ним.
+      // С улицы видно, куда ведёт вход (и стену за поворотом); дальше — темнота
+      float into = vDz - uDarkZ;
+      float day = 1.0 - smoothstep(6.0, 18.0, into);
+      float spot = exp(-(into - 4.0) * (into - 4.0) / 16.0) * 0.35;
+      c3 = mix(darkC, alb * (1.0 + spot), day);
     }
     // фонарь бегуна, как в хоррорах: круглое пятно по центру взгляда (чуть ниже), мягкий ореол
     // и светлое кольцо по краю. Считаем по направлению от камеры, вблизи ярко, вдаль слабеет
@@ -591,6 +590,7 @@ export function createMaterial({ linearOut }) {
       uRow: { value: ROW },
       uTime: { value: 0 },
       uRunZ: { value: 0 },
+      uDarkZ: { value: 1e5 },
       uPs1: { value: 0 },
       uAspectV: { value: 1 },
       uHigh: { value: 0 },

@@ -1722,6 +1722,12 @@ function frame(now) {
   materials.main.uniforms.uB.value = cam.base;
   materials.main.uniforms.uTime.value = gameTime;
   materials.main.uniforms.uRunZ.value = pl.z % 840;
+  {
+    // вход в тёмный переход: последний, до которого уже видно (впереди до 150 м) — или тот, в котором мы сейчас
+    let zs = -1e5;
+    for (const z of world.darkStarts || []) if (z < pl.z + 150 && z > zs) zs = z;
+    materials.main.uniforms.uDarkZ.value = zs - pl.z;
+  }
   // PS1: ~100 «строк» по высоте — заметно, но не каша
   materials.main.uniforms.uPs1.value = ps1On ? 100 : 0;
   materials.main.uniforms.uAspectV.value = camera.aspect; // для бегущей по красному волны (кратно её длине)

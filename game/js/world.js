@@ -303,6 +303,9 @@ export class World {
     if (under && !this._inUnder) this.underIdx = (this.underIdx ?? -1) + 1;
     this._inUnder = under;
     inst.feat = under ? (this.featOverride || underFeatures(this.seed, this.underIdx)) : null;
+    // начала тёмных переходов — там вход подсвечен
+    const prev = this.instances[this.instances.length - 1];
+    if (inst.feat?.dark && !prev?.feat?.dark) (this.darkStarts ||= []).push(inst.rowStart * ROW);
     // разруха — как погода, но мира: включается и выключается только на «склейках» —
     // вылезли из подземки или спрыгнули с небоскрёба, а город уже другой (или снова целый)
     inst.ruin = !under && (this.ruinOverride ?? !!this._ruin);
