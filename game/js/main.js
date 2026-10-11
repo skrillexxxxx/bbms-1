@@ -1250,8 +1250,8 @@ const TUT_TEXT = {
   jump: ['Прыжок', 'свайп вверх', '↑ или пробел'],
   slide: ['Подкат', 'свайп вниз', '↓'],
   pump: ['Разгон', 'быстро свайпай вниз — двумя пальцами по очереди', 'часто жми ↓'],
-  wall: ['Бег по стене', 'свайп к красной стене', '← или → к красной стене'],
-  kick: ['На стену напротив', 'свайп от стены', '← или → от стены'],
+  wall: ['Бег по стене', 'свайп %s — к красной стене', '%k — к красной стене'],
+  kick: ['На стену напротив', 'свайп %s — от стены', '%k — от стены'],
   done: ['Готово! Дальше — сам', '', ''],
 };
 const tut = { step: null, t: 0, shown: null, k: 1, kTo: 1, wallD: 0, doneT: 0 };
@@ -1270,7 +1270,8 @@ function tutStart() {
   return tut.step === 'jump';
 }
 function tutShow(name, g) {
-  const [h, touchTxt, keyTxt] = TUT_TEXT[name];
+  const side = g === 'left' ? ['влево', '←'] : ['вправо', '→'];
+  const [h, touchTxt, keyTxt] = TUT_TEXT[name].map((t) => t.replace('%s', side[0]).replace('%k', side[1]));
   const el = $('tut-hint');
   el.dataset.g = g;
   $('tut-label').innerHTML = h + (touchTxt ? `<small><span class="tut-touch">${touchTxt}</span><span class="tut-key">${keyTxt}</span></small>` : '');
