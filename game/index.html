@@ -56,6 +56,8 @@
       padding: calc(env(safe-area-inset-top) + 12px) 16px 0; pointer-events: none;
     }
     #hud.show { display: flex; }
+    #hud { z-index: 6; } /* поверх паузы и «Графики»: кнопка паузы на паузе — «назад» */
+    #pause.back { opacity: 1; letter-spacing: 0; }
     /* город стал темнее внизу — HUD белый с тенью, читается и днём, и ночью */
     #hud { color: #f4f4f4; text-shadow: 0 1px 3px rgba(0,0,0,0.45); }
     #flag { border-color: #f4f4f4; color: #f4f4f4; }
@@ -105,7 +107,7 @@
     .seed-meta { font: 12px ui-monospace, Menlo, monospace; opacity: 0.6; margin-top: 2px; }
     .seed-empty { opacity: 0.6; font-size: 15px; padding: 20px 0; }
     /* настройки графики: панель справа, игра видна — изменения сразу на картинке */
-    #gfx { z-index: 4; align-items: flex-end; justify-content: center; }
+    #gfx { z-index: 4; align-items: flex-end; justify-content: center; padding-top: calc(env(safe-area-inset-top) + 58px); }
     #gfx .panel {
       pointer-events: auto; width: min(340px, 100%); max-height: 100%; overflow-y: auto; touch-action: pan-y;
       box-sizing: border-box; padding: 14px 18px; border-radius: 18px; text-align: left;
@@ -149,7 +151,7 @@
     <h1>SDWG GAME</h1>
     <div class="hint">Свайп влево-вправо — сменить полосу<br>Свайп вверх или тап — прыжок<br>Свайп вниз — подкат (под мостами и трубами)<br>Свайп в красную стену — бег по стене, свайп от неё — прыжок на стену напротив<br>Не врезайся в здания</div>
     <div class="pulse">Тапни, чтобы бежать</div>
-    <div class="menu"><button id="open-seeds" class="ghost">Мои города</button><br><button id="shadows" class="ghost small">Тени фонаря: выкл</button><button id="sun" class="ghost small">Тени солнца: выкл</button><button id="ps1" class="ghost small">PS1: выкл</button><br><button id="autoexp" class="ghost small">Автоэкспозиция: вкл</button></div>
+    <div class="menu"><button id="open-seeds" class="ghost">Мои города</button><br><button id="shadows" class="ghost small">Тени фонаря: выкл</button><button id="sun" class="ghost small">Тени солнца: выкл</button><button id="ps1" class="ghost small">PS1: выкл</button><br><button id="autoexp" class="ghost small">Автоэкспозиция: вкл</button><button id="gfx-open-start" class="ghost small">Графика</button></div>
   </div>
 
   <div id="seeds" class="screen">
@@ -176,7 +178,7 @@
   <div id="pause-menu" class="screen">
     <h2>Пауза</h2>
     <div><button id="resume">Продолжить</button></div>
-    <div><button id="restart-same" class="ghost">Заново</button><button id="restart-new" class="ghost">Новый город</button></div>
+    <div><button id="restart-same" class="ghost">Заново</button><button id="restart-new" class="ghost">Новый город</button><button id="to-menu" class="ghost">Главное меню</button></div>
     <div><button id="shadows-pause" class="ghost small">Тени фонаря: выкл</button><button id="sun-pause" class="ghost small">Тени солнца: выкл</button><button id="ps1-pause" class="ghost small">PS1: выкл</button></div>
     <div><button id="autoexp-pause" class="ghost small">Автоэкспозиция: вкл</button><button id="gfx-open" class="ghost small">Графика</button></div>
   </div>

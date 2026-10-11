@@ -1130,6 +1130,28 @@ function pauseGame() {
   if (slideSnd) { slideSnd = false; sound.slide(false, true); }
   sound.muffle(true);
   $('pause-menu').classList.add('show');
+  setPauseIcon();
+}
+// на паузе кнопка ❚❚ становится «назад»: из «Графики» — в меню паузы, из меню паузы — в игру
+function setPauseIcon() {
+  const b = $('pause');
+  b.textContent = state === 'paused' ? '←' : '❚❚';
+  b.classList.toggle('back', state === 'paused');
+  b.setAttribute('aria-label', state === 'paused' ? 'Назад' : 'Пауза');
+}
+// выход в главное меню: тот же город, стартовый экран
+function toMainMenu() {
+  rec.event('menu', { z: pl.z });
+  if (slideSnd) { slideSnd = false; sound.slide(false, true); }
+  touch = null;
+  state = 'ready';
+  reset(seed);
+  sound.muffle(false);
+  for (const id of ['pause-menu', 'gfx']) $(id).classList.remove('show');
+  ui.over.classList.remove('show');
+  ui.hud.classList.remove('show');
+  ui.start.classList.add('show');
+  setPauseIcon();
 }
 function resumeGame() {
   if (state !== 'paused') return;
@@ -1137,8 +1159,14 @@ function resumeGame() {
   sound.muffle(false);
   $('pause-menu').classList.remove('show');
   $('gfx').classList.remove('show');
+  setPauseIcon();
 }
-$('pause').addEventListener('click', (e) => { e.stopPropagation(); pauseGame(); });
+$('pause').addEventListener('click', (e) => {
+  e.stopPropagation();
+  if (state === 'run') pauseGame();
+  else if (state === 'paused') { if ($('gfx').classList.contains('show')) closeGfx(); else { sound.unlock(); resumeGame(); } }
+});
+$('to-menu').addEventListener('click', (e) => { e.stopPropagation(); toMainMenu(); });
 $('resume').addEventListener('click', (e) => { e.stopPropagation(); sound.unlock(); resumeGame(); });
 $('restart-same').addEventListener('click', (e) => { e.stopPropagation(); sound.unlock(); restart(true); });
 $('restart-new').addEventListener('click', (e) => { e.stopPropagation(); sound.unlock(); restart(false); });
@@ -1244,7 +1272,7 @@ const SWIPE = 28; // пикселей
 canvas.addEventListener('pointerdown', (e) => {
   e.preventDefault();
   sound.unlock();
-  if (state === 'ready') { start(); return; }
+  if (state === 'ready') { if (!$('gfx').classList.contains('show')) start(); return; }
   if (state !== 'run') return;
   rec.event('touch', { x: e.clientX, y: e.clientY });
   touch = { id: e.pointerId, x: e.clientX, x0: e.clientX, y0: e.clientY, sx: e.clientX, sy: e.clientY, st: performance.now(), t: performance.now(), swiped: false };
@@ -1287,7 +1315,7 @@ window.addEventListener('keydown', (e) => {
   sound.unlock();
   if (e.target.type === 'range' && e.code !== 'Escape') return;
   if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'KeyA', 'KeyD', 'KeyW', 'KeyS', 'Space'].includes(e.code)) e.preventDefault();
-  if (state === 'ready' && (e.code === 'Space' || e.code === 'Enter')) { start(); return; }
+  if (state === 'ready' && (e.code === 'Space' || e.code === 'Enter') && !$('gfx').classList.contains('show')) { start(); return; }
   if (state === 'dead' && ui.over.classList.contains('show') && e.code === 'Enter') { restart(false); return; }
   if (e.code === 'Escape' || e.code === 'KeyP') { if (state === 'run') pauseGame(); else resumeGame(); return; }
   if (state === 'paused') return;
@@ -1591,8 +1619,20 @@ for (const k of Object.keys(gfxFmt)) {
   $(`gfx-${k}`).addEventListener('change', saveGfx);
 }
 $('gfx-reset').addEventListener('click', (e) => { e.stopPropagation(); Object.assign(gfx, GFX_DEFAULT); syncGfxUI(); applyGfx(); saveGfx(); });
-$('gfx-open').addEventListener('click', (e) => { e.stopPropagation(); $('pause-menu').classList.remove('show'); syncGfxUI(); $('gfx').classList.add('show'); });
-$('gfx-close').addEventListener('click', (e) => { e.stopPropagation(); $('gfx').classList.remove('show'); if (state === 'paused') $('pause-menu').classList.add('show'); });
+// открывается из паузы и из главного меню; «Назад» возвращает туда, откуда пришли
+function openGfx() {
+  $('pause-menu').classList.remove('show');
+  ui.start.classList.remove('show');
+  syncGfxUI();
+  $('gfx').classList.add('show');
+}
+function closeGfx() {
+  $('gfx').classList.remove('show');
+  if (state === 'paused') $('pause-menu').classList.add('show');
+  else if (state === 'ready') ui.start.classList.add('show');
+}
+for (const id of ['gfx-open', 'gfx-open-start']) $(id).addEventListener('click', (e) => { e.stopPropagation(); openGfx(); });
+$('gfx-close').addEventListener('click', (e) => { e.stopPropagation(); closeGfx(); });
 $('gfx').addEventListener('pointerdown', (e) => e.stopPropagation());
 syncGfxUI();
 applyGfx();
