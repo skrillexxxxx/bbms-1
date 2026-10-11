@@ -617,6 +617,80 @@ export function createMaterial({ linearOut }) {
 
 // Искры из неисправной лампы: точки летят вниз по дуге, циклично; движение целиком в шейдере
 const SPARKS = 46;
+// Луч уличного фонаря: прозрачный конус от плафона к земле. Ярче у плафона, к земле тает,
+// края мягкие (чем «вскользь» смотрим на поверхность конуса, тем прозрачнее). Только ночью.
+export function createConeMaterial({ linearOut }) {
+  return new THREE.ShaderMaterial({
+    transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
+    uniforms: {
+      uL: { value: L }, uLz: { value: LZ }, uB: { value: 0 },
+      uFogNear: { value: LZ * 2.2 }, uFogFar: { value: LZ * 6.0 },
+      uNight: { value: 0 },
+      uLinearOut: { value: linearOut ? 1 : 0 },
+    },
+    vertexShader: /* glsl */ `
+      attribute float aV;
+      uniform float uL; uniform float uLz; uniform float uB; uniform float uFogNear; uniform float uFogFar;
+      varying float vV; varying float vEdge; varying float vFog;
+      void main() {
+        vec4 f = modelMatrix * vec4(position, 1.0);
+        float s = exp(-f.z / uLz);
+        float r = uL * s;
+        float phi = f.x / uL;
+        vec3 w = vec3(r * sin(phi), uB + (f.y - uB) * s, r * cos(phi));
+        vec4 mv = viewMatrix * vec4(w, 1.0);
+        gl_Position = projectionMatrix * mv;
+        // нормаль конуса поворачиваем вместе с изгибом мира (вокруг вертикали на phi)
+        vec3 nf = normal;
+        vec3 nw = vec3(nf.x * cos(phi) + nf.z * sin(phi), nf.y, -nf.x * sin(phi) + nf.z * cos(phi));
+        vec3 nv = normalize(mat3(viewMatrix) * nw);
+        vEdge = abs(dot(nv, normalize(-mv.xyz)));
+        vV = aV;
+        vFog = smoothstep(uFogNear, uFogFar, f.z);
+      }
+    `,
+    fragmentShader: /* glsl */ `
+      precision highp float;
+      uniform float uNight; uniform float uLinearOut;
+      varying float vV; varying float vEdge; varying float vFog;
+      void main() {
+        float a = pow(1.0 - vV, 1.3) * pow(vEdge, 1.2) * 0.4 * uNight * (1.0 - vFog);
+        vec3 c = vec3(1.0, 0.9, 0.74) * a;
+        // слабый аддитивный свет: pow(…, 2.2) почти обнулил бы его — берём линейно
+        if (uLinearOut > 0.5) c *= 0.55;
+        gl_FragColor = vec4(c, 1.0);
+      }
+    `,
+  });
+}
+
+// геометрия лучей: конус на каждый фонарь [x, z, y плафона]
+function coneGeometry(lamps) {
+  const pos = [], nor = [], v = [], idx = [];
+  const SEG = 14;
+  for (const [x, z, y] of lamps) {
+    const R = 2.6, h = y, base = pos.length / 3;
+    const slope = R / h;
+    for (let i = 0; i <= SEG; i++) {
+      const a = (i / SEG) * Math.PI * 2, ca = Math.cos(a), sa = Math.sin(a);
+      const nl = Math.hypot(1, slope);
+      const n = [ca / nl, slope / nl, sa / nl];
+      pos.push(x + ca * 0.12, y, z + sa * 0.12); nor.push(...n); v.push(0);
+      pos.push(x + ca * R, 0.02, z + sa * R); nor.push(...n); v.push(1);
+    }
+    for (let i = 0; i < SEG; i++) {
+      const a = base + i * 2;
+      idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2);
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
+  g.setAttribute('aV', new THREE.Float32BufferAttribute(v, 1));
+  g.setIndex(idx);
+  return g;
+}
+
 export function createSparkMaterial({ linearOut }) {
   return new THREE.ShaderMaterial({
     transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
@@ -1761,6 +1835,12 @@ export function buildInstanceMesh(inst, materials, world) {
   }
   group.userData.zStart = inst.rowStart * ROW;
   group.userData.lamps = streetLamps;
+  if (streetLamps.length && materials.cone) {
+    const cones = new THREE.Mesh(coneGeometry(streetLamps), materials.cone);
+    cones.frustumCulled = false;
+    cones.renderOrder = 3;
+    group.add(cones);
+  }
   group.userData.zEnd = (inst.rowStart + nRows) * ROW;
   return group;
 }

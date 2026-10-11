@@ -8,7 +8,7 @@ import {
   World, CELL, ROW, W, L, LZ, COLS, WALL, BRIDGE, VOID, RUNWALL, POOL, LAUNCH, LAUNCH_ROWS, LEVEL, BRIDGE_BOTTOM, BRIDGE_TOP, CEIL_H,
   canStep, canJumpOver, aliveBackward, walk, lv,
 } from './world.js';
-import { createMaterial, createStarMaterial, createDepthMaterial, createSunDepthMaterial, createSparkMaterial, buildInstanceMesh } from './render.js';
+import { createMaterial, createStarMaterial, createDepthMaterial, createSunDepthMaterial, createSparkMaterial, createConeMaterial, buildInstanceMesh } from './render.js';
 import { createSound } from './sound.js';
 import { createRecorder, shareFile } from './recorder.js';
 import { loadMonkey, createMonkeyMaterial, createGlowMaterial, placeMonkeys, monkeyGeometry } from './monkeys.js';
@@ -85,6 +85,7 @@ const materials = {
   monkey: createMonkeyMaterial({ linearOut: useBloom }),
   glow: createGlowMaterial({ linearOut: useBloom }),
   spark: createSparkMaterial({ linearOut: useBloom }),
+  cone: createConeMaterial({ linearOut: useBloom }),
 };
 const monkeyReady = loadMonkey();
 // маска фонаря (снимок пятна реального фонаря); пока не загрузилась — пятно рисуется формулой
@@ -1343,10 +1344,12 @@ function renderLampShadow() {
   depthMat.uniforms.uB.value = u.uB.value;
   const prevOverride = scene.overrideMaterial;
   scene.overrideMaterial = depthMat;
+  materials.cone.visible = false; // лучи фонарей — свет, а не предметы: тени не отбрасывают
   renderer.setRenderTarget(shadowRT);
   renderer.clear();
   renderer.render(scene, lampCam);
   renderer.setRenderTarget(null);
+  materials.cone.visible = true;
   scene.overrideMaterial = prevOverride;
   u.uShadow.value = shadowRT.depthTexture;
 }
@@ -1403,7 +1406,9 @@ function renderSunShadow(deep) {
   renderer.setRenderTarget(sunRT);
   renderer.clear();
   renderer.autoClear = false;
+  materials.cone.visible = false;
   for (const sh of [0, -W, W]) { sunDepth.uniforms.uShift.value = sh; renderer.render(scene, sunCam); }
+  materials.cone.visible = true;
   renderer.autoClear = prevAuto;
   renderer.setRenderTarget(null);
   scene.overrideMaterial = prevOverride;
@@ -1787,6 +1792,11 @@ function frame(now) {
   updateSpace(dt, deep);
   materials.star.uniforms.uB.value = cam.base;
   materials.spark.uniforms.uB.value = cam.base;
+  {
+    const cu = materials.cone.uniforms, mm = materials.main.uniforms;
+    cu.uB.value = cam.base; cu.uFogNear.value = mm.uFogNear.value; cu.uFogFar.value = mm.uFogFar.value;
+    cu.uNight.value = mm.uNight.value;
+  }
   materials.spark.uniforms.uTime.value = gameTime;
   materials.spark.uniforms.uPx.value = renderer.getPixelRatio() * innerHeight / 800;
   {
@@ -1833,4 +1843,4 @@ ui.start.classList.add('show');
 requestAnimationFrame(frame);
 
 // для автотестов
-window.__game = { materials, cam, laneShift, setAuto: (v) => { autopilot = v; }, get state() { return state; }, pl, start, die, jump, runFile, get monkeys() { return monkeys; }, slide, get seed() { return seed; }, get world() { return world; } };
+window.__game = { materials, cam, laneShift, setAuto: (v) => { autopilot = v; }, get state() { return state; }, pl, start, die, jump, runFile, get monkeys() { return monkeys; }, slide, get seed() { return seed; }, get world() { return world; }, get meshes() { return meshes; } };
