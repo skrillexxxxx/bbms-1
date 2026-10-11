@@ -43,6 +43,7 @@ export function createSound(enabled) {
   let steps = [], sfx = null, lastStep = -1, stepBus = null;
   // steps: [{ buf, a }] — a: где начинается звук (без тишины mp3)
   let revWet = null; // сколько шагов уходит в реверб (в подземке — эхо тоннеля)
+  let rainG = null; // шум дождя
   let nearLP = null, nearL = null, nearR = null, nearC = null, echoL = null, echoR = null, narrowAmt = 0; // короткое эхо от стен: слева, справа, отовсюду (узко)
 
   function decode(data) {
@@ -222,6 +223,24 @@ export function createSound(enabled) {
     slideBus = ctx.createGain();
     const slf = ctx.createBiquadFilter(); slf.type = 'lowpass'; slf.frequency.value = SLIDE_LP; slf.Q.value = 0.7;
     slideBus.connect(slf); slf.connect(sfx);
+    // дождь: мягкий шум, срезаны низы (не гул) и самые верхи (не шипение), редкие капли-щелчки
+    {
+      const n = ctx.sampleRate * 3, buf = ctx.createBuffer(2, n, ctx.sampleRate);
+      for (let ch = 0; ch < 2; ch++) {
+        const d = buf.getChannelData(ch);
+        let a = 0;
+        for (let i = 0; i < n; i++) {
+          a = a * 0.6 + (Math.random() * 2 - 1) * 0.4;
+          d[i] = a + (Math.random() < 0.0004 ? (Math.random() * 2 - 1) * 1.5 : 0);
+        }
+      }
+      const src = ctx.createBufferSource(); src.buffer = buf; src.loop = true;
+      const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 400;
+      const lp2 = ctx.createBiquadFilter(); lp2.type = 'lowpass'; lp2.frequency.value = 5500;
+      rainG = ctx.createGain(); rainG.gain.value = 0;
+      src.connect(hp); hp.connect(lp2); lp2.connect(rainG); rainG.connect(ctx.destination);
+      src.start();
+    }
     // свернули Safari — музыка замолкает, вернулись — продолжает
     document.addEventListener('visibilitychange', () => {
       if (document.hidden) ctx.suspend(); else ctx.resume();
@@ -262,6 +281,11 @@ export function createSound(enabled) {
       nearC.gain.setTargetAtTime(0.65 * narrow, t, 0.2);
       echoL.gain.setTargetAtTime(0.127 * Math.min(1, left + narrow), t, 0.12);
       echoR.gain.setTargetAtTime(0.127 * Math.min(1, right + narrow), t, 0.12);
+    },
+    // дождь 0…1 (в подземке почти не слышно)
+    rain(k) {
+      if (!ctx || !rainG) return;
+      rainG.gain.setTargetAtTime(0.16 * k * (muffled ? 0.4 : 1), ctx.currentTime, 0.3);
     },
     // deep: 0 на улице … 1 в подземке; speed — скорость бега; high: 0 … 1 на небоскрёбах.
     update(deep, speed, high = 0) {

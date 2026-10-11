@@ -38,6 +38,8 @@ const vert = /* glsl */ `
   varying float vAO;
   varying float vLight;
   uniform mat4 uLampMat;
+  uniform float uPs1;     // 0 — выкл; иначе «разрешение» сетки, к которой липнут вершины (по высоте)
+  uniform float uAspectV;
   varying vec4 vLampPos;
   uniform mat4 uSunMat;
   varying vec4 vSunPos;
@@ -50,6 +52,11 @@ const vert = /* glsl */ `
     vec3 w = vec3(r * sin(phi), uB + (f.y - uB) * s, r * cos(phi));
     vec4 mv = viewMatrix * vec4(w, 1.0);
     gl_Position = projectionMatrix * mv;
+    // PS1: вершины прилипают к грубой сетке экрана — при движении меш «дрожит» и плывёт
+    if (uPs1 > 0.0) {
+      vec2 grid = vec2(uPs1 * uAspectV, uPs1);
+      gl_Position.xy = floor(gl_Position.xy / gl_Position.w * grid + 0.5) / grid * gl_Position.w;
+    }
     vLampPos = uLampMat * vec4(w, 1.0);
     vSunPos = uSunMat * vec4(f.xyz, 1.0); // солнце светит в плоском мире, до изгиба
     vPos = position;
@@ -123,6 +130,14 @@ const frag = /* glsl */ `
   }
 
   float h21(vec2 p) { vec3 p3 = fract(vec3(p.xyx) * 0.1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
+  // свет в окне: у каждого своя лампа — тёплая, нейтральная, холодная; изредка фиолетовый фитосвет
+  vec3 winColor(float k) {
+    if (k > 0.965) return vec3(0.72, 0.22, 1.15);   // кто-то растит рассаду под УФ-лампой
+    if (k > 0.82) return vec3(0.72, 0.86, 1.1);     // холодный: экраны, светодиоды
+    if (k > 0.5) return vec3(1.0, 0.93, 0.82);      // нейтральный
+    if (k > 0.2) return vec3(1.0, 0.8, 0.55);       // тёплый
+    return vec3(1.0, 0.68, 0.38);                   // совсем тёплый, лампа накаливания
+  }
   const vec3 WARM = vec3(1.0, 0.85, 0.66); // ночной свет: тёплый, но не жёлтый
 
   // палитра шариков: насыщенные, как в детском бассейне
@@ -215,6 +230,10 @@ const frag = /* glsl */ `
       col = 1.0;
       ballCol = PALETTE(fract(vTop * 0.618));
       ballShade = 0.55 + 0.45 * max(dot(n, normalize(vec3(-0.3, 0.6, -0.7))), 0.0) + 0.35 * pow(max(dot(n, normalize(vec3(-0.4, 0.5, -0.75))), 0.0), 18.0);
+    } else if (st == 26) {
+      // мусорный контейнер: белый пластик, у земли грязнее, рёбра на боках
+      col = 0.84 * mix(0.7, 1.0, smoothstep(0.1, 0.6, y - uB));
+      if (abs(n.y) < 0.5) col *= 0.93 + 0.07 * step(0.5, fract((abs(n.x) > 0.5 ? vPos.z : vPos.x) / 0.45));
     } else if (st == 24) {
       col = 0.3; // столб фонаря — тёмный металл
     } else if (st == 25) {
@@ -299,7 +318,7 @@ const frag = /* glsl */ `
           if (fy > 0.3 && fy < 0.78) {
             col = 0.06;
             float h = h21(vec2(floor((u - uMin) / 3.4), floor(y / floorH)) + bid);
-            if (h > 0.84) emit += WARM * winK * (1.25 + 1.6 * (h - 0.84)) * uNight;
+            if (h > 0.84) emit += winColor(h21(vec2(floor((u - uMin) / 3.4) + 5.1, floor(y / floorH)) + bid)) * winK * (1.25 + 1.6 * (h - 0.84)) * uNight;
           }
         } else if (st == 3 && inBody) {
           // сетка окон
@@ -308,7 +327,7 @@ const frag = /* glsl */ `
             col = 0.07;
             float h = h21(vec2(floor((u - uMin) / 2.6), floor(y / floorH)) + bid);
             // большинство тёплые, некоторые — холодный свет экранов
-            vec3 wc = h > 0.97 ? vec3(0.7, 0.85, 1.1) : WARM;
+            vec3 wc = winColor(h21(vec2(floor((u - uMin) / 2.6) + 5.1, floor(y / floorH)) + bid));
             if (h > 0.84) emit += wc * winK * (1.25 + 1.6 * (h - 0.84)) * uNight;
           }
         }
@@ -445,10 +464,17 @@ const frag = /* glsl */ `
       float redness = clamp((c3.r - max(c3.g, c3.b)) * 2.2, 0.0, 1.0);
       if (redLit) dark += vec3(1.0, 0.1, 0.07) * redness * (1.3 + 0.9 * redWave);
       dark += vec3(0.3, 0.33, 0.4) * rimK;
+      // низ стен домов ночью освещён почти как земля (фонари, витрины), выше — уходит в темноту:
+      // стены и пол внизу кадра сливаются в одно целое
+      if (st >= 1 && st <= 3 && abs(n.y) < 0.5) {
+        float hy = y - uB;
+        float low = smoothstep(-8.0, 0.0, hy) * (1.0 - smoothstep(0.0, 14.0, hy));
+        dark += c3 * vec3(0.2, 0.2, 0.22) * low * mix(0.6, 1.0, nearPath);
+      }
       dark += c3 * WARM * streetL * 1.15; // пятно от уличного фонаря
       // препятствия у земли (то, через что прыгаем и под чем катимся) ночью не проваливаются в черноту:
       // тёплый свет с улицы, ярче на гранях к нам и сверху — видно издалека, ещё до фонаря
-      bool obstacle = (st == 4 || st == 5 || (st >= 11 && st <= 13)) && vTop - uB < 4.0;
+      bool obstacle = (st == 4 || st == 5 || (st >= 11 && st <= 13) || st == 26) && vTop - uB < 4.0;
       if (obstacle) {
         float of = n.y > 0.5 ? 0.9 : (n.y < -0.5 ? 0.25 : 0.45 + 0.55 * max(-n.z, 0.0));
         dark += (c3 * 0.42 + 0.07) * WARM * of; // + ровная добавка — тёмные части (стекло, решётки) тоже видно
@@ -529,6 +555,8 @@ export function createMaterial({ linearOut }) {
       uRow: { value: ROW },
       uTime: { value: 0 },
       uRunZ: { value: 0 },
+      uPs1: { value: 0 },
+      uAspectV: { value: 1 },
       uHigh: { value: 0 },
       uNight: { value: 0 },
       uStreetL: { value: Array.from({ length: 12 }, () => new THREE.Vector3(0, -99, 0)) },
@@ -933,6 +961,23 @@ class Builder {
 
   // брошенная тележка из супермаркета: корзина-решётка на рамке, ручка, четыре колёсика.
   // Поставлена боком у стены, может стоять криво (rot)
+  // большой мусорный контейнер спиной к стене (side: −1 — стена слева, +1 — справа):
+  // одна крышка закрыта, вторая откинута к стене
+  dumpster(xw, y, z0, side, open) {
+    const xa = xw - side * 0.06, xb = xw - side * 1.16;
+    const x0 = Math.min(xa, xb), x1 = Math.max(xa, xb), z1 = z0 + 1.9, zm = z0 + 0.95;
+    this.boxGeo(x0, x1, z0, z1, y + 1.22, 26, y + 0.14);
+    this.boxGeo(x0 - 0.04, x1 + 0.04, z0 - 0.04, z1 + 0.04, y + 1.3, 26, y + 1.2); // кромка
+    this.boxGeo(x0 - 0.05, x1 + 0.05, z0 - 0.05, open ? zm : z1 + 0.05, y + 1.37, 26, y + 1.3);
+    if (open) {
+      const xl = xw - side * 0.06, xr = xw - side * 0.14;
+      this.boxGeo(Math.min(xl, xr), Math.max(xl, xr), zm, z1 + 0.05, y + 2.45, 26, y + 1.3);
+    }
+    for (const xx of [x0 + 0.15, x1 - 0.15]) for (const zz of [z0 + 0.2, z1 - 0.2]) {
+      this.prism([xx, y + 0.07, zz - 0.06], [xx, y + 0.07, zz + 0.06], 0.07, 0.07, 6, 24);
+    }
+  }
+
   cart(x, y, z, rot, rng) {
     const R = (dx, dz) => [x + dx * Math.cos(rot) - dz * Math.sin(rot), z + dx * Math.sin(rot) + dz * Math.cos(rot)];
     const P = (dx, dy, dz) => { const [px, pz] = R(dx, dz); return [px, y + dy, pz]; };
@@ -1381,6 +1426,25 @@ export function buildInstanceMesh(inst, materials, world) {
     b.prism([xp, top - 0.05, z], [xh, top, z], 0.06, 0.06, 4, 24);
     b.boxGeo(Math.min(xh, xh - side * 0.5) - 0.0, Math.max(xh, xh - side * 0.5), z - 0.2, z + 0.2, top + 0.05, 25, top - 0.18);
     streetLamps.push([xh - side * 0.25, z, top - 0.2]);
+  }
+
+  // 7ж. мусорные контейнеры: в закутках улицы, куда путь не ведёт, — спиной к стене дома
+  let lastBin = -9;
+  for (let r = 0; r < nRows; r++) {
+    const row = rows[r], ri = inst.rowStart + r;
+    if (row.cover || row.b0 !== 0 || row.b1 !== 0 || r - lastBin < 2) continue;
+    const lr = light[ri - la];
+    if (!lr) continue;
+    for (let c = 0; c < COLS; c++) {
+      const v = row[c];
+      if (!walk(v) || lv(v) !== 0 || v === BRIDGE || v === LAUNCH || lr[c] > 0) continue;
+      const wl = row[((c - 1) % COLS + COLS) % COLS] === WALL, wr = row[(c + 1) % COLS] === WALL;
+      if (!(wl || wr) || hash2(ri * 13 + c, 91) > 0.45) continue;
+      const side = wl ? -1 : 1;
+      b.dumpster(side < 0 ? c * CELL : (c + 1) * CELL, 0, r * ROW + 0.5 + hash2(ri, c + 3) * 1.4, side, hash2(ri, c + 9) < 0.5);
+      lastBin = r;
+      break;
+    }
   }
 
   // 7г. ограждения по бокам крыш, вдоль пропастей: стойки и два поручня

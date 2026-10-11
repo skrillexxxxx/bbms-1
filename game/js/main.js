@@ -123,6 +123,7 @@ function createBlurPass() {
       uCA: { value: useFx ? 0.006 : 0 },     // хроматическая аберрация у краёв (доля экрана в углу)
       uPx: { value: 1 },                     // размер «зерна» шума в пикселях экрана
       uVig: { value: 0 },                    // ночная виньетка: края экрана в темноту
+      uRain: { value: 0 },                   // дождь: косые струи поверх кадра
     },
     vertexShader: /* glsl */ `
       varying vec2 vUv;
@@ -140,6 +141,7 @@ function createBlurPass() {
       uniform float uCA;
       uniform float uPx;
       uniform float uVig;
+      uniform float uRain;
       float hash(float n) { return fract(sin(n) * 43758.5453); }
       // хеш Дейва Хоскинса: равномерный и без sin
       float hash13(vec3 p3) {
@@ -185,6 +187,28 @@ function createBlurPass() {
           // половина лучей тёмные, половина светлые — как в манге
           vec3 ink = hash(id * 5.3 + frame * 1.9) > 0.5 ? vec3(0.04) : vec3(1.0);
           col.rgb = mix(col.rgb, ink, k * 0.7);
+        }
+
+        // дождь: три слоя косых струй — ближние крупнее, быстрее и ярче
+        if (uRain > 0.001) {
+          vec2 p = vec2((vUv.x - 0.5) * uAspect, vUv.y);
+          float rain = 0.0;
+          for (int L = 0; L < 3; L++) {
+            float fl = float(L);
+            vec2 q = p;
+            q.x += q.y * (0.1 + 0.04 * fl);              // наклон: ветер и наш бег вперёд
+            float cols = 26.0 + fl * 30.0;
+            float id = floor(q.x * cols);
+            float h = hash(id * 1.71 + fl * 19.3);
+            float yy = fract(q.y * (1.2 + fl * 0.5) + uTime * (2.6 - fl * 0.6) + h * 7.31);
+            float len = 0.22 - fl * 0.05;
+            float streak = 1.0 - smoothstep(0.0, len, yy);
+            float xw = abs(fract(q.x * cols) - 0.5);
+            float line = 1.0 - smoothstep(0.04, 0.1 + 0.05 * (2.0 - fl), xw);
+            rain += step(0.62, h) * line * streak * (0.55 - fl * 0.15);
+          }
+          col.rgb = mix(col.rgb, vec3(0.86, 0.9, 0.97), clamp(rain, 0.0, 1.0) * 0.32 * uRain);
+          col.rgb *= 1.0 - 0.08 * uRain; // в дождь чуть сумрачнее
         }
 
         // хроматическая аберрация: красный и синий расходятся от центра экрана, в центре — ноль.
@@ -1152,15 +1176,18 @@ document.addEventListener('gesturestart', (e) => e.preventDefault());
 document.addEventListener('touchmove', (e) => { if (!e.target.closest?.('#seed-list')) e.preventDefault(); }, { passive: false });
 
 // ---------- погода ----------
-// Виды погоды по очереди и случайно: сейчас «ясно» и «туман», дальше добавятся другие.
+// Виды погоды по очереди и случайно: «ясно», «туман», «дождь».
 // Каждая держится 45–90 с, смена плавная (~8 с). Забег начинается с ясной погоды.
-// ?weather=fog — сразу туман (для проверки).
-const WEATHERS = ['clear', 'fog'];
+// ?weather=fog / ?weather=rain — сразу эта погода (для проверки).
+const WEATHERS = ['clear', 'fog', 'rain'];
 const forceWeather = params.get('weather');
-const weather = { kind: 'clear', w: 0, until: 0 };
+// w — сила дымки (туман — 1, в дождь — серая морось 0.45), r — сила дождя
+const weather = { kind: 'clear', w: 0, r: 0, until: 0 };
+const weatherFog = (k) => (k === 'fog' ? 1 : k === 'rain' ? 0.45 : 0);
 function resetWeather() {
   weather.kind = forceWeather && WEATHERS.includes(forceWeather) ? forceWeather : 'clear';
-  weather.w = weather.kind === 'fog' ? 1 : 0;
+  weather.w = weatherFog(weather.kind);
+  weather.r = weather.kind === 'rain' ? 1 : 0;
   weather.until = gameTime + 45 + Math.random() * 45;
 }
 // возвращает силу тумана 0…1
@@ -1171,8 +1198,10 @@ function updateWeather(dt) {
     weather.until = gameTime + 45 + Math.random() * 45;
     rec.event('weather', { kind: weather.kind, z: pl.z });
   }
-  const target = weather.kind === 'fog' ? 1 : 0;
+  const target = weatherFog(weather.kind);
   weather.w += Math.sign(target - weather.w) * Math.min(Math.abs(target - weather.w), dt / 8);
+  const rt = weather.kind === 'rain' ? 1 : 0;
+  weather.r += Math.sign(rt - weather.r) * Math.min(Math.abs(rt - weather.r), dt / 6);
   return weather.w * weather.w * (3 - 2 * weather.w);
 }
 resetWeather();
@@ -1356,6 +1385,22 @@ for (const id of ['sun', 'sun-over']) {
   });
 }
 updateSunButtons();
+
+// ---------- PS1 (экспериментально, кнопкой): вершины липнут к грубой сетке экрана ----------
+let ps1On = false;
+try { ps1On = localStorage.getItem('sdwg-ps1') === '1'; } catch { /* приватный режим */ }
+function updatePs1Buttons() {
+  for (const id of ['ps1', 'ps1-over']) $(id).textContent = `PS1: ${ps1On ? 'вкл' : 'выкл'}`;
+}
+for (const id of ['ps1', 'ps1-over']) {
+  $(id).addEventListener('click', (e) => {
+    e.stopPropagation();
+    ps1On = !ps1On;
+    try { localStorage.setItem('sdwg-ps1', ps1On ? '1' : '0'); } catch { /* приватный режим */ }
+    updatePs1Buttons();
+  });
+}
+updatePs1Buttons();
 
 // ---------- акустика улицы: стены рядом ----------
 // Короткое эхо со стороны стены (бежим вдоль башни или по красной стене) и отовсюду в узком месте.
@@ -1647,7 +1692,10 @@ function frame(now) {
   }
   materials.main.uniforms.uB.value = cam.base;
   materials.main.uniforms.uTime.value = gameTime;
-  materials.main.uniforms.uRunZ.value = pl.z % 840; // для бегущей по красному волны (кратно её длине)
+  materials.main.uniforms.uRunZ.value = pl.z % 840;
+  // PS1: ~100 «строк» по высоте — заметно, но не каша
+  materials.main.uniforms.uPs1.value = ps1On ? 100 : 0;
+  materials.main.uniforms.uAspectV.value = camera.aspect; // для бегущей по красному волны (кратно её длине)
   // в подземке дымка ближе — пустые коридоры тонут в молочном свете
   const deep = Math.min(1, Math.max(0, -cam.base / 5));
   // погода: туман на улице — видимость втрое ближе (в подземке своя дымка, туман туда не заходит)
@@ -1690,6 +1738,7 @@ function frame(now) {
   const high = Math.min(1, Math.max(0, (cam.base - 10) / 25));
   materials.main.uniforms.uHigh.value = high;
   sound.update(deep, state === 'run' ? speedNow() : 0, high);
+  sound.rain(weather.r * (1 - 0.85 * deep));
   updateSpace(dt, deep);
   materials.star.uniforms.uB.value = cam.base;
   materials.spark.uniforms.uB.value = cam.base;
@@ -1719,6 +1768,7 @@ function frame(now) {
     blurPass.uniforms.uLines.value = cam.lines;
     blurPass.uniforms.uTime.value = gameTime;
     blurPass.uniforms.uVig.value = 0.6 * materials.main.uniforms.uNight.value;
+    blurPass.uniforms.uRain.value = weather.r * (1 - deep);
   }
   renderLampShadow();
   renderSunShadow(Math.min(1, Math.max(0, -cam.base / 5)));
