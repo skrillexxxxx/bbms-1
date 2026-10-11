@@ -70,7 +70,11 @@
     #monk.pop { animation: monkpop 0.3s ease-out; }
     @keyframes monkpop { 40% { transform: scale(1.35); } }
     #seeds { z-index: 5; }
-    #flag { pointer-events: auto; margin: 0; padding: 6px 14px; font-size: 20px; opacity: 0.55; }
+    #flag, #pause { pointer-events: auto; margin: 0; padding: 6px 14px; font-size: 20px; opacity: 0.55; }
+    #pause { margin-left: 8px; border-color: #f4f4f4; color: #f4f4f4; letter-spacing: -0.1em; }
+    #pause-menu { background: rgba(255,255,255,0.72); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); pointer-events: auto; z-index: 4; }
+    #pause-menu h2 { font-size: clamp(32px, 9vw, 56px); margin: 0 0 18px; font-weight: 800; }
+    #pause-menu > div { margin: 4px 0; }
     #flag.hit { opacity: 1; background: #e5262b; border-color: #e5262b; color: #fff; }
     #rec { margin-top: 10px; opacity: 0.7; }
     button.small { padding: 10px 14px; margin: 0 0 0 6px; font-size: 15px; letter-spacing: 0; }
@@ -112,7 +116,7 @@
 <body>
   <canvas id="game"></canvas>
 
-  <div id="hud"><div id="hud-left"><span id="dist">0 м</span><span id="monk"></span></div><button id="flag" class="ghost small" aria-label="Метка: тут что-то не так">⚑</button></div>
+  <div id="hud"><div id="hud-left"><span id="dist">0 м</span><span id="monk"></span></div><div id="hud-right"><button id="flag" class="ghost small" aria-label="Метка: тут что-то не так">⚑</button><button id="pause" class="ghost small" aria-label="Пауза">❚❚</button></div></div>
   <div id="debug"></div>
   <div id="fps"></div>
 
@@ -140,6 +144,13 @@
     <div><button id="save" class="ghost">Сохранить сид</button><button id="open-seeds-over" class="ghost">Мои города</button></div>
     <div><button id="shadows-over" class="ghost small">Тени фонаря: выкл</button><button id="sun-over" class="ghost small">Тени солнца: выкл</button><button id="ps1-over" class="ghost small">PS1: выкл</button></div>
     <div><button id="rec" class="ghost small">Отправить запись</button></div>
+  </div>
+
+  <div id="pause-menu" class="screen">
+    <h2>Пауза</h2>
+    <div><button id="resume">Продолжить</button></div>
+    <div><button id="restart-same" class="ghost">Заново</button><button id="restart-new" class="ghost">Новый город</button></div>
+    <div><button id="shadows-pause" class="ghost small">Тени фонаря: выкл</button><button id="sun-pause" class="ghost small">Тени солнца: выкл</button><button id="ps1-pause" class="ghost small">PS1: выкл</button></div>
   </div>
 
   <script type="module" src="js/main.js"></script>

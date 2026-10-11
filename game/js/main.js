@@ -1026,7 +1026,31 @@ function die(cause = '?') {
   setTimeout(() => { if (state === 'dead' && !ui.seeds.classList.contains('show')) ui.over.classList.add('show'); }, 450);
 }
 
+// ---------- пауза ----------
+function pauseGame() {
+  if (state !== 'run') return;
+  state = 'paused';
+  touch = null;
+  rec.event('pause', { z: pl.z });
+  if (slideSnd) { slideSnd = false; sound.slide(false, true); }
+  sound.muffle(true);
+  $('pause-menu').classList.add('show');
+}
+function resumeGame() {
+  if (state !== 'paused') return;
+  state = 'run';
+  sound.muffle(false);
+  $('pause-menu').classList.remove('show');
+}
+$('pause').addEventListener('click', (e) => { e.stopPropagation(); pauseGame(); });
+$('resume').addEventListener('click', (e) => { e.stopPropagation(); sound.unlock(); resumeGame(); });
+$('restart-same').addEventListener('click', (e) => { e.stopPropagation(); sound.unlock(); restart(true); });
+$('restart-new').addEventListener('click', (e) => { e.stopPropagation(); sound.unlock(); restart(false); });
+// свернули приложение посреди забега — встаём на паузу
+document.addEventListener('visibilitychange', () => { if (document.hidden) pauseGame(); });
+
 function start() {
+  $('pause-menu').classList.remove('show');
   ui.start.classList.remove('show');
   ui.over.classList.remove('show');
   ui.hud.classList.add('show');
@@ -1166,6 +1190,8 @@ window.addEventListener('keydown', (e) => {
   if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'KeyA', 'KeyD', 'KeyW', 'KeyS', 'Space'].includes(e.code)) e.preventDefault();
   if (state === 'ready' && (e.code === 'Space' || e.code === 'Enter')) { start(); return; }
   if (state === 'dead' && ui.over.classList.contains('show') && e.code === 'Enter') { restart(false); return; }
+  if (e.code === 'Escape' || e.code === 'KeyP') { if (state === 'run') pauseGame(); else resumeGame(); return; }
+  if (state === 'paused') return;
   if (e.repeat) return;
   if (e.code === 'Space' || e.code === 'ArrowUp' || e.code === 'KeyW') jump();
   if (e.code === 'ArrowDown' || e.code === 'KeyS' || e.code === 'ShiftLeft') slide();
@@ -1325,9 +1351,9 @@ function renderLampShadow() {
   u.uShadow.value = shadowRT.depthTexture;
 }
 function updateShadowButtons() {
-  for (const id of ['shadows', 'shadows-over']) $(id).textContent = `Тени фонаря: ${shadowsOn ? 'вкл' : 'выкл'}`;
+  for (const id of ['shadows', 'shadows-over', 'shadows-pause']) $(id).textContent = `Тени фонаря: ${shadowsOn ? 'вкл' : 'выкл'}`;
 }
-for (const id of ['shadows', 'shadows-over']) {
+for (const id of ['shadows', 'shadows-over', 'shadows-pause']) {
   $(id).addEventListener('click', (e) => {
     e.stopPropagation();
     shadowsOn = !shadowsOn;
@@ -1376,9 +1402,9 @@ function renderSunShadow(deep) {
   u.uSunShadow.value = sunRT.depthTexture;
 }
 function updateSunButtons() {
-  for (const id of ['sun', 'sun-over']) $(id).textContent = `Тени солнца: ${sunOn ? 'вкл' : 'выкл'}`;
+  for (const id of ['sun', 'sun-over', 'sun-pause']) $(id).textContent = `Тени солнца: ${sunOn ? 'вкл' : 'выкл'}`;
 }
-for (const id of ['sun', 'sun-over']) {
+for (const id of ['sun', 'sun-over', 'sun-pause']) {
   $(id).addEventListener('click', (e) => {
     e.stopPropagation();
     sunOn = !sunOn;
@@ -1392,9 +1418,9 @@ updateSunButtons();
 let ps1On = false;
 try { ps1On = localStorage.getItem('sdwg-ps1') === '1'; } catch { /* приватный режим */ }
 function updatePs1Buttons() {
-  for (const id of ['ps1', 'ps1-over']) $(id).textContent = `PS1: ${ps1On ? 'вкл' : 'выкл'}`;
+  for (const id of ['ps1', 'ps1-over', 'ps1-pause']) $(id).textContent = `PS1: ${ps1On ? 'вкл' : 'выкл'}`;
 }
-for (const id of ['ps1', 'ps1-over']) {
+for (const id of ['ps1', 'ps1-over', 'ps1-pause']) {
   $(id).addEventListener('click', (e) => {
     e.stopPropagation();
     ps1On = !ps1On;
@@ -1631,7 +1657,8 @@ let fpsAcc = 0, fpsN = 0, fps = 0;
 
 function frame(now) {
   requestAnimationFrame(frame);
-  const dt = Math.min(0.05, (now - last) / 1000) * timeScale;
+  // на паузе время стоит: мир, анимации и погода замирают, кадр просто перерисовывается
+  const dt = state === 'paused' ? 0 : Math.min(0.05, (now - last) / 1000) * timeScale;
   // FPS в углу: среднее за полсекунды
   hudFpsN++; hudFpsT += now - last;
   if (hudFpsT >= 500) { fpsEl.textContent = `${Math.round(hudFpsN * 1000 / hudFpsT)} fps`; hudFpsN = 0; hudFpsT = 0; }

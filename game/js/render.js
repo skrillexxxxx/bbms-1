@@ -131,6 +131,14 @@ const frag = /* glsl */ `
 
   float h21(vec2 p) { vec3 p3 = fract(vec3(p.xyx) * 0.1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
   // свет в окне: у каждого своя лампа — тёплая, нейтральная, холодная; изредка фиолетовый фитосвет
+  // полоса a…b по x со сглаженными краями (ширина края — пиксель); вдали, где полосы мельче
+  // пикселя, — просто средняя доля: иначе сетка окон рябит и мерцает при движении
+  // x — дробная часть (fract), xs — та же величина без fract: производная берётся от неё, без скачка на шве
+  float bandAA(float x, float xs, float a, float b) {
+    float w = fwidth(xs) * 0.75 + 1e-4;
+    float k = smoothstep(a - w, a + w, x) * (1.0 - smoothstep(b - w, b + w, x));
+    return mix(k, b - a, smoothstep(0.12, 0.35, w));
+  }
   vec3 winColor(float k) {
     if (k > 0.965) return vec3(0.72, 0.22, 1.15);   // кто-то растит рассаду под УФ-лампой
     if (k > 0.82) return vec3(0.72, 0.86, 1.1);     // холодный: экраны, светодиоды
@@ -327,20 +335,22 @@ const frag = /* glsl */ `
         float winK = mix(0.6, 1.0, smoothstep(6.0, 30.0, y));
         if (st == 2 && inBody) {
           // ленточные окна — чёрные полосы, как на скринах
-          if (fy > 0.3 && fy < 0.78) {
-            col = 0.06;
+          float wm = bandAA(fy, y / floorH, 0.3, 0.78);
+          if (wm > 0.0) {
+            col = mix(col, 0.06, wm);
             float h = h21(vec2(floor((u - uMin) / 3.4), floor(y / floorH)) + bid);
-            if (h > 0.84) emit += winColor(h21(vec2(floor((u - uMin) / 3.4) + 5.1, floor(y / floorH)) + bid)) * winK * (1.25 + 1.6 * (h - 0.84)) * uNight;
+            if (h > 0.84) emit += winColor(h21(vec2(floor((u - uMin) / 3.4) + 5.1, floor(y / floorH)) + bid)) * winK * (1.25 + 1.6 * (h - 0.84)) * uNight * wm;
           }
         } else if (st == 3 && inBody) {
           // сетка окон
           float fu = fract((u - uMin) / 2.6);
-          if (fy > 0.28 && fy < 0.8 && fu > 0.18 && fu < 0.82) {
-            col = 0.07;
+          float wm = bandAA(fy, y / floorH, 0.28, 0.8) * bandAA(fu, (u - uMin) / 2.6, 0.18, 0.82);
+          if (wm > 0.0) {
+            col = mix(col, 0.07, wm);
             float h = h21(vec2(floor((u - uMin) / 2.6), floor(y / floorH)) + bid);
             // большинство тёплые, некоторые — холодный свет экранов
             vec3 wc = winColor(h21(vec2(floor((u - uMin) / 2.6) + 5.1, floor(y / floorH)) + bid));
-            if (h > 0.84) emit += wc * winK * (1.25 + 1.6 * (h - 0.84)) * uNight;
+            if (h > 0.84) emit += wc * winK * (1.25 + 1.6 * (h - 0.84)) * uNight * wm;
           }
         }
         if (vDark > 1.5 && st >= 1 && st <= 3) {
@@ -477,10 +487,13 @@ const frag = /* glsl */ `
     if (vTint > 0.5 && vTint < 1.5 || vTint > 3.5 && vTint < 6.5) {
       float red0 = clamp((c3.r - max(c3.g, c3.b)) * 2.2, 0.0, 1.0);
       float ph = fract((vDz + uRunZ) / 14.0 - uTime * 2.4);
-      float wave = pow(smoothstep(0.0, 0.75, ph) * (1.0 - smoothstep(0.75, 1.0, ph)), 2.0);
+      float wave = pow(smoothstep(0.0, 0.72, ph) * (1.0 - smoothstep(0.72, 1.0, ph)), 1.6);
       redWave = wave;
-      // гребень волны — светлее и «горячее» (к розово-белому), иначе на насыщенном красном не видно
-      c3 = mix(c3, vec3(1.0, 0.62, 0.56) * max(c3.r, 0.5), wave * red0 * 0.65);
+      // контрастная карта: между волнами — бледный, почти неинтенсивный красный,
+      // на гребне — насыщенный и пересвеченный (ярче порога блума — лёгкое свечение и днём)
+      vec3 lowR = mix(vec3(col * 0.95), c3, 0.38);
+      vec3 highR = vec3(3.0, 0.32, 0.22) * max(col, 0.7);
+      c3 = mix(c3, mix(lowR, highR, wave), red0);
     }
     vec3 alb = c3; // цвет поверхности до ночи и темноты — от него считается свет фонаря
     // ночь: всё темнеет и синеет; кромки чуть светятся (видно, куда прыгать), красное горит
@@ -493,7 +506,7 @@ const frag = /* glsl */ `
       if (redLit) dark = mix(dark, c3 * vec3(0.75, 0.6, 0.6), near);
       // красные акценты ночью горят как неон: ярче порога блума — с ореолом, видно издалека
       float redness = clamp((c3.r - max(c3.g, c3.b)) * 2.2, 0.0, 1.0);
-      if (redLit) dark += vec3(1.0, 0.1, 0.07) * redness * (1.3 + 0.9 * redWave);
+      if (redLit) dark += vec3(1.0, 0.1, 0.07) * redness * (0.45 + 2.4 * redWave);
       dark += vec3(0.3, 0.33, 0.4) * rimK;
       // низ стен домов ночью освещён почти как земля (фонари, витрины), выше — уходит в темноту:
       // стены и пол внизу кадра сливаются в одно целое
@@ -1095,7 +1108,8 @@ function ruinTower(b, x0, x1, z0, z1, H, style, minTop, seed) {
     const cw = w * (0.22 + rr() * 0.45), cd = d * (0.22 + rr() * 0.45);
     const ax = rr() < 0.5 ? x0 : x1 - cw, az = rr() < 0.5 ? z0 : z1 - cd;
     const top = cut + Math.max(3, (H - cut) * (0.15 + rr() * 0.7));
-    b.boxGeo(ax, ax + cw, az, az + cd, top, style, cut);
+    // низ куска утоплен в основной объём — без совпадающих граней (мерцали бы)
+    b.boxGeo(ax + 0.02, ax + cw - 0.02, az + 0.02, az + cd - 0.02, top, style, cut - 0.3, { bottom: false });
     b.tint = 7;
     for (let k = 0; k < 4; k++) {
       const px = ax + rr() * cw, pz = az + rr() * cd;
