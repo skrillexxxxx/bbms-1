@@ -67,6 +67,8 @@
     }
     #debug { color: #f4f4f4; text-shadow: 0 1px 2px rgba(0,0,0,0.5); }
     #hud-left, #dist { font-size: 28px; font-weight: 800; }
+    #spd { margin-left: 14px; font-size: 18px; font-weight: 700; opacity: 0.85; font-variant-numeric: tabular-nums; }
+    #speed-rec { font-size: 14px; opacity: 0.7; }
     #monk { display: none; margin-left: 14px; color: #e5262b; }
     #monk.show { display: inline-block; }
     #monk::before { content: ''; display: inline-block; width: 1.25em; height: 1.25em; background: url(monkey-icon.png) center / contain no-repeat; margin-right: 0.12em; vertical-align: -0.28em; }
@@ -139,7 +141,7 @@
 <body>
   <canvas id="game"></canvas>
 
-  <div id="hud"><div id="hud-left"><span id="dist">0 м</span><span id="monk"></span></div><div id="hud-right"><button id="flag" class="ghost small" aria-label="Метка: тут что-то не так">⚑</button><button id="pause" class="ghost small" aria-label="Пауза">❚❚</button></div></div>
+  <div id="hud"><div id="hud-left"><span id="dist">0 м</span><span id="spd"></span><span id="monk"></span></div><div id="hud-right"><button id="flag" class="ghost small" aria-label="Метка: тут что-то не так">⚑</button><button id="pause" class="ghost small" aria-label="Пауза">❚❚</button></div></div>
   <div id="debug"></div>
   <div id="fps"></div>
 
@@ -159,6 +161,7 @@
   <div id="over" class="screen">
     <div id="over-dist">0 м</div>
     <div id="over-info"></div>
+    <div id="speed-rec"></div>
     <div id="best"></div>
     <div>
       <button id="again">Новый город</button>

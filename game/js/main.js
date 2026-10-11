@@ -391,11 +391,15 @@ const ui = {
   save: $('save'), seeds: $('seeds'), seedList: $('seed-list'),
   start: $('start'), over: $('over'), hud: $('hud'),
   dist: $('dist'), debug: $('debug'), overDist: $('over-dist'),
-  overInfo: $('over-info'), best: $('best'),
+  overInfo: $('over-info'), best: $('best'), spd: $('spd'), speedRec: $('speed-rec'),
 };
 
 let best = 0;
 try { best = Number(localStorage.getItem('city-best')) || 0; } catch { /* приватный режим */ }
+// скорость — в км/ч: максимум за забег и рекорд за все забеги
+const kmh = (v) => Math.round(v * 3.6);
+let bestSpeed = 0, runMaxSpeed = 0;
+try { bestSpeed = Number(localStorage.getItem('city-best-speed')) || 0; } catch { /* приватный режим */ }
 
 // ---------- состояние игры ----------
 let world, meshes, built, seed;
@@ -1104,10 +1108,16 @@ function die(cause = '?') {
     best = meters;
     try { localStorage.setItem('city-best', String(best)); } catch { /* ignore */ }
   }
+  const newSpeedRecord = runMaxSpeed > bestSpeed;
+  if (newSpeedRecord) {
+    bestSpeed = runMaxSpeed;
+    try { localStorage.setItem('city-best-speed', String(bestSpeed)); } catch { /* ignore */ }
+  }
   const info = world.infoAt(pl.z + 1);
   ui.overDist.textContent = `${meters} м`;
   ui.overInfo.textContent = `seed ${seed} · ${info.name} (#${info.inst}) · ряд ${info.local + 1}/${info.total}`;
   ui.best.textContent = `рекорд ${best} м` + (runMonkeys || totalMonkeys ? ` · обезьянки ${runMonkeys} (всего ${totalMonkeys})` : '');
+  ui.speedRec.textContent = `макс. скорость ${runMaxSpeed} км/ч · рекорд ${bestSpeed} км/ч` + (newSpeedRecord ? ' — новый!' : '');
   setTimeout(() => { if (state === 'dead' && !ui.seeds.classList.contains('show')) ui.over.classList.add('show'); }, 450);
 }
 
@@ -1147,6 +1157,7 @@ function start() {
   resetWeather();
   sound.muffle(false);
   runMonkeys = 0;
+  runMaxSpeed = 0;
   updateMonkeyHud();
   rec.begin({
     seed, url: location.href, ua: navigator.userAgent,
@@ -1831,6 +1842,9 @@ function frame(now) {
     for (let i = 0; i < n && state === 'run'; i++) { if (autopilot) autopilotStep(); physicsStep(dt / n); }
     ensureWorld();
     ui.dist.textContent = `${Math.floor(pl.z)} м`;
+    const sp = kmh(speedNow());
+    if (sp > runMaxSpeed) runMaxSpeed = sp;
+    ui.spd.textContent = `${sp} км/ч`;
     recordFrame();
     collectMonkeys(zBefore);
     if (pl.grounded && !wasGroundedSnd) sound.land(Math.min(1, Math.max(0, (-airVy - 4) / 16)));
