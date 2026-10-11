@@ -281,9 +281,22 @@ class ExposurePass extends Pass {
         }`,
     }));
     this.quad = new FullScreenQuad(new THREE.ShaderMaterial({
-      uniforms: { tDiffuse: { value: null }, uExposure: { value: 1 } },
+      uniforms: { tDiffuse: { value: null }, uExposure: { value: 1 }, uContrast: { value: 1 }, uTemp: { value: 0 } },
       vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
-      fragmentShader: 'uniform sampler2D tDiffuse; uniform float uExposure; varying vec2 vUv; void main() { vec4 c = texture2D(tDiffuse, vUv); gl_FragColor = vec4(c.rgb * uExposure, c.a); }',
+      // заодно ручная цветокоррекция из меню «Графика» (в линейном свете, до ACES):
+      // температура — баланс белого без изменения яркости, контраст — по яркости вокруг серого 18%
+      fragmentShader: `
+        uniform sampler2D tDiffuse; uniform float uExposure, uContrast, uTemp; varying vec2 vUv;
+        void main() {
+          vec4 c = texture2D(tDiffuse, vUv);
+          vec3 col = c.rgb * uExposure;
+          const vec3 LW = vec3(0.2126, 0.7152, 0.0722);
+          vec3 wb = vec3(1.0 + 0.16 * uTemp, 1.0 + 0.02 * uTemp, 1.0 - 0.24 * uTemp);
+          col *= wb / dot(wb, LW);
+          float l = max(dot(col, LW), 1e-5);
+          col *= 0.18 * pow(l / 0.18, uContrast) / l;
+          gl_FragColor = vec4(col, c.a);
+        }`,
     }));
   }
   render(renderer, writeBuffer, readBuffer) {
@@ -300,13 +313,20 @@ class ExposurePass extends Pass {
         this.avg = Math.pow(2, (s / (16 * 9)) * 10 - 8);
       }).catch(() => {}).finally(() => { this.pending = false; });
     }
-    this.quad.material.uniforms.uExposure.value = autoExpOn ? this.exposure : 1;
+    const qu = this.quad.material.uniforms;
+    qu.uExposure.value = (autoExpOn ? this.exposure : 1) * Math.pow(2, gfx.exp);
+    qu.uContrast.value = gfx.con;
+    qu.uTemp.value = gfx.temp;
     this.quad.material.uniforms.tDiffuse.value = readBuffer.texture;
     renderer.setRenderTarget(this.renderToScreen ? null : writeBuffer);
     this.quad.render(renderer);
   }
 }
 let autoExpOn = true;
+// настройки из меню «Графика»: солнце (азимут/высота, градусы), экспозиция (EV), контраст, температура
+const GFX_DEFAULT = { az: 56, el: 58, exp: 0, con: 1, temp: 0 };
+const gfx = { ...GFX_DEFAULT };
+try { Object.assign(gfx, JSON.parse(localStorage.getItem('sdwg-gfx') || '{}')); } catch { /* приватный режим */ }
 try { autoExpOn = localStorage.getItem('sdwg-autoexp') !== '0'; } catch { /* приватный режим */ }
 
 let composer = null, bloom = null, exposurePass = null;
@@ -1105,6 +1125,7 @@ function resumeGame() {
   state = 'run';
   sound.muffle(false);
   $('pause-menu').classList.remove('show');
+  $('gfx').classList.remove('show');
 }
 $('pause').addEventListener('click', (e) => { e.stopPropagation(); pauseGame(); });
 $('resume').addEventListener('click', (e) => { e.stopPropagation(); sound.unlock(); resumeGame(); });
@@ -1115,6 +1136,7 @@ document.addEventListener('visibilitychange', () => { if (document.hidden) pause
 
 function start() {
   $('pause-menu').classList.remove('show');
+  $('gfx').classList.remove('show');
   ui.start.classList.remove('show');
   ui.over.classList.remove('show');
   ui.hud.classList.add('show');
@@ -1251,6 +1273,7 @@ canvas.addEventListener('pointercancel', endTouch);
 
 window.addEventListener('keydown', (e) => {
   sound.unlock();
+  if (e.target.type === 'range' && e.code !== 'Escape') return;
   if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'KeyA', 'KeyD', 'KeyW', 'KeyS', 'Space'].includes(e.code)) e.preventDefault();
   if (state === 'ready' && (e.code === 'Space' || e.code === 'Enter')) { start(); return; }
   if (state === 'dead' && ui.over.classList.contains('show') && e.code === 'Enter') { restart(false); return; }
@@ -1265,7 +1288,7 @@ window.addEventListener('keydown', (e) => {
 
 // iOS: не даём странице зумиться и скроллиться
 document.addEventListener('gesturestart', (e) => e.preventDefault());
-document.addEventListener('touchmove', (e) => { if (!e.target.closest?.('#seed-list')) e.preventDefault(); }, { passive: false });
+document.addEventListener('touchmove', (e) => { if (!e.target.closest?.('#seed-list, #gfx .panel')) e.preventDefault(); }, { passive: false });
 
 // ---------- погода ----------
 // Виды погоды по очереди и случайно: «ясно», «туман», «дождь».
@@ -1524,6 +1547,38 @@ for (const id of ['autoexp', 'autoexp-over', 'autoexp-pause']) {
   });
 }
 updateAutoExpButtons();
+
+// ---------- меню «Графика» (из паузы): направление солнца и цветокоррекция ----------
+// Пауза продолжает рисовать кадр, так что изменения видны сразу
+function applyGfx() {
+  const az = gfx.az * Math.PI / 180, el = gfx.el * Math.PI / 180;
+  materials.main.uniforms.uSunDir.value.set(Math.cos(el) * Math.sin(az), Math.sin(el), Math.cos(el) * Math.cos(az));
+  // без композера (?bloom=0) есть только экспозиция — через ACES
+  if (!composer) renderer.toneMappingExposure = Math.pow(2, gfx.exp);
+}
+const gfxFmt = {
+  az: (v) => `${v}°`, el: (v) => `${v}°`,
+  exp: (v) => `${v > 0 ? '+' : ''}${v.toFixed(2)} EV`, con: (v) => v.toFixed(2),
+  temp: (v) => (v === 0 ? '0' : `${v > 0 ? 'теплее' : 'холоднее'} ${Math.abs(v).toFixed(2)}`),
+};
+function syncGfxUI() {
+  for (const k of Object.keys(gfxFmt)) { $(`gfx-${k}`).value = gfx[k]; $(`gfx-${k}-v`).textContent = gfxFmt[k](gfx[k]); }
+}
+function saveGfx() { try { localStorage.setItem('sdwg-gfx', JSON.stringify(gfx)); } catch { /* приватный режим */ } }
+for (const k of Object.keys(gfxFmt)) {
+  $(`gfx-${k}`).addEventListener('input', (e) => {
+    gfx[k] = parseFloat(e.target.value);
+    $(`gfx-${k}-v`).textContent = gfxFmt[k](gfx[k]);
+    applyGfx();
+  });
+  $(`gfx-${k}`).addEventListener('change', saveGfx);
+}
+$('gfx-reset').addEventListener('click', (e) => { e.stopPropagation(); Object.assign(gfx, GFX_DEFAULT); syncGfxUI(); applyGfx(); saveGfx(); });
+$('gfx-open').addEventListener('click', (e) => { e.stopPropagation(); $('pause-menu').classList.remove('show'); syncGfxUI(); $('gfx').classList.add('show'); });
+$('gfx-close').addEventListener('click', (e) => { e.stopPropagation(); $('gfx').classList.remove('show'); if (state === 'paused') $('pause-menu').classList.add('show'); });
+$('gfx').addEventListener('pointerdown', (e) => e.stopPropagation());
+syncGfxUI();
+applyGfx();
 
 // ---------- акустика улицы: стены рядом ----------
 // Короткое эхо со стороны стены (бежим вдоль башни или по красной стене) и отовсюду в узком месте.

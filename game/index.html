@@ -102,6 +102,26 @@
     .seed-name { font-weight: 700; font-size: 17px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .seed-meta { font: 12px ui-monospace, Menlo, monospace; opacity: 0.6; margin-top: 2px; }
     .seed-empty { opacity: 0.6; font-size: 15px; padding: 20px 0; }
+    /* настройки графики: панель справа, игра видна — изменения сразу на картинке */
+    #gfx { z-index: 4; align-items: flex-end; justify-content: center; }
+    #gfx .panel {
+      pointer-events: auto; width: min(340px, 100%); max-height: 100%; overflow-y: auto; touch-action: pan-y;
+      box-sizing: border-box; padding: 14px 18px; border-radius: 18px; text-align: left;
+      background: rgba(255,255,255,0.82); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+    }
+    #gfx h2 { font-size: 22px; font-weight: 800; margin: 0 0 6px; }
+    #gfx .sub { font-size: 12px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; opacity: 0.5; margin: 10px 0 2px; }
+    #gfx label { display: block; font-size: 14px; margin: 6px 0 0; }
+    #gfx label span { float: right; font: 12px ui-monospace, Menlo, monospace; opacity: 0.7; }
+    #gfx input[type=range] { width: 100%; margin: 4px 0 2px; accent-color: #111; height: 28px; }
+    #gfx .row { text-align: center; margin-top: 10px; }
+    @media (max-height: 500px) {
+      #gfx .panel { padding: 10px 14px; }
+      #gfx h2 { font-size: 18px; margin: 0; }
+      #gfx label { margin-top: 2px; font-size: 13px; }
+      #gfx input[type=range] { height: 22px; margin: 2px 0 0; }
+      #gfx .sub { margin-top: 6px; }
+    }
     #debug {
       position: fixed; left: 16px; top: calc(var(--app-h, 100dvh) - env(safe-area-inset-bottom) - 10px); transform: translateY(-100%);
       font: 11px ui-monospace, Menlo, monospace; opacity: 0.45; pointer-events: none;
@@ -155,7 +175,21 @@
     <div><button id="resume">Продолжить</button></div>
     <div><button id="restart-same" class="ghost">Заново</button><button id="restart-new" class="ghost">Новый город</button></div>
     <div><button id="shadows-pause" class="ghost small">Тени фонаря: выкл</button><button id="sun-pause" class="ghost small">Тени солнца: выкл</button><button id="ps1-pause" class="ghost small">PS1: выкл</button></div>
-    <div><button id="autoexp-pause" class="ghost small">Автоэкспозиция: вкл</button></div>
+    <div><button id="autoexp-pause" class="ghost small">Автоэкспозиция: вкл</button><button id="gfx-open" class="ghost small">Графика</button></div>
+  </div>
+
+  <div id="gfx" class="screen">
+    <div class="panel">
+      <h2>Графика</h2>
+      <div class="sub">Солнце</div>
+      <label>Направление <span id="gfx-az-v"></span><input type="range" id="gfx-az" min="-180" max="180" step="1"></label>
+      <label>Высота <span id="gfx-el-v"></span><input type="range" id="gfx-el" min="8" max="88" step="1"></label>
+      <div class="sub">Цвет</div>
+      <label>Экспозиция <span id="gfx-exp-v"></span><input type="range" id="gfx-exp" min="-2" max="2" step="0.05"></label>
+      <label>Контраст <span id="gfx-con-v"></span><input type="range" id="gfx-con" min="0.5" max="1.6" step="0.01"></label>
+      <label>Температура <span id="gfx-temp-v"></span><input type="range" id="gfx-temp" min="-1" max="1" step="0.02"></label>
+      <div class="row"><button id="gfx-reset" class="ghost small">Сбросить</button><button id="gfx-close" class="small">Назад</button></div>
+    </div>
   </div>
 
   <script type="module" src="js/main.js"></script>
