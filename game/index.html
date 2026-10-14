@@ -87,9 +87,9 @@
     /* забег в городе дня — метка слева сверху */
     #daily-tag { display: none; margin-right: 12px; font-size: 12px; letter-spacing: 0.15em; text-transform: uppercase; color: #ff4a4f; }
     #hud.daily #daily-tag { display: inline; }
-    /* поток — сверху по центру: в беге взгляд в точке схода, до углов экрана глазами не дотянуться.
+    /* поток — снизу по центру (не в углу: до углов в беге глазами не дотянуться); над сидом в углу.
        Цифры боковым зрением не читаются — главное тут полоска: длина, цвет, мигание; множитель подпрыгивает на ×2, ×3… */
-    #flow { position: absolute; left: 50%; top: calc(env(safe-area-inset-top) + 8px); transform: translateX(-50%);
+    #flow { position: fixed; left: 50%; top: calc(var(--app-h, 100dvh) - env(safe-area-inset-bottom) - 32px); transform: translate(-50%, -100%);
       width: min(56vw, 440px); display: flex; flex-direction: column; pointer-events: none; transition: opacity 0.3s; }
     #flow .row { display: grid; grid-template-columns: 1fr auto 1fr; align-items: baseline; gap: 14px; white-space: nowrap; }
     #score { justify-self: end; font-size: 22px; font-weight: 400; font-variant-numeric: tabular-nums; }
@@ -106,13 +106,12 @@
     #flow.broke #mult { animation: flowbroke 0.6s ease-out; }
     @keyframes flowbroke { 0% { color: #e5262b; transform: translateX(0); } 15% { transform: translateX(-5px); } 30% { transform: translateX(5px); } 45% { transform: translateX(-2px); } 100% { color: inherit; transform: none; } }
     /* «+18 км/ч» — всплывает под полоской после приземления в подкат */
-    #pop { position: absolute; left: 50%; top: 100%; margin-top: 4px; font-size: 20px; font-weight: 500; color: #ff4a4f; white-space: nowrap; opacity: 0; transform: translateX(-50%); }
+    #pop { position: absolute; left: 50%; bottom: 100%; margin-bottom: 2px; font-size: 20px; font-weight: 500; color: #ff4a4f; white-space: nowrap; opacity: 0; transform: translateX(-50%); }
     #pop.go { animation: popup 1.2s ease-out; }
     @keyframes popup { 0% { opacity: 0; transform: translate(-50%, 8px) scale(0.9); } 12% { opacity: 1; transform: translate(-50%, 0) scale(1.15); } 70% { opacity: 1; transform: translate(-50%, -2px); } 100% { opacity: 0; transform: translate(-50%, -8px); } }
-    /* на экранах поверх игры — не мешает заголовкам */
-    body:has(#over.show, #pause-menu.show, #gfx.show) #flow { opacity: 0; }
-    /* портрет: сверху по центру — значок «поверни телефон» */
-    @media (orientation: portrait) { #flow { top: calc(env(safe-area-inset-top) + 58px); width: 86vw; } #dist { display: none; } }
+    /* на экранах поверх игры и пока внизу подсказка обучения — не мешает */
+    body:has(#over.show, #pause-menu.show, #gfx.show, .tut-hint.on) #flow { opacity: 0; }
+    @media (orientation: portrait) { #flow { width: 86vw; } #dist { display: none; } }
     #speed-rec { font-size: 14px; opacity: 0.7; }
     #monk { display: none; margin-left: 14px; color: #e5262b; }
     #monk.show { display: inline-block; }
