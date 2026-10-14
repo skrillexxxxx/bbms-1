@@ -10,11 +10,11 @@ import {
   canStep, canJumpOver, aliveBackward, walk, lv,
 } from './world.js';
 import './onboard.js';
-import { openBoard, syncProgress, boardPlace } from './leaderboard.js';
+import { openBoard, syncProgress, boardPlace, loadGhost, uploadGhost, playerName } from './leaderboard.js';
 import { createMaterial, createStarMaterial, createDepthMaterial, createSunDepthMaterial, createSparkMaterial, createConeMaterial, buildInstanceMesh } from './render.js';
 import { createSound } from './sound.js';
 import { createRecorder, shareFile } from './recorder.js';
-import { loadMonkey, createMonkeyMaterial, createGlowMaterial, placeMonkeys, monkeyGeometry } from './monkeys.js';
+import { loadMonkey, createMonkeyMaterial, createGlowMaterial, createGhostMaterial, placeMonkeys, monkeyGeometry } from './monkeys.js';
 
 // ---------- параметры игрока (их же учитывает проверка паттернов) ----------
 const P = {
@@ -92,6 +92,7 @@ const materials = {
   main: createMaterial({ linearOut: useBloom }), star: createStarMaterial({ linearOut: useBloom }),
   monkey: createMonkeyMaterial({ linearOut: useBloom }),
   glow: createGlowMaterial({ linearOut: useBloom }),
+  ghost: createGhostMaterial({ linearOut: useBloom }),
   spark: createSparkMaterial({ linearOut: useBloom }),
   cone: createConeMaterial({ linearOut: useBloom }),
 };
@@ -405,7 +406,7 @@ const ui = {
   save: $('save'), seeds: $('seeds'), seedList: $('seed-list'),
   start: $('start'), over: $('over'), hud: $('hud'),
   dist: $('dist'), debug: $('debug'), overDist: $('over-dist'),
-  overInfo: $('over-info'), best: $('best'), spd: $('spd'), speedRec: $('speed-rec'),
+  overInfo: $('over-info'), best: $('best'), spd: $('spd'),
 };
 
 let best = 0;
@@ -463,6 +464,76 @@ function startDaily() {
   start();
 }
 const isDailyRun = () => dailyRun && seed === dailySeed() && !autopilot;
+
+// ---------- призрак города дня: обезьянка бежит по траектории лучшего забега дня ----------
+// Свой забег в городе дня пишется каждые 0.1 с: x, y, z (×100) и подкат. Побил свой рекорд дня — трек уходит на сервер.
+// Перед забегом скачивается трек лидера дня; призрак бежит по нему в том же темпе — по времени от старта.
+// Смотрит назад, на тебя; разбился — растворяется. В HUD слева: имя и насколько он впереди (▲) или позади (▼).
+const GHOST_DT = 0.1, GHOST_MAX = 9000; // 15 минут
+let ghostRec = [];   // свой забег: [x, y, z, подкат] подряд
+let ghost = null;    // лидер дня: { name, score, pts: [x, y, z, подкат] × n, day }
+let ghostMesh = null;
+function encodeTrack(a) { // разностями от предыдущей точки — числа короткие
+  const out = new Array(a.length);
+  for (let i = 0; i < a.length; i++) out[i] = i < 4 ? a[i] : a[i] - a[i - 4];
+  return out;
+}
+function decodeTrack(t) {
+  const pts = new Float32Array(t.length), acc = [0, 0, 0, 0];
+  for (let i = 0; i < t.length; i++) { const k = i % 4; acc[k] += t[i]; pts[i] = k === 3 ? acc[k] : acc[k] / 100; }
+  return pts;
+}
+function refreshGhost() {
+  const day = dayNow();
+  loadGhost().then((g) => {
+    if (g && Array.isArray(g.track) && g.track.length >= 8) ghost = { name: g.name, score: g.score, pts: decodeTrack(g.track), day };
+  });
+}
+function ghostRecord() {
+  const n = Math.floor((gameTime - runStartT) / GHOST_DT) + 1;
+  while (ghostRec.length < n * 4 && ghostRec.length < GHOST_MAX * 4) {
+    ghostRec.push(Math.round(pl.x * 100), Math.round(pl.y * 100), Math.round(pl.z * 100), sliding() ? 1 : 0);
+  }
+}
+const ghostTag = $('ghost-tag');
+let ghostTagLast = '';
+function updateGhost() {
+  const show = ghost && dailyRun && (state === 'run' || state === 'paused') && ghost.day === dayNow() && seed === dailySeed(ghost.day);
+  let text = '', ahead = false;
+  if (show && !ghostMesh && monkeyGeometry()) {
+    ghostMesh = new THREE.Mesh(monkeyGeometry(), materials.ghost);
+    ghostMesh.frustumCulled = false;
+    ghostMesh.renderOrder = 3;
+    scene.add(ghostMesh);
+  }
+  if (show && ghostMesh) {
+    const p = ghost.pts, n = p.length / 4;
+    const t = (gameTime - runStartT) / GHOST_DT;
+    const i = Math.max(0, Math.min(n - 2, Math.floor(t))), f = Math.min(1, t - i);
+    // x — по кругу: на шве не пролетаем через весь мир
+    const x0 = p[i * 4]; let x1 = p[i * 4 + 4];
+    x1 -= W * Math.round((x1 - x0) / W);
+    const gx = x0 + (x1 - x0) * f, gy = p[i * 4 + 1] + (p[i * 4 + 5] - p[i * 4 + 1]) * f, gz = p[i * 4 + 2] + (p[i * 4 + 6] - p[i * 4 + 2]) * f;
+    const slide = p[(f < 0.5 ? i : i + 1) * 4 + 3] > 0;
+    let dx = gx - pl.x; dx -= W * Math.round(dx / W);
+    const dz = gz - pl.z;
+    ghostMesh.position.set(dx, gy + (slide ? 0.75 : 1.45) + 0.07 * Math.sin(gameTime * 9), dz);
+    ghostMesh.rotation.set(0.12 * Math.sin(gameTime * 4.5), 0.2 * Math.sin(gameTime * 2.3), 0);
+    // разбился — растворяется за 0.8 с; вплотную к камере — тоже (не лицом во весь экран)
+    const fade = Math.max(0, 1 - Math.max(0, t - (n - 1)) * GHOST_DT / 0.8);
+    const near = Math.min(1, Math.max(0, (Math.abs(dz) - 1.5) / 3));
+    const gu = materials.ghost.uniforms, mu = materials.monkey.uniforms;
+    gu.uAlpha.value = fade * near;
+    gu.uB.value = mu.uB.value; gu.uFogNear.value = mu.uFogNear.value; gu.uFogFar.value = mu.uFogFar.value;
+    gu.uFogColor.value.copy(mu.uFogColor.value);
+    ghostMesh.visible = fade * near > 0.01;
+    const who = ghost.name === playerName() ? tr('ghostYou') : ghost.name;
+    ahead = dz > 0;
+    text = `${who} ${ahead ? '▲' : '▼'} ${Math.round(Math.abs(dz))} ${tr('m')}`;
+  } else if (ghostMesh) ghostMesh.visible = false;
+  if (text !== ghostTagLast) { ghostTagLast = text; ghostTag.textContent = text; }
+  ghostTag.classList.toggle('ahead', ahead);
+}
 
 function flowReset() { Object.assign(flow, { mult: 1, t: 0, idle: 0, score: 0, maxMult: 1, bestT: 0, stumbles: 0 }); }
 function flowBreak(cause) {
@@ -1287,22 +1358,23 @@ function die(cause = '?') {
   }
   // рекорды дня — их показывает экран смерти и общая таблица; в полночь по Москве — с нуля
   const day = dayStats();
-  const newDayScore = score > day.score, newDaySpeed = runMaxSpeed > day.speed;
   const daily = isDailyRun();
-  const newCityScore = daily && score > day.cScore;
+  const newRec = daily ? score > day.cScore : score > day.score; // новый рекорд дня (в городе дня — его)
+  // новый свой рекорд в городе дня — трек на сервер: может, теперь призрак дня — ты
+  if (daily && newRec && ghostRec.length >= 8) { ghostRecord(); uploadGhost(score, encodeTrack(ghostRec)); }
   if (!autopilot) {
     Object.assign(day, { score: Math.max(day.score, score), dist: Math.max(day.dist, meters), speed: Math.max(day.speed, runMaxSpeed), monkeys: day.monkeys + runMonkeys });
     if (daily) Object.assign(day, { cScore: Math.max(day.cScore, score), cDist: Math.max(day.cDist, meters), cSpeed: Math.max(day.cSpeed, runMaxSpeed), cMonkeys: day.cMonkeys + runMonkeys });
     saveDayStats(day);
   }
+  // экран смерти — коротко: очки крупно; метры · ×множитель · км/ч (единицы вместо подписей); рекорд; одна подсказка
   const info = world.infoAt(pl.z + 1);
   ui.overDist.textContent = String(score);
-  $('over-run').innerHTML = tr('runLine', meters, flow.maxMult.toFixed(1), Math.round(flow.bestT));
-  ui.overInfo.textContent = `seed ${seed} · ${info.name} (#${info.inst}) · ${tr('row')} ${info.local + 1}/${info.total}`;
-  ui.best.textContent = daily
-    ? tr('bestCityLine', day.cScore, day.cDist) + (newCityScore ? tr('newRec') : '')
-    : tr('bestLine', day.score, day.dist) + (newDayScore ? tr('newRec') : '')
-      + (runMonkeys || day.monkeys ? tr('monkLine', runMonkeys, day.monkeys) : '');
+  $('over-run').innerHTML = `<span>${meters} ${tr('m')}</span><b>×${flow.maxMult.toFixed(1)}</b><span>${runMaxSpeed} ${tr('kmh')}</span>`
+    + (runMonkeys ? `<span class="mk">${runMonkeys}</span>` : '');
+  ui.overInfo.textContent = `seed ${seed} · ${info.name} (#${info.inst}) · ${tr('row')} ${info.local + 1}/${info.total}`; // для записи забега
+  ui.best.textContent = newRec ? tr(daily ? 'recNewCity' : 'recNewDay') : tr(daily ? 'recCity' : 'recDay', daily ? day.cScore : day.score);
+  ui.best.classList.toggle('new', newRec);
   // город дня: «Ещё раз» вместо «Этот же сид», кнопки «Город дня» нет — мы в нём; место в таблице — когда ответит сервер
   $('same').dataset.t = daily ? 'dailyAgain' : 'sameSeed'; // и при смене языка — та же надпись
   $('same').textContent = tr($('same').dataset.t);
@@ -1310,7 +1382,6 @@ function die(cause = '?') {
   $('over-place').textContent = '';
   // подсказка — про то, чего в этом забеге не хватило
   $('over-tip').textContent = autopilot ? '' : flow.stumbles ? tr('tipStumble') : runMaxSpeed < 100 ? tr('tipPump') : flow.maxMult < 3 ? tr('tipFlow') : '';
-  ui.speedRec.textContent = tr('speedLine', runMaxSpeed, day.speed) + (newDaySpeed ? tr('newRec') : '');
   if (!autopilot) {
     // прогресс и рекорды — на сервер (если вошёл в аккаунт); в городе дня — потом спросить место
     const runId = ++deathN;
@@ -1401,6 +1472,8 @@ function start() {
   runMonkeys = 0;
   runMaxSpeed = 0;
   deathN++;
+  ghostRec = [];
+  if (dailyRun) refreshGhost();
   flowReset();
   updateMonkeyHud();
   rec.begin({
@@ -2391,6 +2464,7 @@ function frame(now) {
     for (let i = 0; i < n && state === 'run'; i++) { if (autopilot) autopilotStep(); physicsStep(dt / n); }
     ensureWorld();
     if (state === 'run') flowStep(dt, pl.z - zBefore);
+    if (state === 'run' && dailyRun && !autopilot) ghostRecord();
     ui.dist.textContent = `${runMeters()} ${tr('m')}`;
     const sp = kmh(speedNow());
     if (sp > runMaxSpeed) runMaxSpeed = sp;
@@ -2534,6 +2608,7 @@ function frame(now) {
     mu.uFogColor.value.copy(mm.uFogColor.value);
     animateMonkeys();
   }
+  updateGhost();
   updateCamera(dt, state === 'run');
 
   if (blurPass) {
@@ -2599,4 +2674,4 @@ if (window.__sdwgAudio) {
 requestAnimationFrame(frame);
 
 // для автотестов
-window.__game = { materials, cam, tut, flow, laneShift, setAuto: (v) => { autopilot = v; }, get state() { return state; }, pl, start, die, jump, runFile, get monkeys() { return monkeys; }, slide, get seed() { return seed; }, get world() { return world; }, get meshes() { return meshes; }, get exposure() { return exposurePass ? [exposurePass.exposure, exposurePass.avg] : null; } };
+window.__game = { materials, cam, tut, flow, setGhost: (g) => { ghost = g && { ...g, pts: decodeTrack(g.track), day: dayNow() }; }, get ghostRec() { return ghostRec; }, startDaily, laneShift, setAuto: (v) => { autopilot = v; }, get state() { return state; }, pl, start, die, jump, runFile, get monkeys() { return monkeys; }, slide, get seed() { return seed; }, get world() { return world; }, get meshes() { return meshes; }, get exposure() { return exposurePass ? [exposurePass.exposure, exposurePass.avg] : null; } };

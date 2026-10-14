@@ -22,6 +22,10 @@
 // POST { action: 'login', name, password }   → { ok, name, token, data } | { error: 'wrong' } | { error: 'locked', wait }
 // POST { action: 'sync', token, data }       → { ok, name, data } — объединённый прогресс
 // POST { action: 'logout', token }           → { ok }
+// Призрак города дня — траектория лучшего забега:
+// GET  /api/leaderboard?ghost=1               → { ghost: { name, score, track } | null } — лидер дня
+// POST { action: 'ghost', token, score, track } → { ok, saved } — свой забег, хранится лучший за день
+//      track — целые: [x, y, z, подкат] каждые 0.1 с, x/y/z ×100, разностями от предыдущей точки
 
 const TOP = 50;
 const MAX_DIST = 1_000_000; // м — дальше не бегают, это уже подделка
@@ -31,6 +35,7 @@ const MAX_MONKEYS = 100_000;
 const MAX_SAVE = 64 * 1024; // байт JSON прогресса
 const FAILS = 5, LOCK_MS = 10 * 60 * 1000; // неверных паролей подряд → блокировка входа
 const PBKDF2_ITER = 100_000; // больше Workers не разрешают
+const MAX_TRACK = 4 * 9000; // чисел в треке призрака: 15 минут по 0.1 с
 
 // латиница ← похожие буквы кириллицы и греческого, цифры и знаки-двойники
 const LOOK = {
@@ -190,6 +195,9 @@ async function db(env) {
       DB.prepare('CREATE INDEX IF NOT EXISTS players_speed ON players (speed DESC)'),
       DB.prepare('CREATE INDEX IF NOT EXISTS players_monkeys ON players (monkeys DESC)'),
       DB.prepare('CREATE INDEX IF NOT EXISTS tokens_player ON tokens (player)'),
+      DB.prepare(`CREATE TABLE IF NOT EXISTS ghosts (
+        player INTEGER NOT NULL, day TEXT NOT NULL, score INTEGER NOT NULL, track TEXT NOT NULL, updated INTEGER NOT NULL,
+        PRIMARY KEY (player, day))`),
     ]);
     // база, созданная раньше: добавить колонки (уже есть — SQLite ответит ошибкой, это нормально)
     try { await DB.prepare('ALTER TABLE players ADD COLUMN score INTEGER NOT NULL DEFAULT 0').run(); } catch { /* колонка уже есть */ }
@@ -210,6 +218,13 @@ export async function onRequestGet({ request, env }) {
   const DB = await db(env);
   if (!DB) return json({ error: 'nodb' }, 503);
   const url = new URL(request.url);
+  if (url.searchParams.has('ghost')) {
+    const g = await DB.prepare(`SELECT p.name, g.score, g.track FROM ghosts g JOIN players p ON p.id = g.player
+      WHERE g.day = ? ORDER BY g.score DESC, g.updated ASC LIMIT 1`).bind(dayKey()).first();
+    let track = null;
+    try { track = g ? JSON.parse(g.track) : null; } catch { /* битый трек — без призрака */ }
+    return json({ ghost: g && track ? { name: g.name, score: g.score, track } : null });
+  }
   const by = url.searchParams.get('by');
   const city = url.searchParams.get('board') === 'city';
   const field = ['dist', 'speed', 'monkeys'].includes(by) ? by : 'score';
@@ -306,6 +321,21 @@ export async function onRequestPost({ request, env }) {
       c_score = ?8, c_dist = ?9, c_speed = ?10, c_monkeys = ?11, updated = ?12 WHERE id = ?1`)
       .bind(me.id, text, today, sc.score, sc.dist, sc.speed, sc.monkeys, sc.c_score, sc.c_dist, sc.c_speed, sc.c_monkeys, now).run();
     return json({ ok: true, name: me.name, data: merged });
+  }
+
+  if (body.action === 'ghost') {
+    const me = await playerByToken(DB, body.token);
+    if (!me) return json({ error: 'noplayer' }, 404);
+    const t = body.track;
+    if (!Array.isArray(t) || t.length < 8 || t.length > MAX_TRACK || t.length % 4 || !t.every(Number.isInteger)) return json({ error: 'bad' }, 400);
+    const score = clamp(body.score, MAX_SCORE);
+    const today = dayKey(now);
+    // хранится лучший забег за день; вчерашние призраки больше не нужны
+    const r = await DB.prepare(`INSERT INTO ghosts (player, day, score, track, updated) VALUES (?1, ?2, ?3, ?4, ?5)
+      ON CONFLICT (player, day) DO UPDATE SET score = excluded.score, track = excluded.track, updated = excluded.updated
+      WHERE excluded.score > ghosts.score`).bind(me.id, today, score, JSON.stringify(t), now).run();
+    await DB.prepare('DELETE FROM ghosts WHERE day < ?').bind(today).run();
+    return json({ ok: true, saved: (r.meta?.changes ?? r.changes ?? 0) > 0 });
   }
 
   if (body.action === 'logout') {

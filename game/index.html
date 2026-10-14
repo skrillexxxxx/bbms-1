@@ -50,12 +50,16 @@
        Читаемость — светлым ореолом у текста и полупрозрачными кнопками */
     #over, #pause-menu { pointer-events: auto; }
     #over-dist { font-size: clamp(48px, 16vw, 96px); font-weight: 300; }
-    #over-info { font: 12px "Plex Mono", ui-monospace, Menlo, monospace; opacity: 0.6; margin: 8px 0 4px; }
-    #best { font-size: 14px; opacity: 0.7; margin-bottom: 28px; }
-    #over-run { font-size: 16px; margin-top: -4px; }
-    #over-run b { font-weight: 500; }
+    #over-info { display: none; } /* сид и место в мире — в углу экрана; текст нужен записи забега */
+    /* под очками: метры · ×множитель · км/ч · обезьянки — без подписей, единицы говорят сами */
+    #over-run { display: flex; justify-content: center; align-items: baseline; gap: 22px; font-size: 19px; margin-top: -2px; }
+    #over-run b { font-weight: 500; color: #e5262b; }
+    #over-run .mk { color: #e5262b; }
+    #over-run .mk::before { content: ''; display: inline-block; width: 1.2em; height: 1.2em; background: url(monkey-icon.png) center / contain no-repeat; margin-right: 0.15em; vertical-align: -0.25em; }
+    #best { font-size: 14px; opacity: 0.6; margin: 10px 0 24px; }
+    #best.new { opacity: 1; color: #e5262b; font-weight: 500; letter-spacing: 0.14em; text-transform: uppercase; }
     /* подсказка после забега — что делать, чтобы очков было больше */
-    #over-tip { max-width: 520px; font-size: 14px; line-height: 1.45; color: #e5262b; margin: -16px 0 18px; }
+    #over-tip { max-width: 520px; font-size: 14px; line-height: 1.45; opacity: 0.75; margin: -14px 0 18px; }
     #over-tip:empty { display: none; }
     #over-place { font-size: 18px; font-weight: 500; color: #e5262b; margin: -22px 0 22px; }
     #over-place:empty { display: none; }
@@ -87,6 +91,10 @@
     /* забег в городе дня — метка слева сверху */
     #daily-tag { display: none; margin-right: 12px; font-size: 12px; letter-spacing: 0.15em; text-transform: uppercase; color: #ff4a4f; }
     #hud.daily #daily-tag { display: inline; }
+    /* призрак города дня: имя и насколько он впереди ▲ (красным) или позади ▼ */
+    #ghost-tag { margin-left: 18px; font-size: 15px; font-variant-numeric: tabular-nums; }
+    #ghost-tag:empty { display: none; }
+    #ghost-tag.ahead { color: #ff4a4f; }
     /* поток — снизу по центру (не в углу: до углов в беге глазами не дотянуться); над сидом в углу.
        Цифры боковым зрением не читаются — главное тут полоска: длина, цвет, мигание; множитель подпрыгивает на ×2, ×3… */
     #flow { position: fixed; left: 50%; top: calc(var(--app-h, 100dvh) - env(safe-area-inset-bottom) - 32px); transform: translate(-50%, -100%);
@@ -112,7 +120,6 @@
     /* на экранах поверх игры и пока внизу подсказка обучения — не мешает */
     body:has(#over.show, #pause-menu.show, #gfx.show, .tut-hint.on) #flow { opacity: 0; }
     @media (orientation: portrait) { #flow { width: 86vw; } #dist { display: none; } }
-    #speed-rec { font-size: 14px; opacity: 0.7; }
     #monk { display: none; margin-left: 14px; color: #e5262b; }
     #monk.show { display: inline-block; }
     #monk::before { content: ''; display: inline-block; width: 1.25em; height: 1.25em; background: url(monkey-icon.png) center / contain no-repeat; margin-right: 0.12em; vertical-align: -0.28em; }
@@ -142,7 +149,7 @@
       #seeds { padding-top: calc(env(safe-area-inset-top) + 14px); }
       #seeds h2 { font-size: 22px; margin-bottom: 8px; }
       #over-dist { font-size: 44px; }
-      #best { margin-bottom: 10px; }
+      #best { margin: 4px 0 10px; }
       #over-tip { margin: -4px 0 8px; font-size: 13px; }
       #over-place { margin: -6px 0 8px; font-size: 16px; }
       button { padding: 9px 20px; margin: 4px; font-size: 14px; }
@@ -426,7 +433,7 @@
   <canvas id="game"></canvas>
   <div id="halo"></div>
 
-  <div id="hud"><div id="hud-left"><span id="daily-tag" data-t="dailyCity">City of the day</span><span id="dist">0 m</span><span id="monk"></span></div><div id="flow" class="off"><div class="row"><span id="score">0</span><b id="mult">×1.0</b><span id="spd"></span></div><i id="flow-bar"><i></i></i><span id="pop"></span></div><div id="hud-right"><button id="flag" class="ghost small" data-ta="flag" aria-label="Mark: something is wrong here">⚑</button><button id="pause" class="ghost small" aria-label="Pause">❚❚</button></div></div>
+  <div id="hud"><div id="hud-left"><span id="daily-tag" data-t="dailyCity">City of the day</span><span id="dist">0 m</span><span id="monk"></span><span id="ghost-tag"></span></div><div id="flow" class="off"><div class="row"><span id="score">0</span><b id="mult">×1.0</b><span id="spd"></span></div><i id="flow-bar"><i></i></i><span id="pop"></span></div><div id="hud-right"><button id="flag" class="ghost small" data-ta="flag" aria-label="Mark: something is wrong here">⚑</button><button id="pause" class="ghost small" aria-label="Pause">❚❚</button></div></div>
   <div id="rotate" data-tt="rotate" title="Turn your phone sideways"><svg viewBox="0 0 64 64" aria-hidden="true">
       <!-- дуга над телефоном справа налево (куда он поворачивается) и стрелка на её конце -->
       <path class="arc" d="M48.85 19.86A22 22 0 0 0 15.15 19.86" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
@@ -453,7 +460,6 @@
     <div id="over-dist">0</div>
     <div id="over-run"></div>
     <div id="over-info"></div>
-    <div id="speed-rec"></div>
     <div id="best"></div>
     <div id="over-place"></div>
     <div id="over-tip"></div>
@@ -462,7 +468,7 @@
       <button id="same" class="ghost" data-t="sameSeed">Same seed</button>
       <button id="daily-over" class="red" data-t="dailyCity">City of the day</button>
     </div>
-    <div><button id="lb-open-over" class="ghost" data-t="records">Records</button><button id="save" class="ghost">Save seed</button><button id="open-seeds-over" class="ghost" data-t="myCities">My seeds</button><button id="to-menu-over" class="ghost" data-t="mainMenu">Main menu</button></div>
+    <div><button id="lb-open-over" class="ghost small" data-t="records">Records</button><button id="save" class="ghost small">Save seed</button><button id="open-seeds-over" class="ghost small" data-t="myCities">My seeds</button><button id="to-menu-over" class="ghost small" data-t="mainMenu">Main menu</button></div>
     <div><button id="gfx-open-over" class="ghost small" data-t="graphics">Graphics</button><button id="snd-open-over" class="ghost small" data-t="sound">Sound</button><button id="rec" class="ghost small" data-t="sendRun">Send run log</button></div>
   </div>
 

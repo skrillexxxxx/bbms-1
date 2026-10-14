@@ -309,6 +309,15 @@ $('lb-close').addEventListener('click', (e) => { e.stopPropagation(); closeBoard
 for (const b of document.querySelectorAll('#lb-tabs button')) {
   b.addEventListener('click', (e) => { e.stopPropagation(); if (board !== b.dataset.board) { board = b.dataset.board; body.textContent = ''; loadBoard(); } });
 }
+// призрак города дня: лучший забег дня { name, score, track } или null
+export async function loadGhost() {
+  try { const d = await api(null, '?ghost=1'); return d && d.ghost ? d.ghost : null; } catch { return null; }
+}
+// свой забег в городе дня — на сервер (хранится лучший за день); без аккаунта — никак
+export async function uploadGhost(score, track) {
+  if (!loggedIn()) return;
+  try { await api({ action: 'ghost', token: get(K_TOKEN), score, track }); } catch { /* нет сети */ }
+}
 // место в таблице дня (для экрана смерти): { rank, count } или null — нет аккаунта, сети или результата
 export async function boardPlace(which) {
   if (!loggedIn()) return null;

@@ -146,6 +146,40 @@ export function createGlowMaterial({ linearOut }) {
   });
 }
 
+// Призрак города дня — та же обезьянка, но полупрозрачная: светится краями, сквозь неё видно город
+const ghostFrag = /* glsl */ `
+  precision highp float;
+  uniform float uLinearOut;
+  uniform vec3 uFogColor;
+  uniform float uAlpha;
+  varying vec3 vN;
+  varying float vFog;
+  void main() {
+    vec3 n = normalize(vN);
+    float d = max(dot(n, normalize(vec3(-0.4, 0.8, -0.45))), 0.0);
+    float rim = pow(1.0 - abs(n.z), 1.5);
+    vec3 c = vec3(1.0, 0.16, 0.16) * (0.85 + 0.4 * d) + rim * vec3(1.0, 0.55, 0.55) * 0.7;
+    c = mix(c, uFogColor, vFog * 0.7);
+    if (uLinearOut > 0.5) c = pow(c, vec3(2.2));
+    gl_FragColor = vec4(c, uAlpha * (0.3 + 0.6 * rim) * (1.0 - vFog));
+  }
+`;
+export function createGhostMaterial({ linearOut }) {
+  return new THREE.ShaderMaterial({
+    vertexShader: vert,
+    fragmentShader: ghostFrag,
+    transparent: true,
+    depthWrite: false,
+    uniforms: {
+      uL: { value: L }, uLz: { value: LZ }, uB: { value: 0 },
+      uFogNear: { value: LZ * 2.2 }, uFogFar: { value: LZ * 6.0 },
+      uFogColor: { value: new THREE.Color(1, 1, 1) },
+      uLinearOut: { value: linearOut ? 1 : 0 },
+      uAlpha: { value: 1 },
+    },
+  });
+}
+
 export function createMonkeyMaterial({ linearOut }) {
   return new THREE.ShaderMaterial({
     vertexShader: vert,
