@@ -10,7 +10,7 @@ import {
   canStep, canJumpOver, aliveBackward, walk, lv,
 } from './world.js';
 import './onboard.js';
-import { openBoard, syncProgress } from './leaderboard.js';
+import { openBoard, syncProgress, boardPlace } from './leaderboard.js';
 import { createMaterial, createStarMaterial, createDepthMaterial, createSunDepthMaterial, createSparkMaterial, createConeMaterial, buildInstanceMesh } from './render.js';
 import { createSound } from './sound.js';
 import { createRecorder, shareFile } from './recorder.js';
@@ -433,11 +433,11 @@ const FLOW_HIGH = 3;    // выше земли под ногами больше 
 const flow = { mult: 1, t: 0, idle: 0, score: 0, maxMult: 1, bestT: 0, stumbles: 0 };
 let bestScore = 0;
 try { bestScore = Number(localStorage.getItem('city-best-score')) || 0; } catch { /* приватный режим */ }
-// рекорды дня: sdwg-day (день по Москве) + sdwg-day-stats { score, dist, speed, monkeys }; другой день — нули.
-// Синхронизируются с прогрессом; сервер собирает из них общую таблицу дня
+// рекорды дня: sdwg-day (день по Москве) + sdwg-day-stats { score, dist, speed, monkeys, cScore, cDist, cSpeed, cMonkeys }
+// (c… — город дня); другой день — нули. Синхронизируются с прогрессом; сервер собирает из них таблицы дня
 const dayNow = () => new Date(Date.now() + 3 * 3600e3).toISOString().slice(0, 10);
 function dayStats() {
-  const st = { score: 0, dist: 0, speed: 0, monkeys: 0 };
+  const st = { score: 0, dist: 0, speed: 0, monkeys: 0, cScore: 0, cDist: 0, cSpeed: 0, cMonkeys: 0 };
   try {
     if (localStorage.getItem('sdwg-day') === dayNow()) {
       const saved = JSON.parse(localStorage.getItem('sdwg-day-stats') || '{}') || {};
@@ -449,6 +449,21 @@ function dayStats() {
 function saveDayStats(st) {
   try { localStorage.setItem('sdwg-day', dayNow()); localStorage.setItem('sdwg-day-stats', JSON.stringify(st)); } catch { /* приватный режим */ }
 }
+// ---------- город дня: один сид на всех на сутки (день по Москве), своя таблица ----------
+// забег в нём — без обучения и без проспекта из меню: у всех одинаковый старт
+let dailyRun = false;
+function dailySeed(day = dayNow()) {
+  let h = 2166136261;
+  for (const ch of `sdwg-city-${day}`) { h ^= ch.charCodeAt(0); h = Math.imul(h, 16777619); }
+  return (h >>> 0) % 1e6;
+}
+function startDaily() {
+  dailyRun = true;
+  reset(dailySeed());
+  start();
+}
+const isDailyRun = () => dailyRun && seed === dailySeed() && !autopilot;
+
 function flowReset() { Object.assign(flow, { mult: 1, t: 0, idle: 0, score: 0, maxMult: 1, bestT: 0, stumbles: 0 }); }
 function flowBreak(cause) {
   if (cause === 'stumble') flow.stumbles++;
@@ -535,6 +550,7 @@ function nightAmount() {
 }
 let state = 'ready';
 let shake = 0;
+let deathN = 0;      // номер смерти: ответ сервера о месте в таблице — только для последней
 let linesKick = 0; // всплеск полос скорости (приземление в подкат), гаснет за ~0.6 с
 
 function newSeed() { return Math.floor(Math.random() * 1e6); }
@@ -546,7 +562,8 @@ function reset(s) {
   monkeys = [];
   built = 0;
   world = new World(seed);
-  world.menu = state === 'ready' || tutWantsAvenue(); // на стартовом экране и в обучении — бесконечный прямой проспект
+  // на стартовом экране и в обучении — бесконечный прямой проспект; город дня — сразу город
+  world.menu = !dailyRun && (state === 'ready' || tutWantsAvenue());
   runZ0 = 0;
   // для проверки: ?under=dark,balls,balloons,sparks,carts — эти особенности во всех переходах
   // ?ruin=1 — разруха везде, ?ruin=0 — нигде
@@ -1208,7 +1225,7 @@ function renderSeeds() {
     info.append(name, meta);
     const play = document.createElement('button');
     play.textContent = tr('play');
-    play.addEventListener('click', () => { sound.unlock(); ui.seeds.classList.remove('show'); reset(e.seed); start(); });
+    play.addEventListener('click', () => { sound.unlock(); ui.seeds.classList.remove('show'); dailyRun = false; reset(e.seed); start(); });
     const rename = document.createElement('button');
     rename.className = 'ghost small';
     rename.textContent = '✎';
@@ -1271,20 +1288,37 @@ function die(cause = '?') {
   // рекорды дня — их показывает экран смерти и общая таблица; в полночь по Москве — с нуля
   const day = dayStats();
   const newDayScore = score > day.score, newDaySpeed = runMaxSpeed > day.speed;
+  const daily = isDailyRun();
+  const newCityScore = daily && score > day.cScore;
   if (!autopilot) {
     Object.assign(day, { score: Math.max(day.score, score), dist: Math.max(day.dist, meters), speed: Math.max(day.speed, runMaxSpeed), monkeys: day.monkeys + runMonkeys });
+    if (daily) Object.assign(day, { cScore: Math.max(day.cScore, score), cDist: Math.max(day.cDist, meters), cSpeed: Math.max(day.cSpeed, runMaxSpeed), cMonkeys: day.cMonkeys + runMonkeys });
     saveDayStats(day);
   }
   const info = world.infoAt(pl.z + 1);
   ui.overDist.textContent = String(score);
   $('over-run').innerHTML = tr('runLine', meters, flow.maxMult.toFixed(1), Math.round(flow.bestT));
   ui.overInfo.textContent = `seed ${seed} · ${info.name} (#${info.inst}) · ${tr('row')} ${info.local + 1}/${info.total}`;
-  ui.best.textContent = tr('bestLine', day.score, day.dist) + (newDayScore ? tr('newRec') : '')
-    + (runMonkeys || day.monkeys ? tr('monkLine', runMonkeys, day.monkeys) : '');
+  ui.best.textContent = daily
+    ? tr('bestCityLine', day.cScore, day.cDist) + (newCityScore ? tr('newRec') : '')
+    : tr('bestLine', day.score, day.dist) + (newDayScore ? tr('newRec') : '')
+      + (runMonkeys || day.monkeys ? tr('monkLine', runMonkeys, day.monkeys) : '');
+  // город дня: «Ещё раз» вместо «Этот же сид», кнопки «Город дня» нет — мы в нём; место в таблице — когда ответит сервер
+  $('same').dataset.t = daily ? 'dailyAgain' : 'sameSeed'; // и при смене языка — та же надпись
+  $('same').textContent = tr($('same').dataset.t);
+  $('daily-over').style.display = daily ? 'none' : '';
+  $('over-place').textContent = '';
   // подсказка — про то, чего в этом забеге не хватило
   $('over-tip').textContent = autopilot ? '' : flow.stumbles ? tr('tipStumble') : runMaxSpeed < 100 ? tr('tipPump') : flow.maxMult < 3 ? tr('tipFlow') : '';
   ui.speedRec.textContent = tr('speedLine', runMaxSpeed, day.speed) + (newDaySpeed ? tr('newRec') : '');
-  if (!autopilot) syncProgress(); // прогресс и рекорды — на сервер (если вошёл в аккаунт)
+  if (!autopilot) {
+    // прогресс и рекорды — на сервер (если вошёл в аккаунт); в городе дня — потом спросить место
+    const runId = ++deathN;
+    syncProgress().then(() => (daily ? boardPlace('city') : null)).then((r) => {
+      if (!r || runId !== deathN || state !== 'dead') return;
+      $('over-place').textContent = r.rank ? tr('placeLine', r.rank, r.count) : '';
+    }).catch(() => {});
+  }
   setTimeout(() => { if (state === 'dead' && !ui.seeds.classList.contains('show')) ui.over.classList.add('show'); }, 450);
 }
 
@@ -1312,6 +1346,7 @@ function toMainMenu() {
   if (slideSnd) { slideSnd = false; sound.slide(false, true); }
   touch = null;
   state = 'ready';
+  dailyRun = false;
   reset(seed);
   sound.muffle(false);
   for (const id of ['pause-menu', 'gfx', 'tut', 'tut-card']) $(id).classList.remove('show');
@@ -1357,12 +1392,15 @@ function start() {
     runZ0 = pl.z - ROW * 0.5;
     // обучение: первые шаги — на том же прямом проспекте, без препятствий; город — после них
     if (!tutStart()) leaveAvenue();
-  } else tutStart();
+  } else if (dailyRun) { tutHide(); tut.step = null; tut.k = tut.kTo = 1; } // город дня — без обучения
+  else tutStart();
+  ui.hud.classList.toggle('daily', dailyRun);
   if (slideSnd) { slideSnd = false; sound.slide(false, true); }
   resetWeather();
   sound.muffle(false);
   runMonkeys = 0;
   runMaxSpeed = 0;
+  deathN++;
   flowReset();
   updateMonkeyHud();
   rec.begin({
@@ -2185,8 +2223,17 @@ ui.flag.addEventListener('pointerdown', (e) => {
 });
 
 function restart(sameSeed) {
-  reset(sameSeed ? seed : newSeed());
+  if (!sameSeed) dailyRun = false;
+  // город дня ещё раз — сегодняшний (после полуночи — уже новый)
+  reset(dailyRun ? dailySeed() : sameSeed ? seed : newSeed());
   start();
+}
+for (const id of ['daily-open', 'daily-over']) {
+  $(id).addEventListener('click', (e) => {
+    e.stopPropagation(); sound.unlock();
+    for (const el of ['over', 'seeds']) $(el).classList.remove('show');
+    startDaily();
+  });
 }
 $('again').addEventListener('click', () => { sound.unlock(); restart(false); });
 $('save').addEventListener('click', saveCurrentSeed);
@@ -2199,11 +2246,11 @@ $('close-seeds').addEventListener('click', () => {
 });
 $('same').addEventListener('click', () => { sound.unlock(); restart(true); });
 // общая таблица рекордов: из главного меню и с экрана смерти (назад — туда же)
-$('lb-open').addEventListener('click', (e) => { e.stopPropagation(); openBoard(); });
+$('lb-open').addEventListener('click', (e) => { e.stopPropagation(); openBoard(null, 'all'); });
 $('lb-open-over').addEventListener('click', (e) => {
   e.stopPropagation();
   ui.over.classList.remove('show');
-  openBoard(() => { if (state === 'dead') ui.over.classList.add('show'); });
+  openBoard(() => { if (state === 'dead') ui.over.classList.add('show'); }, dailyRun ? 'city' : 'all');
 });
 
 // ---------- камера ----------

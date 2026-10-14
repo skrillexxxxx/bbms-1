@@ -15,6 +15,8 @@
 //      (score — очки: метры × множитель потока; главная сортировка)
 //      Таблица — рекорды ДНЯ: день по Москве (UTC+3), в полночь у всех нули. В списке — все игроки,
 //      у кого сегодня забегов не было — нули. Дневные рекорды приходят в прогрессе: sdwg-day + sdwg-day-stats.
+//      &board=city — таблица «Города дня» (один сид на всех на сутки): те же поля, но только забеги в нём.
+//      count — сколько игроков сегодня с результатом больше нуля (для «место 3 из 12»).
 // POST { action: 'register', token, name, password? } → { ok, name } | { error: 'taken', name } | { error: 'bad' | 'weak' }
 //      (новый аккаунт — пароль обязателен; уже вошёл — смена ника и, если передан, пароля)
 // POST { action: 'login', name, password }   → { ok, name, token, data } | { error: 'wrong' } | { error: 'locked', wait }
@@ -113,7 +115,10 @@ function parseSeeds(v) { try { const l = JSON.parse(v); return Array.isArray(l) 
 // день — по Москве (UTC+3, без перехода на летнее время), как и в игре
 export const dayKey = (now = Date.now()) => new Date(now + 3 * 3600e3).toISOString().slice(0, 10);
 const DAY = 'sdwg-day', DAY_STATS = 'sdwg-day-stats';
-const STAT_KEYS = ['score', 'dist', 'speed', 'monkeys'];
+// поле в sdwg-day-stats → колонка таблицы; c… — город дня
+const STAT_COLS = { score: 'score', dist: 'dist', speed: 'speed', monkeys: 'monkeys', cScore: 'c_score', cDist: 'c_dist', cSpeed: 'c_speed', cMonkeys: 'c_monkeys' };
+const STAT_KEYS = Object.keys(STAT_COLS);
+const BOARD_FIELDS = ['score', 'dist', 'speed', 'monkeys']; // что отдаём клиенту в каждой строке
 function dayOf(save, today) {
   const day = typeof save?.[DAY] === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(save[DAY]) && save[DAY] <= today ? save[DAY] : '';
   let st = {};
@@ -153,10 +158,13 @@ export function mergeSave(base, inc, today = dayKey()) {
 }
 const clamp = (v, max) => Math.min(max, Math.max(0, Math.round(Number(v) || 0)));
 // колонки таблицы — рекорды сегодняшнего дня (вчерашние — нули)
+const MAXES = { score: MAX_SCORE, dist: MAX_DIST, speed: MAX_SPEED, monkeys: MAX_MONKEYS };
 function scores(save, today) {
   const d = dayOf(save, today);
   const st = d.day === today ? d.st : {};
-  return { score: clamp(st.score, MAX_SCORE), dist: clamp(st.dist, MAX_DIST), speed: clamp(st.speed, MAX_SPEED), monkeys: clamp(st.monkeys, MAX_MONKEYS) };
+  const out = {};
+  for (const [k, c] of Object.entries(STAT_COLS)) out[c] = clamp(st[k], MAXES[c.replace('c_', '')]);
+  return out;
 }
 function parseSave(text) { try { return JSON.parse(text || '{}') || {}; } catch { return {}; } }
 
@@ -172,7 +180,8 @@ async function db(env) {
     await DB.batch([
       DB.prepare(`CREATE TABLE IF NOT EXISTS players (
         id INTEGER PRIMARY KEY, name TEXT NOT NULL, skel TEXT NOT NULL UNIQUE, tskel TEXT NOT NULL UNIQUE, pass TEXT,
-        day TEXT NOT NULL DEFAULT '', score INTEGER NOT NULL DEFAULT 0, dist INTEGER NOT NULL DEFAULT 0, speed INTEGER NOT NULL DEFAULT 0, monkeys INTEGER NOT NULL DEFAULT 0,
+        day TEXT NOT NULL DEFAULT '', score INTEGER NOT NULL DEFAULT 0,
+        c_score INTEGER NOT NULL DEFAULT 0, c_dist INTEGER NOT NULL DEFAULT 0, c_speed INTEGER NOT NULL DEFAULT 0, c_monkeys INTEGER NOT NULL DEFAULT 0, dist INTEGER NOT NULL DEFAULT 0, speed INTEGER NOT NULL DEFAULT 0, monkeys INTEGER NOT NULL DEFAULT 0,
         save TEXT, fails INTEGER NOT NULL DEFAULT 0, lock_until INTEGER NOT NULL DEFAULT 0,
         created INTEGER NOT NULL, updated INTEGER NOT NULL)`),
       DB.prepare(`CREATE TABLE IF NOT EXISTS tokens (
@@ -185,6 +194,9 @@ async function db(env) {
     // база, созданная раньше: добавить колонки (уже есть — SQLite ответит ошибкой, это нормально)
     try { await DB.prepare('ALTER TABLE players ADD COLUMN score INTEGER NOT NULL DEFAULT 0').run(); } catch { /* колонка уже есть */ }
     try { await DB.prepare("ALTER TABLE players ADD COLUMN day TEXT NOT NULL DEFAULT ''").run(); } catch { /* колонка уже есть */ }
+    for (const c of ['c_score', 'c_dist', 'c_speed', 'c_monkeys']) {
+      try { await DB.prepare(`ALTER TABLE players ADD COLUMN ${c} INTEGER NOT NULL DEFAULT 0`).run(); } catch { /* колонка уже есть */ }
+    }
     ready = true;
   }
   return DB;
@@ -199,23 +211,26 @@ export async function onRequestGet({ request, env }) {
   if (!DB) return json({ error: 'nodb' }, 503);
   const url = new URL(request.url);
   const by = url.searchParams.get('by');
-  const col = ['dist', 'speed', 'monkeys'].includes(by) ? by : 'score';
-  const other = col === 'score' ? 'dist' : col === 'dist' ? 'speed' : 'score';
+  const city = url.searchParams.get('board') === 'city';
+  const field = ['dist', 'speed', 'monkeys'].includes(by) ? by : 'score';
+  const otherField = field === 'score' ? 'dist' : field === 'dist' ? 'speed' : 'score';
+  const colOf = (f) => (city ? `c_${f}` : f);
   const today = dayKey();
   // значение за сегодня: у кого последний забег был не сегодня — ноль
-  const v = (c) => `(CASE WHEN day = ?1 THEN ${c} ELSE 0 END)`;
+  const v = (f) => `(CASE WHEN day = ?1 THEN ${colOf(f)} ELSE 0 END)`;
   const { results } = await DB.prepare(
-    `SELECT name, ${STAT_KEYS.map((k) => `${v(k)} AS ${k}`).join(', ')} FROM players
-     ORDER BY ${v(col)} DESC, ${v(other)} DESC, id ASC LIMIT ?2`,
+    `SELECT name, ${BOARD_FIELDS.map((f) => `${v(f)} AS ${f}`).join(', ')} FROM players
+     ORDER BY ${v(field)} DESC, ${v(otherField)} DESC, id ASC LIMIT ?2`,
   ).bind(today, TOP).all();
+  const cnt = await DB.prepare(`SELECT COUNT(*) AS n FROM players WHERE ${v(field)} > 0`).bind(today).first();
   let me = null;
   const row = await playerByToken(DB, url.searchParams.get('token'));
   if (row) {
-    const mine = Object.fromEntries(STAT_KEYS.map((k) => [k, row.day === today ? row[k] : 0]));
-    const above = await DB.prepare(`SELECT COUNT(*) AS n FROM players WHERE ${v(col)} > ?2`).bind(today, mine[col]).first();
-    me = { name: row.name, ...mine, rank: mine[col] > 0 ? above.n + 1 : null };
+    const mine = Object.fromEntries(BOARD_FIELDS.map((f) => [f, row.day === today ? row[colOf(f)] : 0]));
+    const above = await DB.prepare(`SELECT COUNT(*) AS n FROM players WHERE ${v(field)} > ?2`).bind(today, mine[field]).first();
+    me = { name: row.name, ...mine, rank: mine[field] > 0 ? above.n + 1 : null };
   }
-  return json({ day: today, top: results, me });
+  return json({ day: today, board: city ? 'city' : 'all', count: cnt.n, top: results, me });
 }
 
 export async function onRequestPost({ request, env }) {
@@ -287,8 +302,9 @@ export async function onRequestPost({ request, env }) {
     const text = JSON.stringify(merged);
     if (text.length > MAX_SAVE) return json({ error: 'big' }, 413);
     const sc = scores(merged, today);
-    await DB.prepare(`UPDATE players SET save = ?2, day = ?3, score = ?4, dist = ?5, speed = ?6, monkeys = ?7, updated = ?8 WHERE id = ?1`)
-      .bind(me.id, text, today, sc.score, sc.dist, sc.speed, sc.monkeys, now).run();
+    await DB.prepare(`UPDATE players SET save = ?2, day = ?3, score = ?4, dist = ?5, speed = ?6, monkeys = ?7,
+      c_score = ?8, c_dist = ?9, c_speed = ?10, c_monkeys = ?11, updated = ?12 WHERE id = ?1`)
+      .bind(me.id, text, today, sc.score, sc.dist, sc.speed, sc.monkeys, sc.c_score, sc.c_dist, sc.c_speed, sc.c_monkeys, now).run();
     return json({ ok: true, name: me.name, data: merged });
   }
 

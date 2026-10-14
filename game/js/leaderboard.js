@@ -211,7 +211,7 @@ if (!loggedIn() && !params.has('auto') && params.get('nick') !== '0') {
 
 // ---------- экран «Рекорды»: таблица, сортировка — по заголовку колонки ----------
 const lb = $('lb'), body = $('lb-body'), meEl = $('lb-me'), noteEl = $('lb-note');
-let by = 'score', back = null, reqN = 0;
+let by = 'score', board = 'all', back = null, reqN = 0; // board: all — все города, city — город дня
 
 function cell(text, cls) {
   const td = document.createElement('td');
@@ -260,13 +260,14 @@ async function loadBoard() {
   renderMe();
   renderReset();
   for (const th of document.querySelectorAll('#lb th[data-by]')) th.classList.toggle('on', th.dataset.by === by);
+  for (const b of document.querySelectorAll('#lb-tabs button')) b.classList.toggle('on', b.dataset.board === board);
   const n = ++reqN;
   if (!body.children.length) note(tr('loading'));
   await syncProgress();
   let data;
   try {
     const tok = loggedIn() ? get(K_TOKEN) : '';
-    data = await api(null, `?by=${by}` + (tok ? `&token=${encodeURIComponent(tok)}` : ''));
+    data = await api(null, `?by=${by}&board=${board}` + (tok ? `&token=${encodeURIComponent(tok)}` : ''));
   } catch { data = null; }
   if (n !== reqN) return; // сменили сортировку, пока грузилось
   renderMe();
@@ -292,8 +293,9 @@ async function loadBoard() {
   sc.scrollTop = meRow ? meRow.offsetTop - (sc.clientHeight - meRow.offsetHeight) / 2 : 0;
 }
 
-export function openBoard(onBack) {
+export function openBoard(onBack, which) {
   back = onBack || null;
+  if (which) { board = which; body.textContent = ''; }
   lb.classList.add('show');
   $('lb-scroll').scrollTop = 0;
   loadBoard();
@@ -304,6 +306,17 @@ function closeBoard() {
   if (f) f();
 }
 $('lb-close').addEventListener('click', (e) => { e.stopPropagation(); closeBoard(); });
+for (const b of document.querySelectorAll('#lb-tabs button')) {
+  b.addEventListener('click', (e) => { e.stopPropagation(); if (board !== b.dataset.board) { board = b.dataset.board; body.textContent = ''; loadBoard(); } });
+}
+// место в таблице дня (для экрана смерти): { rank, count } или null — нет аккаунта, сети или результата
+export async function boardPlace(which) {
+  if (!loggedIn()) return null;
+  try {
+    const d = await api(null, `?by=score&board=${which}&token=${encodeURIComponent(get(K_TOKEN))}`);
+    return d && d.me && d.me.rank ? { rank: d.me.rank, count: d.count || d.me.rank } : null;
+  } catch { return null; }
+}
 for (const th of document.querySelectorAll('#lb th[data-by]')) {
   th.addEventListener('click', (e) => { e.stopPropagation(); if (by !== th.dataset.by) { by = th.dataset.by; loadBoard(); } });
 }
