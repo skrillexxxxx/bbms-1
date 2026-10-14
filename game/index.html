@@ -80,25 +80,34 @@
       text-shadow: 0 1px 2px rgba(0,0,0,0.5);
     }
     #debug { color: #f4f4f4; text-shadow: 0 1px 2px rgba(0,0,0,0.5); }
-    #hud-left, #score { font-size: 28px; font-weight: 400; font-variant-numeric: tabular-nums; }
-    #hud-left { white-space: nowrap; }
-    #dist { margin-left: 14px; font-size: 15px; font-weight: 400; opacity: 0.7; font-variant-numeric: tabular-nums; }
-    @media (max-width: 480px) { #dist { display: none; } } /* портрет: метры — на экране смерти */
-    #spd-wrap { position: relative; margin-left: 14px; }
-    #spd { font-size: 18px; font-weight: 400; opacity: 0.85; font-variant-numeric: tabular-nums; }
-    /* поток: множитель очков и полоска — сколько осталось до обрыва (3 с на ногах) */
-    #flow { display: inline-flex; flex-direction: column; margin-left: 12px; font-size: 22px; transition: opacity 0.3s; }
-    #flow b { font-weight: 500; font-variant-numeric: tabular-nums; }
-    #flow.off { opacity: 0.45; }
-    #flow-bar { display: block; height: 3px; margin-top: 1px; border-radius: 2px; background: rgba(255,255,255,0.3); overflow: hidden; box-shadow: 0 1px 2px rgba(0,0,0,0.3); }
-    #flow-bar i { display: block; height: 100%; background: #e5262b; transform-origin: left; }
-    #flow.off #flow-bar { visibility: hidden; }
-    #flow.broke b { animation: flowbroke 0.6s ease-out; }
-    @keyframes flowbroke { 0% { color: #e5262b; transform: translateX(0); } 15% { transform: translateX(-4px); } 30% { transform: translateX(4px); } 45% { transform: translateX(-2px); } 100% { color: inherit; transform: none; } }
-    /* «+18 км/ч» — всплывает под спидометром после приземления в подкат */
-    #pop { position: absolute; left: 0; top: 100%; font-size: 16px; font-weight: 500; color: #ff4a4f; white-space: nowrap; opacity: 0; }
+    #hud-left { font-size: 22px; font-weight: 400; white-space: nowrap; }
+    #dist { font-size: 15px; opacity: 0.7; font-variant-numeric: tabular-nums; }
+    /* поток — сверху по центру: в беге взгляд в точке схода, до углов экрана глазами не дотянуться.
+       Цифры боковым зрением не читаются — главное тут полоска: длина, цвет, мигание; множитель подпрыгивает на ×2, ×3… */
+    #flow { position: absolute; left: 50%; top: calc(env(safe-area-inset-top) + 8px); transform: translateX(-50%);
+      width: min(56vw, 440px); display: flex; flex-direction: column; pointer-events: none; transition: opacity 0.3s; }
+    #flow .row { display: grid; grid-template-columns: 1fr auto 1fr; align-items: baseline; gap: 14px; white-space: nowrap; }
+    #score { justify-self: end; font-size: 22px; font-weight: 400; font-variant-numeric: tabular-nums; }
+    #mult { font-size: 38px; line-height: 1; font-weight: 500; font-variant-numeric: tabular-nums; transition: opacity 0.3s; }
+    #spd { justify-self: start; font-size: 18px; font-weight: 400; opacity: 0.85; font-variant-numeric: tabular-nums; }
+    #flow-bar { display: block; height: 5px; margin-top: 6px; border-radius: 3px; background: rgba(255,255,255,0.3); overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.35); transition: opacity 0.3s; }
+    #flow-bar i { display: block; height: 100%; background: #e5262b; } /* тает к центру */
+    #flow.off #mult { opacity: 0.45; }
+    #flow.off #flow-bar { opacity: 0; }
+    #flow.warn #flow-bar i { animation: flowwarn 0.24s steps(2) infinite; } /* последняя секунда — мигает */
+    @keyframes flowwarn { 50% { opacity: 0.2; } }
+    #flow.up #mult { animation: multup 0.4s ease-out; }
+    @keyframes multup { 35% { transform: scale(1.35); color: #ff4a4f; } }
+    #flow.broke #mult { animation: flowbroke 0.6s ease-out; }
+    @keyframes flowbroke { 0% { color: #e5262b; transform: translateX(0); } 15% { transform: translateX(-5px); } 30% { transform: translateX(5px); } 45% { transform: translateX(-2px); } 100% { color: inherit; transform: none; } }
+    /* «+18 км/ч» — всплывает под полоской после приземления в подкат */
+    #pop { position: absolute; left: 50%; top: 100%; margin-top: 4px; font-size: 20px; font-weight: 500; color: #ff4a4f; white-space: nowrap; opacity: 0; transform: translateX(-50%); }
     #pop.go { animation: popup 1.2s ease-out; }
-    @keyframes popup { 0% { opacity: 0; transform: translateY(8px) scale(0.9); } 12% { opacity: 1; transform: translateY(0) scale(1.1); } 70% { opacity: 1; transform: translateY(-4px); } 100% { opacity: 0; transform: translateY(-10px); } }
+    @keyframes popup { 0% { opacity: 0; transform: translate(-50%, 8px) scale(0.9); } 12% { opacity: 1; transform: translate(-50%, 0) scale(1.15); } 70% { opacity: 1; transform: translate(-50%, -2px); } 100% { opacity: 0; transform: translate(-50%, -8px); } }
+    /* на экранах поверх игры — не мешает заголовкам */
+    body:has(#over.show, #pause-menu.show, #gfx.show) #flow { opacity: 0; }
+    /* портрет: сверху по центру — значок «поверни телефон» */
+    @media (orientation: portrait) { #flow { top: calc(env(safe-area-inset-top) + 58px); width: 86vw; } #dist { display: none; } }
     #speed-rec { font-size: 14px; opacity: 0.7; }
     #monk { display: none; margin-left: 14px; color: #e5262b; }
     #monk.show { display: inline-block; }
@@ -268,6 +277,7 @@
     #lb tr.me td { color: #e5262b; opacity: 1; }
     #lb tr.gap td { opacity: 0.4; border-bottom: 0; padding: 0 6px; text-align: center; }
     #lb .monk-ic { display: inline-block; width: 1.5em; height: 1.5em; background: url(monkey-icon.png) center / contain no-repeat; vertical-align: -0.45em; }
+    #lb-sub { font-size: 13px; opacity: 0.6; margin: -4px 0 8px; flex-shrink: 0; }
     #lb-note { opacity: 0.6; font-size: 15px; padding: 18px 0; }
     #lb-me { margin-top: 10px; font-size: 14px; flex-shrink: 0; }
     #lb-me span { opacity: 0.7; margin-right: 4px; }
@@ -408,7 +418,7 @@
   <canvas id="game"></canvas>
   <div id="halo"></div>
 
-  <div id="hud"><div id="hud-left"><span id="score">0</span><span id="flow" class="off"><b id="mult">×1.0</b><i id="flow-bar"><i></i></i></span><span id="spd-wrap"><span id="spd"></span><span id="pop"></span></span><span id="dist">0 m</span><span id="monk"></span></div><div id="hud-right"><button id="flag" class="ghost small" data-ta="flag" aria-label="Mark: something is wrong here">⚑</button><button id="pause" class="ghost small" aria-label="Pause">❚❚</button></div></div>
+  <div id="hud"><div id="hud-left"><span id="dist">0 m</span><span id="monk"></span></div><div id="flow" class="off"><div class="row"><span id="score">0</span><b id="mult">×1.0</b><span id="spd"></span></div><i id="flow-bar"><i></i></i><span id="pop"></span></div><div id="hud-right"><button id="flag" class="ghost small" data-ta="flag" aria-label="Mark: something is wrong here">⚑</button><button id="pause" class="ghost small" aria-label="Pause">❚❚</button></div></div>
   <div id="rotate" data-tt="rotate" title="Turn your phone sideways"><svg viewBox="0 0 64 64" aria-hidden="true">
       <!-- дуга над телефоном справа налево (куда он поворачивается) и стрелка на её конце -->
       <path class="arc" d="M48.85 19.86A22 22 0 0 0 15.15 19.86" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
@@ -507,7 +517,8 @@
     </div>
   </div>
   <div id="lb" class="screen">
-    <h2 data-t="records">Records</h2>
+    <h2 data-t="recordsDay">Today’s records</h2>
+    <div id="lb-sub"></div>
     <div id="lb-scroll"><table>
       <thead><tr><th>#</th><th class="name" data-t="player">Player</th><th data-by="score" data-t="points">Points</th><th data-by="dist" data-t="meters">Meters</th><th data-by="speed" data-t="kmh">km/h</th><th data-by="monkeys" data-ta="monkeys" aria-label="Monkeys"><span class="monk-ic"></span></th></tr></thead>
       <tbody id="lb-body"></tbody>

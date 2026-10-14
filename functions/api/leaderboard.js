@@ -11,8 +11,10 @@
 // и объединяется между устройствами: рекорды и обезьянки — максимум, города — все вместе, остальное — с
 // последнего устройства. Рекорды в таблице берутся из этого прогресса.
 //
-// GET  /api/leaderboard?by=score|dist|speed|monkeys[&token=…] → { top: [{ name, score, dist, speed, monkeys }], me: { name, rank, … } | null }
+// GET  /api/leaderboard?by=score|dist|speed|monkeys[&token=…] → { day, top: [{ name, score, dist, speed, monkeys }], me: { name, rank, … } | null }
 //      (score — очки: метры × множитель потока; главная сортировка)
+//      Таблица — рекорды ДНЯ: день по Москве (UTC+3), в полночь у всех нули. В списке — все игроки,
+//      у кого сегодня забегов не было — нули. Дневные рекорды приходят в прогрессе: sdwg-day + sdwg-day-stats.
 // POST { action: 'register', token, name, password? } → { ok, name } | { error: 'taken', name } | { error: 'bad' | 'weak' }
 //      (новый аккаунт — пароль обязателен; уже вошёл — смена ника и, если передан, пароля)
 // POST { action: 'login', name, password }   → { ok, name, token, data } | { error: 'wrong' } | { error: 'locked', wait }
@@ -107,12 +109,31 @@ const ours = (k) => (k.startsWith('city-') || k.startsWith('sdwg-')) && !SKIP(k)
 const MAXED = ['city-best', 'city-best-score', 'city-best-speed', 'sdwg-monkeys'];
 function parseSeeds(v) { try { const l = JSON.parse(v); return Array.isArray(l) ? l : []; } catch { return []; } }
 
+// ---------- рекорды дня ----------
+// день — по Москве (UTC+3, без перехода на летнее время), как и в игре
+export const dayKey = (now = Date.now()) => new Date(now + 3 * 3600e3).toISOString().slice(0, 10);
+const DAY = 'sdwg-day', DAY_STATS = 'sdwg-day-stats';
+const STAT_KEYS = ['score', 'dist', 'speed', 'monkeys'];
+function dayOf(save, today) {
+  const day = typeof save?.[DAY] === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(save[DAY]) && save[DAY] <= today ? save[DAY] : '';
+  let st = {};
+  try { st = JSON.parse(save?.[DAY_STATS] || '{}') || {}; } catch { /* битые данные — нули */ }
+  return { day, st: Object.fromEntries(STAT_KEYS.map((k) => [k, Math.max(0, Number(st[k]) || 0)])) };
+}
+// дневные рекорды двух устройств: более поздний день побеждает, один и тот же день — максимум по каждому
+function mergeDay(base, inc, today) {
+  const b = dayOf(base, today), i = dayOf(inc, today);
+  if (i.day > b.day) return i;
+  if (i.day < b.day) return b;
+  return { day: b.day, st: Object.fromEntries(STAT_KEYS.map((k) => [k, Math.max(b.st[k], i.st[k])])) };
+}
+
 // объединить сохранённое на сервере (base) с пришедшим с устройства (inc)
-export function mergeSave(base, inc) {
+export function mergeSave(base, inc, today = dayKey()) {
   const out = {};
   for (const [k, v] of Object.entries(base || {})) if (ours(k) && typeof v === 'string') out[k] = v;
   for (const [k, v] of Object.entries(inc || {})) {
-    if (!ours(k) || typeof v !== 'string') continue;
+    if (!ours(k) || typeof v !== 'string' || k === DAY || k === DAY_STATS) continue;
     if (MAXED.includes(k)) out[k] = String(Math.max(Number(out[k]) || 0, Number(v) || 0));
     else if (k === 'sdwg-seeds') {
       const all = new Map();
@@ -126,11 +147,16 @@ export function mergeSave(base, inc) {
       out[k] = JSON.stringify([...all.values()].sort((a, b) => (Number(b.at) || 0) - (Number(a.at) || 0)));
     } else out[k] = v;
   }
+  const d = mergeDay(base, inc, today);
+  if (d.day) { out[DAY] = d.day; out[DAY_STATS] = JSON.stringify(d.st); } else { delete out[DAY]; delete out[DAY_STATS]; }
   return out;
 }
 const clamp = (v, max) => Math.min(max, Math.max(0, Math.round(Number(v) || 0)));
-function scores(save) {
-  return { score: clamp(save['city-best-score'], MAX_SCORE), dist: clamp(save['city-best'], MAX_DIST), speed: clamp(save['city-best-speed'], MAX_SPEED), monkeys: clamp(save['sdwg-monkeys'], MAX_MONKEYS) };
+// колонки таблицы — рекорды сегодняшнего дня (вчерашние — нули)
+function scores(save, today) {
+  const d = dayOf(save, today);
+  const st = d.day === today ? d.st : {};
+  return { score: clamp(st.score, MAX_SCORE), dist: clamp(st.dist, MAX_DIST), speed: clamp(st.speed, MAX_SPEED), monkeys: clamp(st.monkeys, MAX_MONKEYS) };
 }
 function parseSave(text) { try { return JSON.parse(text || '{}') || {}; } catch { return {}; } }
 
@@ -146,7 +172,7 @@ async function db(env) {
     await DB.batch([
       DB.prepare(`CREATE TABLE IF NOT EXISTS players (
         id INTEGER PRIMARY KEY, name TEXT NOT NULL, skel TEXT NOT NULL UNIQUE, tskel TEXT NOT NULL UNIQUE, pass TEXT,
-        score INTEGER NOT NULL DEFAULT 0, dist INTEGER NOT NULL DEFAULT 0, speed INTEGER NOT NULL DEFAULT 0, monkeys INTEGER NOT NULL DEFAULT 0,
+        day TEXT NOT NULL DEFAULT '', score INTEGER NOT NULL DEFAULT 0, dist INTEGER NOT NULL DEFAULT 0, speed INTEGER NOT NULL DEFAULT 0, monkeys INTEGER NOT NULL DEFAULT 0,
         save TEXT, fails INTEGER NOT NULL DEFAULT 0, lock_until INTEGER NOT NULL DEFAULT 0,
         created INTEGER NOT NULL, updated INTEGER NOT NULL)`),
       DB.prepare(`CREATE TABLE IF NOT EXISTS tokens (
@@ -156,9 +182,9 @@ async function db(env) {
       DB.prepare('CREATE INDEX IF NOT EXISTS players_monkeys ON players (monkeys DESC)'),
       DB.prepare('CREATE INDEX IF NOT EXISTS tokens_player ON tokens (player)'),
     ]);
-    // база, созданная до очков: добавить колонку (уже есть — SQLite ответит ошибкой, это нормально)
+    // база, созданная раньше: добавить колонки (уже есть — SQLite ответит ошибкой, это нормально)
     try { await DB.prepare('ALTER TABLE players ADD COLUMN score INTEGER NOT NULL DEFAULT 0').run(); } catch { /* колонка уже есть */ }
-    await DB.prepare('CREATE INDEX IF NOT EXISTS players_score ON players (score DESC)').run();
+    try { await DB.prepare("ALTER TABLE players ADD COLUMN day TEXT NOT NULL DEFAULT ''").run(); } catch { /* колонка уже есть */ }
     ready = true;
   }
   return DB;
@@ -174,17 +200,22 @@ export async function onRequestGet({ request, env }) {
   const url = new URL(request.url);
   const by = url.searchParams.get('by');
   const col = ['dist', 'speed', 'monkeys'].includes(by) ? by : 'score';
-  const other = col === 'dist' ? 'speed' : 'dist';
+  const other = col === 'score' ? 'dist' : col === 'dist' ? 'speed' : 'score';
+  const today = dayKey();
+  // значение за сегодня: у кого последний забег был не сегодня — ноль
+  const v = (c) => `(CASE WHEN day = ?1 THEN ${c} ELSE 0 END)`;
   const { results } = await DB.prepare(
-    `SELECT name, score, dist, speed, monkeys FROM players WHERE ${col} > 0 ORDER BY ${col} DESC, ${other} DESC, id ASC LIMIT ?`,
-  ).bind(TOP).all();
+    `SELECT name, ${STAT_KEYS.map((k) => `${v(k)} AS ${k}`).join(', ')} FROM players
+     ORDER BY ${v(col)} DESC, ${v(other)} DESC, id ASC LIMIT ?2`,
+  ).bind(today, TOP).all();
   let me = null;
   const row = await playerByToken(DB, url.searchParams.get('token'));
   if (row) {
-    const above = await DB.prepare(`SELECT COUNT(*) AS n FROM players WHERE ${col} > ?`).bind(row[col]).first();
-    me = { name: row.name, score: row.score, dist: row.dist, speed: row.speed, monkeys: row.monkeys, rank: row[col] > 0 ? above.n + 1 : null };
+    const mine = Object.fromEntries(STAT_KEYS.map((k) => [k, row.day === today ? row[k] : 0]));
+    const above = await DB.prepare(`SELECT COUNT(*) AS n FROM players WHERE ${v(col)} > ?2`).bind(today, mine[col]).first();
+    me = { name: row.name, ...mine, rank: mine[col] > 0 ? above.n + 1 : null };
   }
-  return json({ top: results, me });
+  return json({ day: today, top: results, me });
 }
 
 export async function onRequestPost({ request, env }) {
@@ -251,12 +282,13 @@ export async function onRequestPost({ request, env }) {
     const me = await playerByToken(DB, body.token);
     if (!me) return json({ error: 'noplayer' }, 404);
     if (!body.data || typeof body.data !== 'object') return json({ error: 'bad' }, 400);
-    const merged = mergeSave(parseSave(me.save), body.data);
+    const today = dayKey(now);
+    const merged = mergeSave(parseSave(me.save), body.data, today);
     const text = JSON.stringify(merged);
     if (text.length > MAX_SAVE) return json({ error: 'big' }, 413);
-    const sc = scores(merged);
-    await DB.prepare(`UPDATE players SET save = ?2, dist = MAX(dist, ?3), speed = MAX(speed, ?4), monkeys = MAX(monkeys, ?5),
-      score = MAX(score, ?7), updated = ?6 WHERE id = ?1`).bind(me.id, text, sc.dist, sc.speed, sc.monkeys, now, sc.score).run();
+    const sc = scores(merged, today);
+    await DB.prepare(`UPDATE players SET save = ?2, day = ?3, score = ?4, dist = ?5, speed = ?6, monkeys = ?7, updated = ?8 WHERE id = ?1`)
+      .bind(me.id, text, today, sc.score, sc.dist, sc.speed, sc.monkeys, now).run();
     return json({ ok: true, name: me.name, data: merged });
   }
 

@@ -433,6 +433,22 @@ const FLOW_HIGH = 3;    // выше земли под ногами больше 
 const flow = { mult: 1, t: 0, idle: 0, score: 0, maxMult: 1, bestT: 0, stumbles: 0 };
 let bestScore = 0;
 try { bestScore = Number(localStorage.getItem('city-best-score')) || 0; } catch { /* приватный режим */ }
+// рекорды дня: sdwg-day (день по Москве) + sdwg-day-stats { score, dist, speed, monkeys }; другой день — нули.
+// Синхронизируются с прогрессом; сервер собирает из них общую таблицу дня
+const dayNow = () => new Date(Date.now() + 3 * 3600e3).toISOString().slice(0, 10);
+function dayStats() {
+  const st = { score: 0, dist: 0, speed: 0, monkeys: 0 };
+  try {
+    if (localStorage.getItem('sdwg-day') === dayNow()) {
+      const saved = JSON.parse(localStorage.getItem('sdwg-day-stats') || '{}') || {};
+      for (const k of Object.keys(st)) st[k] = Math.max(0, Number(saved[k]) || 0);
+    }
+  } catch { /* приватный режим */ }
+  return st;
+}
+function saveDayStats(st) {
+  try { localStorage.setItem('sdwg-day', dayNow()); localStorage.setItem('sdwg-day-stats', JSON.stringify(st)); } catch { /* приватный режим */ }
+}
 function flowReset() { Object.assign(flow, { mult: 1, t: 0, idle: 0, score: 0, maxMult: 1, bestT: 0, stumbles: 0 }); }
 function flowBreak(cause) {
   if (cause === 'stumble') flow.stumbles++;
@@ -458,17 +474,25 @@ function flowStep(dt, dz) {
 
 // HUD: очки, ×множитель и полоска до обрыва; меняем DOM, только когда текст правда поменялся
 const hudEl = { score: $('score'), flow: $('flow'), mult: $('mult'), bar: $('flow-bar').firstChild, pop: $('pop') };
-let hudLast = '';
+let hudLast = '', hudWhole = 1;
 function hudFlow() {
   const sc = String(Math.floor(flow.score)), m = `×${flow.mult.toFixed(1)}`;
   const key = sc + m;
   if (key !== hudLast) { hudLast = key; hudEl.score.textContent = sc; hudEl.mult.textContent = m; }
-  hudEl.flow.classList.toggle('off', flow.mult < 1.05);
+  const on = flow.mult >= 1.05;
+  hudEl.flow.classList.toggle('off', !on);
+  // последняя секунда до обрыва — полоска мигает (это видно и боковым зрением)
+  hudEl.flow.classList.toggle('warn', on && flow.idle > FLOW_GRACE - 1);
   hudEl.bar.style.transform = `scaleX(${Math.max(0, 1 - flow.idle / FLOW_GRACE).toFixed(3)})`;
+  // ×2, ×3, … — множитель подпрыгивает
+  const whole = Math.floor(flow.mult);
+  if (whole > hudWhole && whole >= 2) hudBump('up');
+  hudWhole = whole;
 }
-function hudFlowBroke() {
-  hudEl.flow.classList.remove('broke'); void hudEl.flow.offsetWidth; hudEl.flow.classList.add('broke');
+function hudBump(cls) {
+  hudEl.flow.classList.remove('up', 'broke'); void hudEl.flow.offsetWidth; hudEl.flow.classList.add(cls);
 }
+function hudFlowBroke() { hudBump('broke'); }
 function hudPop(text) {
   hudEl.pop.textContent = text;
   hudEl.pop.classList.remove('go'); void hudEl.pop.offsetWidth; hudEl.pop.classList.add('go');
@@ -1234,27 +1258,32 @@ function die(cause = '?') {
     best = meters;
     try { localStorage.setItem('city-best', String(best)); } catch { /* ignore */ }
   }
-  const newSpeedRecord = runMaxSpeed > bestSpeed;
-  if (newSpeedRecord) {
+  if (runMaxSpeed > bestSpeed) {
     bestSpeed = runMaxSpeed;
     try { localStorage.setItem('city-best-speed', String(bestSpeed)); } catch { /* ignore */ }
   }
   // очки — главный рекорд
   const score = Math.floor(flow.score);
-  const newScoreRecord = score > bestScore;
-  if (newScoreRecord) {
+  if (score > bestScore) {
     bestScore = score;
     try { localStorage.setItem('city-best-score', String(bestScore)); } catch { /* ignore */ }
+  }
+  // рекорды дня — их показывает экран смерти и общая таблица; в полночь по Москве — с нуля
+  const day = dayStats();
+  const newDayScore = score > day.score, newDaySpeed = runMaxSpeed > day.speed;
+  if (!autopilot) {
+    Object.assign(day, { score: Math.max(day.score, score), dist: Math.max(day.dist, meters), speed: Math.max(day.speed, runMaxSpeed), monkeys: day.monkeys + runMonkeys });
+    saveDayStats(day);
   }
   const info = world.infoAt(pl.z + 1);
   ui.overDist.textContent = String(score);
   $('over-run').innerHTML = tr('runLine', meters, flow.maxMult.toFixed(1), Math.round(flow.bestT));
   ui.overInfo.textContent = `seed ${seed} · ${info.name} (#${info.inst}) · ${tr('row')} ${info.local + 1}/${info.total}`;
-  ui.best.textContent = tr('bestLine', bestScore, best) + (newScoreRecord ? tr('newRec') : '')
-    + (runMonkeys || totalMonkeys ? tr('monkLine', runMonkeys, totalMonkeys) : '');
+  ui.best.textContent = tr('bestLine', day.score, day.dist) + (newDayScore ? tr('newRec') : '')
+    + (runMonkeys || day.monkeys ? tr('monkLine', runMonkeys, day.monkeys) : '');
   // подсказка — про то, чего в этом забеге не хватило
   $('over-tip').textContent = autopilot ? '' : flow.stumbles ? tr('tipStumble') : runMaxSpeed < 100 ? tr('tipPump') : flow.maxMult < 3 ? tr('tipFlow') : '';
-  ui.speedRec.textContent = tr('speedLine', runMaxSpeed, bestSpeed) + (newSpeedRecord ? tr('newRec') : '');
+  ui.speedRec.textContent = tr('speedLine', runMaxSpeed, day.speed) + (newDaySpeed ? tr('newRec') : '');
   if (!autopilot) syncProgress(); // прогресс и рекорды — на сервер (если вошёл в аккаунт)
   setTimeout(() => { if (state === 'dead' && !ui.seeds.classList.contains('show')) ui.over.classList.add('show'); }, 450);
 }

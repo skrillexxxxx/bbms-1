@@ -249,8 +249,16 @@ function renderMe() {
   b.addEventListener('click', (e) => { e.stopPropagation(); openAccount(); });
 }
 
+// сколько до полуночи по Москве — тогда рекорды дня обнулятся
+function renderReset() {
+  const left = 86400e3 - ((Date.now() + 3 * 3600e3) % 86400e3);
+  const min = Math.ceil(left / 60e3);
+  $('lb-sub').textContent = tr('resetIn', Math.floor(min / 60), min % 60);
+}
+
 async function loadBoard() {
   renderMe();
+  renderReset();
   for (const th of document.querySelectorAll('#lb th[data-by]')) th.classList.toggle('on', th.dataset.by === by);
   const n = ++reqN;
   if (!body.children.length) note(tr('loading'));
