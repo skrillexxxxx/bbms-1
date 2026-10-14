@@ -10,7 +10,7 @@ import {
   canStep, canJumpOver, aliveBackward, walk, lv,
 } from './world.js';
 import './onboard.js';
-import { openBoard, syncProgress, boardPlace, loadGhosts, uploadGhost, playerName } from './leaderboard.js';
+import { openBoard, syncProgress, boardData, loggedIn, loadGhosts, uploadGhost, playerName } from './leaderboard.js';
 import { createMaterial, createStarMaterial, createDepthMaterial, createSunDepthMaterial, createSparkMaterial, createConeMaterial, buildInstanceMesh } from './render.js';
 import { createSound } from './sound.js';
 import { createRecorder, shareFile } from './recorder.js';
@@ -450,6 +450,38 @@ function dayStats() {
 function saveDayStats(st) {
   try { localStorage.setItem('sdwg-day', dayNow()); localStorage.setItem('sdwg-day-stats', JSON.stringify(st)); } catch { /* приватный режим */ }
 }
+// таблица города дня на экране смерти: d — ответ сервера (undefined — ещё грузится, null — нет сети);
+// мои очки сегодня — myBest (для строки «ты» без аккаунта). Точка у ника — цвет его призрака
+function renderOverBoard(d, myBest) {
+  const body = $('ob-body'), head = $('ob-head'), note = $('ob-note');
+  body.textContent = '';
+  const colorOf = (name, mine) => { const e = ghosts.find((g) => (mine ? g.own : !g.own && g.name === name)); return e ? e.color : ''; };
+  const row = (place, name, score, mine) => {
+    const tr_ = document.createElement('tr');
+    if (mine) tr_.className = 'me';
+    const c = colorOf(name, mine);
+    tr_.innerHTML = `<td class="pl"></td><td class="nm">${c ? `<span class="dot" style="background:${c}"></span>` : ''}</td><td class="sc"></td>`;
+    tr_.children[0].textContent = place ?? '—';
+    tr_.children[1].append(mine && !name ? tr('ghostYou') : name);
+    tr_.children[2].textContent = score;
+    body.append(tr_);
+  };
+  const me = d && d.me;
+  head.innerHTML = '';
+  head.append(tr('dailyCity'));
+  if (me && me.rank) { const b = document.createElement('b'); b.textContent = ` · ${tr('placeShort', me.rank, d.count || me.rank)}`; head.append(b); }
+  note.textContent = d === undefined ? tr('loading') : d === null ? tr('errNet') : loggedIn() ? '' : tr('obLogin');
+  if (!d) { if (myBest > 0) row(null, '', myBest, true); return; }
+  const top = d.top.filter((x) => x.score > 0).slice(0, 7);
+  let shown = false;
+  top.forEach((x, i) => { const mine = !!me && x.name === me.name; if (mine) shown = true; row(i + 1, x.name, x.score, mine); });
+  if (!shown && (me ? me.score > 0 : myBest > 0)) {
+    if (top.length) { const g = document.createElement('tr'); g.className = 'gap'; g.innerHTML = '<td colspan="3">···</td>'; body.append(g); }
+    row(me ? me.rank : null, me ? me.name : '', me ? me.score : myBest, true);
+  }
+  if (!top.length && !(myBest > 0)) note.textContent = tr('lbEmpty');
+}
+
 // ---------- город дня: один сид на всех на сутки (день по Москве), своя таблица ----------
 // забег в нём — без обучения и без проспекта из меню: у всех одинаковый старт
 let dailyRun = false;
@@ -597,8 +629,12 @@ function updateGhosts() {
     const gx = x0 + (x1 - x0) * f, gy = p[i * 4 + 1] + (p[i * 4 + 5] - p[i * 4 + 1]) * f, gz = p[i * 4 + 2] + (p[i * 4 + 6] - p[i * 4 + 2]) * f;
     const slide = p[(f < 0.5 ? i : i + 1) * 4 + 3] > 0;
     let dx = gx - pl.x; dx -= W * Math.round(dx / W);
-    const dz = gz - pl.z, hy = gy + (slide ? 0.75 : 1.45) + 0.07 * Math.sin(gameTime * 9 + e.score);
+    const dz = gz - pl.z;
+    // мир к центру сжимается быстро (на 50 м — в 20 раз): вдали призрак крупнее, чтобы оставался заметным пятном
+    const k = dz > 0 ? Math.min(10, Math.exp(0.85 * dz / LZ)) : 1;
+    const hy = gy + (slide ? 0.75 : 1.45) + 0.55 * (k - 1) + 0.07 * Math.sin(gameTime * 9 + e.score);
     e.mesh.position.set(dx, hy, dz);
+    e.mesh.scale.setScalar(k);
     e.mesh.rotation.set(0.12 * Math.sin(gameTime * 4.5 + e.score), 0.2 * Math.sin(gameTime * 2.3 + e.score), 0);
     // разбился — растворяется за 0.8 с; вплотную к камере — тоже (не лицом во весь экран)
     const fade = Math.max(0, 1 - Math.max(0, t - (n - 1)) * GHOST_DT / 0.8);
@@ -608,9 +644,9 @@ function updateGhosts() {
     gu.uB.value = mu.uB.value; gu.uFogNear.value = mu.uFogNear.value; gu.uFogFar.value = mu.uFogFar.value;
     gu.uFogColor.value.copy(mu.uFogColor.value);
     e.mesh.visible = a > 0.01;
-    // ник над головой; вдали тает
-    const la = a * Math.min(1, Math.max(0, 1 - (dz - 90) / 60));
-    const sp = la > 0.02 && dz > 0 ? bentToScreen(dx, hy + 0.85, dz) : null;
+    // ник над головой; совсем вдали тает
+    const la = a * Math.min(1, Math.max(0, 1 - (dz - 160) / 80));
+    const sp = la > 0.02 && dz > 0 ? bentToScreen(dx, hy + 0.7 * k + 0.2, dz) : null;
     if (sp && sp.z < 1) {
       e.label.style.opacity = la.toFixed(2);
       e.label.style.transform = `translate(${((sp.x + 1) / 2 * cw).toFixed(1)}px, ${((1 - sp.y) / 2 * ch).toFixed(1)}px) translate(-50%, -100%)`;
@@ -1480,15 +1516,15 @@ function die(cause = '?') {
   // два экрана: город дня (соревнование) — «Ещё раз», рекорды, меню; свободный забег — новый город, сиды…
   // место в таблице города дня — когда ответит сервер
   ui.over.classList.toggle('daily', daily);
-  $('over-place').textContent = '';
+  if (daily) renderOverBoard(undefined, day.cScore);
   // подсказка — про то, чего в этом забеге не хватило
   $('over-tip').textContent = autopilot ? '' : flow.stumbles ? tr('tipStumble') : runMaxSpeed < 100 ? tr('tipPump') : flow.maxMult < 3 ? tr('tipFlow') : '';
   if (!autopilot) {
     // прогресс и рекорды — на сервер (если вошёл в аккаунт); в городе дня — потом спросить место
     const runId = ++deathN;
-    syncProgress().then(() => (daily ? boardPlace('city') : null)).then((r) => {
-      if (!r || runId !== deathN || state !== 'dead') return;
-      $('over-place').textContent = r.rank ? tr('placeLine', r.rank, r.count) : '';
+    syncProgress().then(() => (daily ? boardData('city') : undefined)).then((d) => {
+      if (d === undefined || runId !== deathN || state !== 'dead') return;
+      renderOverBoard(d, day.cScore);
     }).catch(() => {});
   }
   setTimeout(() => { if (state === 'dead' && !ui.seeds.classList.contains('show')) ui.over.classList.add('show'); }, 450);

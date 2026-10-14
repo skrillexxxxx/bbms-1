@@ -61,8 +61,23 @@
     /* подсказка после забега — что делать, чтобы очков было больше */
     #over-tip { max-width: 520px; font-size: 14px; line-height: 1.45; opacity: 0.75; margin: -14px 0 18px; }
     #over-tip:empty { display: none; }
-    #over-place { font-size: 18px; font-weight: 500; color: #e5262b; margin: -22px 0 22px; }
-    #over-place:empty { display: none; }
+    /* город дня: результат слева, таблица дня справа; в портрете — таблица под ним */
+    #over .over-cols { display: flex; align-items: center; justify-content: center; gap: 40px; max-width: 100%; }
+    #over .over-main { display: flex; flex-direction: column; align-items: center; min-width: 0; }
+    #over-board { width: min(300px, 38vw); flex-shrink: 0; }
+    #ob-head { font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase; opacity: 0.7; margin-bottom: 4px; text-align: left; }
+    #ob-head b { color: #e5262b; font-weight: 500; opacity: 1; }
+    #over-board table { width: 100%; border-collapse: collapse; font-size: 15px; }
+    #over-board td { padding: 5px 4px; border-bottom: 1px solid rgba(0,0,0,0.1); white-space: nowrap; }
+    #over-board td.pl { font: 12px "Plex Mono", ui-monospace, Menlo, monospace; opacity: 0.55; width: 2.2em; text-align: right; padding-right: 8px; }
+    #over-board td.nm { text-align: left; width: 100%; max-width: 0; overflow: hidden; text-overflow: ellipsis; }
+    #over-board td.sc { text-align: right; font-variant-numeric: tabular-nums; }
+    #over-board tr.me td { color: #e5262b; font-weight: 500; opacity: 1; }
+    #over-board tr.gap td { border-bottom: 0; opacity: 0.4; text-align: center; padding: 0; }
+    #over-board .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 7px; vertical-align: 1px; }
+    #ob-note { font-size: 13px; opacity: 0.65; margin-top: 6px; text-align: left; }
+    #ob-note:empty { display: none; }
+    @media (orientation: portrait) { #over .over-cols { flex-direction: column; gap: 16px; } #over-board { width: min(340px, 88vw); } }
     button {
       font: inherit; font-size: 16px; font-weight: 400; letter-spacing: 0.08em;
       padding: 14px 28px; margin: 6px; border-radius: 999px; cursor: pointer;
@@ -92,12 +107,13 @@
     #daily-tag { display: none; margin-right: 12px; font-size: 12px; letter-spacing: 0.15em; text-transform: uppercase; color: #ff4a4f; }
     #hud.daily #daily-tag { display: inline; }
     /* призрак города дня: имя и насколько он впереди ▲ (красным) или позади ▼ */
-    #ghost-tag { margin-left: 18px; font-size: 15px; font-variant-numeric: tabular-nums; }
+    /* под полоской потока — кого догонять: «Masha ▲ 35 м» его цветом */
+    #ghost-tag { margin-top: 3px; text-align: center; font-size: 13px; font-weight: 500; font-variant-numeric: tabular-nums; white-space: nowrap; }
     #ghost-tag:empty { display: none; }
     /* ники над головами призраков — цвет как у головы */
     #ghost-labels { position: fixed; inset: 0; pointer-events: none; z-index: 4; display: none; overflow: hidden; }
     #ghost-labels.show { display: block; }
-    .ghost-label { position: absolute; left: 0; top: 0; font-size: 13px; font-weight: 500; white-space: nowrap; will-change: transform;
+    .ghost-label { position: absolute; left: 0; top: 0; font-size: 15px; font-weight: 600; white-space: nowrap; will-change: transform;
       text-shadow: 0 1px 3px rgba(0,0,0,0.5), 0 0 1px rgba(255,255,255,0.8); }
     #ghost-tag.ahead { color: #ff4a4f; }
     /* поток — снизу по центру (не в углу: до углов в беге глазами не дотянуться), у самого края; уже сида в углу.
@@ -165,7 +181,7 @@
       #over-dist { font-size: 44px; }
       #best { margin: 4px 0 10px; }
       #over-tip { margin: -4px 0 8px; font-size: 13px; }
-      #over-place { margin: -6px 0 8px; font-size: 16px; }
+      #over-board td { padding: 3px 4px; font-size: 14px; }
       button { padding: 9px 20px; margin: 4px; font-size: 14px; }
       button.small { padding: 7px 12px; font-size: 13px; }
     }
@@ -456,7 +472,7 @@
   <div id="halo"></div>
 
   <div id="ghost-labels"></div>
-  <div id="hud"><div id="hud-left"><span id="daily-tag" data-t="dailyCity">City of the day</span><span id="dist">0 m</span><span id="monk"></span><span id="ghost-tag"></span></div><div id="flow" class="off"><div class="row"><span id="score">0</span><b id="mult">×1.0</b><span id="spd"></span></div><i id="flow-bar"><i></i></i><span id="mpop"></span><span id="pop"></span></div><div id="hud-right"><button id="flag" class="ghost small" data-ta="flag" aria-label="Mark: something is wrong here">⚑</button><button id="pause" class="ghost small" aria-label="Pause">❚❚</button></div></div>
+  <div id="hud"><div id="hud-left"><span id="daily-tag" data-t="dailyCity">City of the day</span><span id="dist">0 m</span><span id="monk"></span></div><div id="flow" class="off"><div class="row"><span id="score">0</span><b id="mult">×1.0</b><span id="spd"></span></div><i id="flow-bar"><i></i></i><span id="ghost-tag"></span><span id="mpop"></span><span id="pop"></span></div><div id="hud-right"><button id="flag" class="ghost small" data-ta="flag" aria-label="Mark: something is wrong here">⚑</button><button id="pause" class="ghost small" aria-label="Pause">❚❚</button></div></div>
   <div id="rotate" data-tt="rotate" title="Turn your phone sideways"><svg viewBox="0 0 64 64" aria-hidden="true">
       <!-- дуга над телефоном справа налево (куда он поворачивается) и стрелка на её конце -->
       <path class="arc" d="M48.85 19.86A22 22 0 0 0 15.15 19.86" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
@@ -481,11 +497,12 @@
   </div>
 
   <div id="over" class="screen">
+    <div class="over-cols">
+    <div class="over-main">
     <div id="over-dist">0</div>
     <div id="over-run"></div>
     <div id="over-info"></div>
     <div id="best"></div>
-    <div id="over-place"></div>
     <div id="over-tip"></div>
     <!-- город дня (соревнование): «Ещё раз», рекорды, меню. Свободный забег: новый город, этот же сид, сиды -->
     <div class="daily-only"><button id="retry-daily" class="primary" data-t="dailyAgain">Again</button></div>
@@ -496,6 +513,10 @@
     </div>
     <div><button id="lb-open-over" class="ghost small" data-t="records">Records</button><button id="save" class="ghost small free-only">Save seed</button><button id="open-seeds-over" class="ghost small free-only" data-t="myCities">My seeds</button><button id="to-menu-over" class="ghost small" data-t="mainMenu">Main menu</button></div>
     <div><button id="gfx-open-over" class="ghost small" data-t="graphics">Graphics</button><button id="snd-open-over" class="ghost small" data-t="sound">Sound</button><button id="rec" class="ghost small" data-t="sendRun">Send run log</button></div>
+    </div>
+    <!-- город дня: таблица дня прямо здесь — ты красным, точка — цвет твоего призрака у остальных -->
+    <div id="over-board" class="daily-only"><div id="ob-head"></div><table><tbody id="ob-body"></tbody></table><div id="ob-note"></div></div>
+    </div>
   </div>
 
   <div id="pause-menu" class="screen">

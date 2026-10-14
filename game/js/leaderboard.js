@@ -18,7 +18,7 @@ const sget = (k) => { try { return sessionStorage.getItem(k); } catch { return n
 const sset = (k, v) => { try { sessionStorage.setItem(k, v); } catch { /* приватный режим */ } };
 
 export const playerName = () => get(K_NAME) || '';
-const loggedIn = () => !!(playerName() && get(K_TOKEN));
+export const loggedIn = () => !!(playerName() && get(K_TOKEN));
 function newToken() {
   const b = crypto.getRandomValues(new Uint8Array(24));
   return [...b].map((x) => x.toString(16).padStart(2, '0')).join('');
@@ -318,12 +318,12 @@ export async function uploadGhost(score, track) {
   if (!loggedIn()) return;
   try { await api({ action: 'ghost', token: get(K_TOKEN), score, track }); } catch { /* нет сети */ }
 }
-// место в таблице дня (для экрана смерти): { rank, count } или null — нет аккаунта, сети или результата
-export async function boardPlace(which) {
-  if (!loggedIn()) return null;
+// таблица дня по очкам (для экрана смерти): { top, me, count } или null — нет сети
+export async function boardData(which) {
   try {
-    const d = await api(null, `?by=score&board=${which}&token=${encodeURIComponent(get(K_TOKEN))}`);
-    return d && d.me && d.me.rank ? { rank: d.me.rank, count: d.count || d.me.rank } : null;
+    const tok = loggedIn() ? `&token=${encodeURIComponent(get(K_TOKEN))}` : '';
+    const d = await api(null, `?by=score&board=${which}${tok}`);
+    return d && Array.isArray(d.top) ? d : null;
   } catch { return null; }
 }
 for (const th of document.querySelectorAll('#lb th[data-by]')) {
