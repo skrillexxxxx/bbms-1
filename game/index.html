@@ -153,6 +153,8 @@
       .hint { font-size: 14px; line-height: 1.45; }
       .pulse { margin-top: 12px; }
       #start .menu { margin-top: 10px; }
+      button.primary { font-size: 16px; padding: 12px 36px; }
+      #start .modes + .menu { margin-top: 4px; }
       #seeds { padding-top: calc(env(safe-area-inset-top) + 14px); }
       #seeds h2 { font-size: 22px; margin-bottom: 8px; }
       #over-dist { font-size: 44px; }
@@ -304,7 +306,15 @@
     #lb-me { margin-top: 10px; font-size: 14px; flex-shrink: 0; }
     #lb-me span { opacity: 0.7; margin-right: 4px; }
     #lb > div:last-child { flex-shrink: 0; }
-    button.red, #lb-open, #lb-open-over { border-color: #e5262b; color: #e5262b; }
+    button.red { border-color: #e5262b; color: #e5262b; }
+    /* главный режим — залитая красная кнопка */
+    button.primary { background: #e5262b; border-color: #e5262b; color: #fff; font-size: 19px; font-weight: 500; letter-spacing: 0.12em;
+      text-transform: uppercase; padding: 16px 46px; box-shadow: 0 8px 28px rgba(229,38,43,0.35); }
+    #start .modes { display: flex; flex-direction: column; align-items: center; }
+    #daily-sub { font-size: 13px; opacity: 0.65; margin: 0 0 6px; }
+    #daily-sub:empty { display: none; }
+    #start .modes + .menu { margin-top: 10px; }
+    #over.daily .free-only, #over:not(.daily) .daily-only { display: none !important; }
     #nick .fields { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; }
     #nick-swap { border: 0; background: none; color: var(--ink); text-decoration: underline; text-underline-offset: 3px; font-weight: 400; letter-spacing: 0; opacity: 0.7; padding: 6px 10px; margin: 4px 0 0; font-size: 14px; }
     #nick .card { max-width: 520px; }
@@ -453,8 +463,9 @@
 
   <div id="start" class="screen">
     <h1>SDWG GAME</h1>
-    <div class="pulse" data-t="tapToRun">Tap to run</div>
-    <div class="menu"><button id="install-open" class="ghost small" style="display:none" data-t="installApp">Install app</button><button id="daily-open" class="red" data-t="dailyCity">City of the day</button><button id="lb-open" class="ghost" data-t="records">Records</button><button id="open-seeds" class="ghost" data-t="myCities">My seeds</button><button id="help-open" class="ghost small" data-t="howTo">How to play</button><button id="save-progress" class="ghost small" data-t="saveProgress">Save progress</button><button id="load-progress" class="ghost small" data-t="loadProgress">Load</button><br><button id="gfx-open-start" class="ghost small" data-t="graphics">Graphics</button><button id="snd-open-start" class="ghost small" data-t="sound">Sound</button><button id="lang-btn" class="ghost small" data-t="langBtn">Русский</button></div>
+    <!-- главный режим — город дня; свободный забег — вторым; остальное мелко -->
+    <div class="menu modes"><button id="daily-open" class="primary" data-t="dailyCity">City of the day</button><div id="daily-sub"></div><button id="free-open" class="ghost" data-t="freeRun">Free run</button></div>
+    <div class="menu"><button id="install-open" class="ghost small" style="display:none" data-t="installApp">Install app</button><button id="lb-open" class="ghost small" data-t="records">Records</button><button id="open-seeds" class="ghost small" data-t="myCities">My seeds</button><button id="help-open" class="ghost small" data-t="howTo">How to play</button><button id="save-progress" class="ghost small" data-t="saveProgress">Save progress</button><button id="load-progress" class="ghost small" data-t="loadProgress">Load</button><br><button id="gfx-open-start" class="ghost small" data-t="graphics">Graphics</button><button id="snd-open-start" class="ghost small" data-t="sound">Sound</button><button id="lang-btn" class="ghost small" data-t="langBtn">Русский</button></div>
   </div>
 
   <div id="seeds" class="screen">
@@ -470,12 +481,14 @@
     <div id="best"></div>
     <div id="over-place"></div>
     <div id="over-tip"></div>
-    <div>
+    <!-- город дня (соревнование): «Ещё раз», рекорды, меню. Свободный забег: новый город, этот же сид, сиды -->
+    <div class="daily-only"><button id="retry-daily" class="primary" data-t="dailyAgain">Again</button></div>
+    <div class="free-only">
       <button id="again" data-t="newCity">New city</button>
       <button id="same" class="ghost" data-t="sameSeed">Same seed</button>
       <button id="daily-over" class="red" data-t="dailyCity">City of the day</button>
     </div>
-    <div><button id="lb-open-over" class="ghost small" data-t="records">Records</button><button id="save" class="ghost small">Save seed</button><button id="open-seeds-over" class="ghost small" data-t="myCities">My seeds</button><button id="to-menu-over" class="ghost small" data-t="mainMenu">Main menu</button></div>
+    <div><button id="lb-open-over" class="ghost small" data-t="records">Records</button><button id="save" class="ghost small free-only">Save seed</button><button id="open-seeds-over" class="ghost small free-only" data-t="myCities">My seeds</button><button id="to-menu-over" class="ghost small" data-t="mainMenu">Main menu</button></div>
     <div><button id="gfx-open-over" class="ghost small" data-t="graphics">Graphics</button><button id="snd-open-over" class="ghost small" data-t="sound">Sound</button><button id="rec" class="ghost small" data-t="sendRun">Send run log</button></div>
   </div>
 

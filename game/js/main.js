@@ -458,11 +458,26 @@ function dailySeed(day = dayNow()) {
   for (const ch of `sdwg-city-${day}`) { h ^= ch.charCodeAt(0); h = Math.imul(h, 16777619); }
   return (h >>> 0) % 1e6;
 }
+// новичок (обучение не пройдено) — сначала обучение: свободный забег по проспекту, город дня — потом
+const needsTutorial = () => !autopilot && params.get('tut') !== '0' && tutSaved() !== 'done';
 function startDaily() {
+  if (needsTutorial()) { startFree(); return; }
   dailyRun = true;
   reset(dailySeed());
   start();
 }
+// свободный забег из главного меню — город, который едет на фоне меню
+function startFree() {
+  dailyRun = false;
+  start();
+}
+// под кнопкой «Город дня»: когда сменится город (или что сначала — обучение)
+function renderDailySub() {
+  const left = 86400e3 - ((Date.now() + 3 * 3600e3) % 86400e3), min = Math.ceil(left / 60e3);
+  $('daily-sub').textContent = needsTutorial() ? tr('dailyFirstTut') : tr('dailySub', Math.floor(min / 60), min % 60);
+}
+setInterval(() => { if (state === 'ready') renderDailySub(); }, 30e3);
+window.addEventListener('sdwg-lang', renderDailySub);
 const isDailyRun = () => dailyRun && seed === dailySeed() && !autopilot;
 
 // ---------- призрак города дня: обезьянка бежит по траектории лучшего забега дня ----------
@@ -483,11 +498,28 @@ function decodeTrack(t) {
   for (let i = 0; i < t.length; i++) { const k = i % 4; acc[k] += t[i]; pts[i] = k === 3 ? acc[k] : acc[k] / 100; }
   return pts;
 }
-function refreshGhost() {
+// свой лучший трек дня — ещё и на телефоне: призрак есть и без аккаунта, и сразу после рекорда, не дожидаясь сервера.
+// Ключ не sdwg-/city- — в синхронизацию прогресса не идёт (трек большой)
+const OWN_GHOST = 'ghost-own';
+function ownGhost() {
+  try { const g = JSON.parse(localStorage.getItem(OWN_GHOST) || 'null'); return g && g.day === dayNow() ? g : null; } catch { return null; }
+}
+// призрак — лучший из того, что знаем: свой рекорд дня или лидер дня
+function offerGhost(g, own) {
   const day = dayNow();
-  loadGhost().then((g) => {
-    if (g && Array.isArray(g.track) && g.track.length >= 8) ghost = { name: g.name, score: g.score, pts: decodeTrack(g.track), day };
-  });
+  if (ghost && ghost.day !== day) ghost = null;
+  if (!g || !Array.isArray(g.track) || g.track.length < 8) return;
+  if (ghost && ghost.score >= g.score) return;
+  ghost = { name: g.name, score: g.score, pts: decodeTrack(g.track), day, own };
+}
+function refreshGhost() {
+  offerGhost(ownGhost(), true);
+  loadGhost().then((g) => offerGhost(g, !!g && g.name === playerName()));
+}
+function saveOwnGhost(score, track) {
+  const g = { day: dayNow(), score, track };
+  try { localStorage.setItem(OWN_GHOST, JSON.stringify(g)); } catch { /* места нет — только на сервер */ }
+  offerGhost(g, true);
 }
 function ghostRecord() {
   const n = Math.floor((gameTime - runStartT) / GHOST_DT) + 1;
@@ -527,7 +559,7 @@ function updateGhost() {
     gu.uB.value = mu.uB.value; gu.uFogNear.value = mu.uFogNear.value; gu.uFogFar.value = mu.uFogFar.value;
     gu.uFogColor.value.copy(mu.uFogColor.value);
     ghostMesh.visible = fade * near > 0.01;
-    const who = ghost.name === playerName() ? tr('ghostYou') : ghost.name;
+    const who = ghost.own ? tr('ghostYou') : ghost.name;
     ahead = dz > 0;
     text = `${who} ${ahead ? '▲' : '▼'} ${Math.round(Math.abs(dz))} ${tr('m')}`;
   } else if (ghostMesh) ghostMesh.visible = false;
@@ -1367,7 +1399,12 @@ function die(cause = '?') {
   const daily = isDailyRun();
   const newRec = daily ? score > day.cScore : score > day.score; // новый рекорд дня (в городе дня — его)
   // новый свой рекорд в городе дня — трек на сервер: может, теперь призрак дня — ты
-  if (daily && newRec && ghostRec.length >= 8) { ghostRecord(); uploadGhost(score, encodeTrack(ghostRec)); }
+  if (daily && newRec && ghostRec.length >= 8) {
+    ghostRecord();
+    const track = encodeTrack(ghostRec);
+    saveOwnGhost(score, track);
+    uploadGhost(score, track);
+  }
   if (!autopilot) {
     Object.assign(day, { score: Math.max(day.score, score), dist: Math.max(day.dist, meters), speed: Math.max(day.speed, runMaxSpeed), monkeys: day.monkeys + runMonkeys });
     if (daily) Object.assign(day, { cScore: Math.max(day.cScore, score), cDist: Math.max(day.cDist, meters), cSpeed: Math.max(day.cSpeed, runMaxSpeed), cMonkeys: day.cMonkeys + runMonkeys });
@@ -1381,10 +1418,9 @@ function die(cause = '?') {
   ui.overInfo.textContent = `seed ${seed} · ${info.name} (#${info.inst}) · ${tr('row')} ${info.local + 1}/${info.total}`; // для записи забега
   ui.best.textContent = newRec ? tr(daily ? 'recNewCity' : 'recNewDay') : tr(daily ? 'recCity' : 'recDay', daily ? day.cScore : day.score);
   ui.best.classList.toggle('new', newRec);
-  // город дня: «Ещё раз» вместо «Этот же сид», кнопки «Город дня» нет — мы в нём; место в таблице — когда ответит сервер
-  $('same').dataset.t = daily ? 'dailyAgain' : 'sameSeed'; // и при смене языка — та же надпись
-  $('same').textContent = tr($('same').dataset.t);
-  $('daily-over').style.display = daily ? 'none' : '';
+  // два экрана: город дня (соревнование) — «Ещё раз», рекорды, меню; свободный забег — новый город, сиды…
+  // место в таблице города дня — когда ответит сервер
+  ui.over.classList.toggle('daily', daily);
   $('over-place').textContent = '';
   // подсказка — про то, чего в этом забеге не хватило
   $('over-tip').textContent = autopilot ? '' : flow.stumbles ? tr('tipStumble') : runMaxSpeed < 100 ? tr('tipPump') : flow.maxMult < 3 ? tr('tipFlow') : '';
@@ -1431,6 +1467,7 @@ function toMainMenu() {
   ui.over.classList.remove('show');
   ui.hud.classList.remove('show');
   ui.start.classList.add('show');
+  renderDailySub();
   setPauseIcon();
 }
 function resumeGame() {
@@ -1764,7 +1801,7 @@ const SWIPE = 28; // пикселей
 canvas.addEventListener('pointerdown', (e) => {
   e.preventDefault();
   sound.unlock();
-  if (state === 'ready') { if (!$('gfx').classList.contains('show')) start(); return; }
+  if (state === 'ready') return; // в меню забег начинается кнопкой: «Город дня» или «Свободный забег»
   if (state !== 'run') return;
   rec.event('touch', { x: e.clientX, y: e.clientY });
   touch = { id: e.pointerId, x: e.clientX, x0: e.clientX, y0: e.clientY, sx: e.clientX, sy: e.clientY, st: performance.now(), t: performance.now(), swiped: false };
@@ -1808,7 +1845,7 @@ window.addEventListener('keydown', (e) => {
   if (e.target.type === 'range' && e.code !== 'Escape') return;
   if ($('lb').classList.contains('show') || $('nick').classList.contains('show')) return; // рекорды, ввод ника
   if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'KeyA', 'KeyD', 'KeyW', 'KeyS', 'Space'].includes(e.code)) e.preventDefault();
-  if (state === 'ready' && (e.code === 'Space' || e.code === 'Enter') && !$('gfx').classList.contains('show')) { start(); return; }
+  if (state === 'ready' && (e.code === 'Space' || e.code === 'Enter') && !$('gfx').classList.contains('show')) { startDaily(); return; } // главный режим
   if ($('tut-card').classList.contains('show')) { if (e.code === 'Enter' || e.code === 'Space') $('tut-card-ok').click(); return; }
   if (state === 'dead' && ui.over.classList.contains('show') && e.code === 'Enter') { restart(false); return; }
   if (e.code === 'Escape' || e.code === 'KeyP') { if (state === 'run') pauseGame(); else resumeGame(); return; }
@@ -2307,6 +2344,8 @@ function restart(sameSeed) {
   reset(dailyRun ? dailySeed() : sameSeed ? seed : newSeed());
   start();
 }
+$('free-open').addEventListener('click', (e) => { e.stopPropagation(); sound.unlock(); startFree(); });
+$('retry-daily').addEventListener('click', (e) => { e.stopPropagation(); sound.unlock(); dailyRun = true; restart(true); });
 for (const id of ['daily-open', 'daily-over']) {
   $(id).addEventListener('click', (e) => {
     e.stopPropagation(); sound.unlock();
@@ -2670,6 +2709,7 @@ function frame(now) {
 const initialSeed = Number(params.get('seed'));
 reset(Number.isFinite(initialSeed) && params.has('seed') ? initialSeed : newSeed());
 ui.start.classList.add('show');
+renderDailySub();
 // экран запуска: звук уже включён тапом — музыка стартует «под водой» и выходит из глухого,
 // когда экран растворится; сам экран ждёт, пока нарисуются первые кадры (шейдеры собраны, квартал построен)
 if (window.__sdwgAudio) {
@@ -2680,4 +2720,4 @@ if (window.__sdwgAudio) {
 requestAnimationFrame(frame);
 
 // для автотестов
-window.__game = { materials, cam, tut, flow, setGhost: (g) => { ghost = g && { ...g, pts: decodeTrack(g.track), day: dayNow() }; }, get ghostRec() { return ghostRec; }, startDaily, laneShift, setAuto: (v) => { autopilot = v; }, get state() { return state; }, pl, start, die, jump, runFile, get monkeys() { return monkeys; }, slide, get seed() { return seed; }, get world() { return world; }, get meshes() { return meshes; }, get exposure() { return exposurePass ? [exposurePass.exposure, exposurePass.avg] : null; } };
+window.__game = { materials, cam, tut, flow, setGhost: (g) => { ghost = g && { ...g, pts: decodeTrack(g.track), day: dayNow() }; }, get ghost() { return ghost; }, get ghostRec() { return ghostRec; }, startDaily, laneShift, setAuto: (v) => { autopilot = v; }, get state() { return state; }, pl, start, die, jump, runFile, get monkeys() { return monkeys; }, slide, get seed() { return seed; }, get world() { return world; }, get meshes() { return meshes; }, get exposure() { return exposurePass ? [exposurePass.exposure, exposurePass.avg] : null; } };
