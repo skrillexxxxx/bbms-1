@@ -11,7 +11,8 @@
 // и объединяется между устройствами: рекорды и обезьянки — максимум, города — все вместе, остальное — с
 // последнего устройства. Рекорды в таблице берутся из этого прогресса.
 //
-// GET  /api/leaderboard?by=dist|speed|monkeys[&token=…] → { top: [{ name, dist, speed, monkeys }], me: { name, rank, … } | null }
+// GET  /api/leaderboard?by=score|dist|speed|monkeys[&token=…] → { top: [{ name, score, dist, speed, monkeys }], me: { name, rank, … } | null }
+//      (score — очки: метры × множитель потока; главная сортировка)
 // POST { action: 'register', token, name, password? } → { ok, name } | { error: 'taken', name } | { error: 'bad' | 'weak' }
 //      (новый аккаунт — пароль обязателен; уже вошёл — смена ника и, если передан, пароля)
 // POST { action: 'login', name, password }   → { ok, name, token, data } | { error: 'wrong' } | { error: 'locked', wait }
@@ -20,6 +21,7 @@
 
 const TOP = 50;
 const MAX_DIST = 1_000_000; // м — дальше не бегают, это уже подделка
+const MAX_SCORE = 1_000_000_000; // очки
 const MAX_SPEED = 400; // км/ч
 const MAX_MONKEYS = 100_000;
 const MAX_SAVE = 64 * 1024; // байт JSON прогресса
@@ -102,7 +104,7 @@ const newToken = () => hex(crypto.getRandomValues(new Uint8Array(24)));
 // ---------- прогресс ----------
 const SKIP = (k) => k.startsWith('sdwg-lb-'); // аккаунт устройства — не прогресс
 const ours = (k) => (k.startsWith('city-') || k.startsWith('sdwg-')) && !SKIP(k);
-const MAXED = ['city-best', 'city-best-speed', 'sdwg-monkeys'];
+const MAXED = ['city-best', 'city-best-score', 'city-best-speed', 'sdwg-monkeys'];
 function parseSeeds(v) { try { const l = JSON.parse(v); return Array.isArray(l) ? l : []; } catch { return []; } }
 
 // объединить сохранённое на сервере (base) с пришедшим с устройства (inc)
@@ -128,7 +130,7 @@ export function mergeSave(base, inc) {
 }
 const clamp = (v, max) => Math.min(max, Math.max(0, Math.round(Number(v) || 0)));
 function scores(save) {
-  return { dist: clamp(save['city-best'], MAX_DIST), speed: clamp(save['city-best-speed'], MAX_SPEED), monkeys: clamp(save['sdwg-monkeys'], MAX_MONKEYS) };
+  return { score: clamp(save['city-best-score'], MAX_SCORE), dist: clamp(save['city-best'], MAX_DIST), speed: clamp(save['city-best-speed'], MAX_SPEED), monkeys: clamp(save['sdwg-monkeys'], MAX_MONKEYS) };
 }
 function parseSave(text) { try { return JSON.parse(text || '{}') || {}; } catch { return {}; } }
 
@@ -144,7 +146,7 @@ async function db(env) {
     await DB.batch([
       DB.prepare(`CREATE TABLE IF NOT EXISTS players (
         id INTEGER PRIMARY KEY, name TEXT NOT NULL, skel TEXT NOT NULL UNIQUE, tskel TEXT NOT NULL UNIQUE, pass TEXT,
-        dist INTEGER NOT NULL DEFAULT 0, speed INTEGER NOT NULL DEFAULT 0, monkeys INTEGER NOT NULL DEFAULT 0,
+        score INTEGER NOT NULL DEFAULT 0, dist INTEGER NOT NULL DEFAULT 0, speed INTEGER NOT NULL DEFAULT 0, monkeys INTEGER NOT NULL DEFAULT 0,
         save TEXT, fails INTEGER NOT NULL DEFAULT 0, lock_until INTEGER NOT NULL DEFAULT 0,
         created INTEGER NOT NULL, updated INTEGER NOT NULL)`),
       DB.prepare(`CREATE TABLE IF NOT EXISTS tokens (
@@ -154,6 +156,9 @@ async function db(env) {
       DB.prepare('CREATE INDEX IF NOT EXISTS players_monkeys ON players (monkeys DESC)'),
       DB.prepare('CREATE INDEX IF NOT EXISTS tokens_player ON tokens (player)'),
     ]);
+    // база, созданная до очков: добавить колонку (уже есть — SQLite ответит ошибкой, это нормально)
+    try { await DB.prepare('ALTER TABLE players ADD COLUMN score INTEGER NOT NULL DEFAULT 0').run(); } catch { /* колонка уже есть */ }
+    await DB.prepare('CREATE INDEX IF NOT EXISTS players_score ON players (score DESC)').run();
     ready = true;
   }
   return DB;
@@ -168,16 +173,16 @@ export async function onRequestGet({ request, env }) {
   if (!DB) return json({ error: 'nodb' }, 503);
   const url = new URL(request.url);
   const by = url.searchParams.get('by');
-  const col = by === 'speed' || by === 'monkeys' ? by : 'dist';
+  const col = ['dist', 'speed', 'monkeys'].includes(by) ? by : 'score';
   const other = col === 'dist' ? 'speed' : 'dist';
   const { results } = await DB.prepare(
-    `SELECT name, dist, speed, monkeys FROM players WHERE ${col} > 0 ORDER BY ${col} DESC, ${other} DESC, id ASC LIMIT ?`,
+    `SELECT name, score, dist, speed, monkeys FROM players WHERE ${col} > 0 ORDER BY ${col} DESC, ${other} DESC, id ASC LIMIT ?`,
   ).bind(TOP).all();
   let me = null;
   const row = await playerByToken(DB, url.searchParams.get('token'));
   if (row) {
     const above = await DB.prepare(`SELECT COUNT(*) AS n FROM players WHERE ${col} > ?`).bind(row[col]).first();
-    me = { name: row.name, dist: row.dist, speed: row.speed, monkeys: row.monkeys, rank: row[col] > 0 ? above.n + 1 : null };
+    me = { name: row.name, score: row.score, dist: row.dist, speed: row.speed, monkeys: row.monkeys, rank: row[col] > 0 ? above.n + 1 : null };
   }
   return json({ top: results, me });
 }
@@ -251,7 +256,7 @@ export async function onRequestPost({ request, env }) {
     if (text.length > MAX_SAVE) return json({ error: 'big' }, 413);
     const sc = scores(merged);
     await DB.prepare(`UPDATE players SET save = ?2, dist = MAX(dist, ?3), speed = MAX(speed, ?4), monkeys = MAX(monkeys, ?5),
-      updated = ?6 WHERE id = ?1`).bind(me.id, text, sc.dist, sc.speed, sc.monkeys, now).run();
+      score = MAX(score, ?7), updated = ?6 WHERE id = ?1`).bind(me.id, text, sc.dist, sc.speed, sc.monkeys, now, sc.score).run();
     return json({ ok: true, name: me.name, data: merged });
   }
 

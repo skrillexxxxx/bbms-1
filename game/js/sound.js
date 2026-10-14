@@ -169,7 +169,7 @@ export function createSound(enabled) {
 
   // щелчок кнопки фонарика — синтез, без файла: резкий высокий «тик» (шум выше ~5 кГц), короткий звонкий
   // стук (~3.6 кГц) и через ~22 мс тише — отскок пружины. Идёт через шину шагов: эхо улицы и реверб подземки
-  let clickBuf = null;
+  let clickBuf = null, swooshBuf = null;
   function makeClick() {
     const sr = ctx.sampleRate, n = Math.floor(sr * 0.07), buf = ctx.createBuffer(1, n, sr), d = buf.getChannelData(0);
     let hp = 0, prev = 0;
@@ -185,6 +185,28 @@ export function createSound(enabled) {
     hit(0, 1, 0.9, 0.45);
     hit(0.022, 0.4, 0.8, 0.3);
     return { buf, a: 0 };
+  }
+  // приземление в подкат: шорох-«вжух» (шум, фильтр уходит сверху вниз) и мягкий низкий удар
+  function makeSwoosh() {
+    const sr = ctx.sampleRate, n = Math.floor(sr * 0.5), buf = ctx.createBuffer(1, n, sr), d = buf.getChannelData(0);
+    let lp = 0, lp2 = 0;
+    for (let i = 0; i < n; i++) {
+      const t = i / sr;
+      const w = Math.random() * 2 - 1;
+      const fc = 5200 * Math.exp(-t / 0.12) + 500; // срез частот — сверху вниз
+      const a = 1 - Math.exp(-2 * Math.PI * fc / sr);
+      lp += a * (w - lp); lp2 += a * (lp - lp2);
+      const env = Math.min(1, t / 0.012) * Math.exp(-t / 0.16);
+      const f0 = 46 + 40 * Math.exp(-t / 0.05); // удар: высота падает
+      const thump = Math.sin(2 * Math.PI * f0 * t) * Math.exp(-t / 0.09);
+      d[i] = 0.9 * lp2 * env * 2.2 + 0.55 * thump;
+    }
+    return { buf, a: 0 };
+  }
+  function playSwoosh(k) {
+    if (!ctx || ctx.state !== 'running') return;
+    if (!swooshBuf) swooshBuf = makeSwoosh();
+    oneShot(swooshBuf, 0.55 + 0.6 * k, 0, sfx, 0.92 + 0.12 * Math.random() - 0.08 * k);
   }
   function playClick() {
     if (!ctx || ctx.state !== 'running') return;
@@ -399,6 +421,8 @@ export function createSound(enabled) {
     death() { playSfx('dead'); playDisap(); },
     // щелчок фонарика (включение)
     click() { playClick(); },
+    // приземление в подкат; k 0…1 — с какой высоты (выше — громче и ниже)
+    landSlide(k = 0.5) { playSwoosh(k); },
     // шаг; k — громкость (1 — обычный бег)
     step(k = 1) { playStep(k); },
     // приземление: два шага почти разом, громче — чем сильнее удар, тем громче

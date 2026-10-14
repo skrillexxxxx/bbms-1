@@ -64,6 +64,11 @@ const P = {
   hoverTime: 0.9,      // сколько можно зависать над пропастью за прыжок…
   hoverGravity: 0.33,  // …падая в треть силы
   fallDeath: 4,        // упал ниже пола яруса на столько — конец
+  // приземление с высоты: в подкат — перепад превращается в разгон, на ноги — спотыкаемся
+  landMin: 4.4,        // с какого перепада (от верхней точки полёта) подкат при приземлении даёт разгон
+  landGain: 2,         // разгон = landGain·√(перепад − 2) м/с: крыша → улица ≈ +18 км/ч, небоскрёб → крыша ≈ +40
+  landGrace: 0.15,     // подкат чуть позже касания (с) тоже считается приземлением в подкат
+  hardLand: 7.5,       // с такого перепада (крыша → улица) на ноги — спотыкаешься
 };
 
 const params = new URLSearchParams(location.search);
@@ -417,8 +422,61 @@ let runMonkeys = 0;      // собрано за забег
 let totalMonkeys = 0;    // собрано за всё время
 try { totalMonkeys = Number(localStorage.getItem('sdwg-monkeys')) || 0; } catch { /* приватный режим */ }
 // пришёл прогресс с сервера (другие устройства) — перечитать рекорды и счёт обезьянок
+// ---------- поток: множитель очков ----------
+// Копится, пока скользишь (подкат, бег по стене), и тем быстрее, чем выше скорость. На ногах больше FLOW_GRACE с —
+// поток рвётся, множитель снова ×1; жёсткое приземление на ноги рвёт сразу. Высокий полёт (с крыши, трамплин,
+// над пропастью) — пауза: ни копится, ни сгорает. Обычный прыжок — как бег по земле.
+// Очки = метры × множитель в момент, когда их пробежал.
+const FLOW_GRACE = 3;
+const FLOW_RATE = 0.03; // +0.03 к множителю в секунду скольжения на стартовой скорости; на вдвое большей — вдвое быстрее
+const FLOW_HIGH = 3;    // выше земли под ногами больше чем на столько — «высокий полёт», не обычный прыжок
+const flow = { mult: 1, t: 0, idle: 0, score: 0, maxMult: 1, bestT: 0, stumbles: 0 };
+let bestScore = 0;
+try { bestScore = Number(localStorage.getItem('city-best-score')) || 0; } catch { /* приватный режим */ }
+function flowReset() { Object.assign(flow, { mult: 1, t: 0, idle: 0, score: 0, maxMult: 1, bestT: 0, stumbles: 0 }); }
+function flowBreak(cause) {
+  if (cause === 'stumble') flow.stumbles++;
+  if (flow.mult > 1.05) {
+    rec.event('flowBreak', { cause, z: pl.z, mult: +flow.mult.toFixed(2), t: +flow.t.toFixed(1) });
+    hudFlowBroke();
+  }
+  flow.mult = 1; flow.t = 0; flow.idle = 0;
+}
+// каждый кадр забега; dz — сколько метров пробежали за кадр
+function flowStep(dt, dz) {
+  const active = sliding() || pl.wall;
+  const high = !pl.grounded && !pl.wall && (pl.launch || pl.y - supportAt(pl.x, pl.z, pl.y) > FLOW_HIGH);
+  if (active) {
+    flow.idle = 0;
+    flow.t += dt;
+    flow.mult += dt * FLOW_RATE * speedNow() / P.speedStart;
+    flow.bestT = Math.max(flow.bestT, flow.t);
+    flow.maxMult = Math.max(flow.maxMult, flow.mult);
+  } else if (!high && (flow.idle += dt) >= FLOW_GRACE) flowBreak('idle');
+  flow.score += Math.max(0, dz) * flow.mult;
+}
+
+// HUD: очки, ×множитель и полоска до обрыва; меняем DOM, только когда текст правда поменялся
+const hudEl = { score: $('score'), flow: $('flow'), mult: $('mult'), bar: $('flow-bar').firstChild, pop: $('pop') };
+let hudLast = '';
+function hudFlow() {
+  const sc = String(Math.floor(flow.score)), m = `×${flow.mult.toFixed(1)}`;
+  const key = sc + m;
+  if (key !== hudLast) { hudLast = key; hudEl.score.textContent = sc; hudEl.mult.textContent = m; }
+  hudEl.flow.classList.toggle('off', flow.mult < 1.05);
+  hudEl.bar.style.transform = `scaleX(${Math.max(0, 1 - flow.idle / FLOW_GRACE).toFixed(3)})`;
+}
+function hudFlowBroke() {
+  hudEl.flow.classList.remove('broke'); void hudEl.flow.offsetWidth; hudEl.flow.classList.add('broke');
+}
+function hudPop(text) {
+  hudEl.pop.textContent = text;
+  hudEl.pop.classList.remove('go'); void hudEl.pop.offsetWidth; hudEl.pop.classList.add('go');
+}
+
 window.addEventListener('sdwg-progress', () => {
   try {
+    bestScore = Math.max(bestScore, Number(localStorage.getItem('city-best-score')) || 0);
     best = Math.max(best, Number(localStorage.getItem('city-best')) || 0);
     bestSpeed = Math.max(bestSpeed, Number(localStorage.getItem('city-best-speed')) || 0);
     totalMonkeys = Math.max(totalMonkeys, Number(localStorage.getItem('sdwg-monkeys')) || 0);
@@ -427,8 +485,8 @@ window.addEventListener('sdwg-progress', () => {
 const pl = {
   x: 0, z: 0, y: 0, vx: 0, vy: 0, grounded: true,
   lane: 6, pending: 0, pendT: 0,
-  coyote: 0, jumpBuf: 0, slideT: 0, slideQueued: false, boost: 0, pump: 0, pumpT: -9, hopKeep: false,
-  slideChain: 0, slideEndAt: -9,
+  coyote: 0, jumpBuf: 0, slideT: 0, slideQueued: false, boost: 0, pump: 0, pumpT: -9,
+  slideChain: 0, slideEndAt: -9, peakY: 0, landT: -9, landDrop: 0, stumbleT: 0,
   wall: 0, wallT: 0, wallCool: 0, wallLast: 0, autoAttach: 0, autoT: 0, grabT: 0, launch: null, glideT: 0, longT: 0, longG: 1, hover: 0, longLane: null,
 };
 const cam = { roll: 0, yaw: 0, pitch: 0, dip: 0, slide: 0, bob: 0, fov: 82, wallStep: 0, slideSide: 1, lookY: 1.2, vx: 0, lines: 0, base: 0, wall: 0, fly: 0, baseV: 0, lookV: 0 };
@@ -453,6 +511,7 @@ function nightAmount() {
 }
 let state = 'ready';
 let shake = 0;
+let linesKick = 0; // всплеск полос скорости (приземление в подкат), гаснет за ~0.6 с
 
 function newSeed() { return Math.floor(Math.random() * 1e6); }
 
@@ -471,8 +530,8 @@ function reset(s) {
   if (params.get('under')) world.featOverride = Object.fromEntries(params.get('under').split(',').map((k) => [k, true]));
   Object.assign(pl, {
     x: 6 * CELL + CELL / 2, z: ROW * 0.5, y: 0, vx: 0, vy: 0, grounded: true,
-    coyote: 0, jumpBuf: 0, slideT: 0, slideQueued: false, boost: 0, pump: 0, pumpT: -9, hopKeep: false,
-    slideChain: 0, slideEndAt: -9, wall: 0, wallT: 0, wallCool: 0, wallLast: 0, autoAttach: 0, autoT: 0, grabT: 0, launch: null, glideT: 0, longT: 0, hover: 0, longLane: null, fromLong: false,
+    coyote: 0, jumpBuf: 0, slideT: 0, slideQueued: false, boost: 0, pump: 0, pumpT: -9,
+    slideChain: 0, slideEndAt: -9, peakY: 0, landT: -9, landDrop: 0, stumbleT: 0, wall: 0, wallT: 0, wallCool: 0, wallLast: 0, autoAttach: 0, autoT: 0, grabT: 0, launch: null, glideT: 0, longT: 0, hover: 0, longLane: null, fromLong: false,
   });
   Object.assign(pl, { lane: 6, pending: 0, pendT: 0 });
   Object.assign(cam, { roll: 0, yaw: 0, pitch: 0, dip: 0, slide: 0, bob: 0, lookY: 1.2, vx: 0, lines: 0, base: 0, wall: 0, fly: 0, baseV: 0, lookV: 0 });
@@ -733,7 +792,6 @@ function startWallRun(d) {
   pl.grounded = false;
   pl.coyote = 0;
   pl.boost = Math.min(P.boostMax, pl.boost + P.wallBoost);
-  pl.hopKeep = true;
   if (sliding()) pl.slideT = 0;
   cam.pitch -= 0.03;
 }
@@ -748,7 +806,6 @@ function wallKick() {
   pl.vy = P.wallJumpV * jumpScale(speedNow());
   pl.jumpBuf = 0; pl.pending = 0;
   pl.boost = Math.min(P.boostMax, pl.boost + P.wallJumpBoost);
-  pl.hopKeep = true;
   const open = (lane) => { const v = world.cellAt(wrapX(laneX(lane)), pl.z); return v !== WALL && v !== RUNWALL; };
   let target = open(pl.lane + d) ? pl.lane + d : pl.lane, attach = 0;
   for (let k = 1; k <= 3; k++) {
@@ -792,7 +849,6 @@ function startLaunch() {
   pl.launch = { z0: pl.z, z1: (ri + LAUNCH_ROWS) * ROW + 1.5, y0: pl.y, y1, yc: Math.max(pl.y, y1) + 12 };
   pl.grounded = false;
   pl.boost = Math.min(P.boostMax, pl.boost + 3);
-  pl.hopKeep = true;
   shake = Math.max(shake, 0.12);
 }
 
@@ -807,7 +863,7 @@ function launchStep(dt, v) {
   pl.x += pl.vx * dt;
   if (t >= 1) {
     cam.dip = Math.max(cam.dip, 0.55);
-    pl.y = L0.y1; pl.vy = 0; pl.grounded = true; pl.hopKeep = false;
+    pl.y = L0.y1; pl.vy = 0; pl.grounded = true; pl.peakY = pl.y; // после трамплина — мягко, без бонуса и без спотыкания
     pl.launch = null;
   }
 }
@@ -842,7 +898,7 @@ function physicsStep(dt) {
       // не смерть, а потеря скорости. С земли без прыжка — врезаешься, как раньше
       pl.y = hi; pl.vy = 0; pl.grounded = true;
       if (pl.wall) endWallRun();
-      pl.boost = 0; pl.hopKeep = false;
+      pl.boost = 0;
       pl.grabT = P.grabTime;
       rec.event('grab', { z: pl.z, y: pl.y });
       lampHit(0.6);
@@ -903,11 +959,14 @@ function physicsStep(dt) {
       // (обычный прыжок на ровном месте не в счёт: на скорости он тоже падает быстрее)
       const hard = -pl.vy / Math.sqrt(jumpScale(v));
       if (hard > 15) lampHit(hard > 22 ? 1 : 0.6);
-      pl.y = ground; pl.vy = 0; pl.grounded = true; pl.hopKeep = false;
+      pl.y = ground; pl.vy = 0; pl.grounded = true;
       if (pl.wall) endWallRun();
       pl.wallLast = 0;
       // приземлились после длинного прыжка, не долетев до стены, — подсказка больше не нужна
       if (pl.fromLong) { pl.fromLong = false; pl.autoAttach = 0; pl.longLane = null; }
+      // перепад от верхней точки полёта: с высоты — в подкат (разгон) или на ноги (спотыкаемся)
+      pl.landDrop = pl.peakY - ground; pl.landT = gameTime; pl.peakY = ground;
+      landed();
       if (pl.slideQueued) { pl.slideQueued = false; startSlide(); }
     }
     // сорвались в пропасть / упали в бассейн
@@ -936,10 +995,15 @@ function physicsStep(dt) {
   // серия подкатов рвётся, если долго не подкатывались
   if (!sliding() && gameTime - pl.slideEndAt > 0.6) pl.slideChain = 0;
 
-  // инерция разгона: тает на земле, держится в воздухе после прыжка из подката
-  if (!(pl.hopKeep && !pl.grounded) && !sliding() && !pl.wall) pl.boost = Math.max(0, pl.boost - P.boostDecay * dt);
-  // накачка держится, пока скользим (и в прыжке из подката); дальше плавно тает до обычной скорости
-  if (pl.pump > 0 && !sliding() && !(pl.hopKeep && !pl.grounded)) pl.pump = Math.max(0, pl.pump - Math.max(2, pl.pump * P.pumpDecay) * dt);
+  // разгон и накачка держатся, пока скользим — в подкате и на стене — и в любом полёте
+  // (прыжок, падение с крыши); тают только на ногах по земле
+  const holds = sliding() || pl.wall || !pl.grounded;
+  if (!holds) pl.boost = Math.max(0, pl.boost - P.boostDecay * dt);
+  if (pl.pump > 0 && !holds) pl.pump = Math.max(0, pl.pump - Math.max(2, pl.pump * P.pumpDecay) * dt);
+  // приземлились с высоты на ноги и не подкатились сразу — спотыкаемся
+  if (pl.stumbleT > 0 && (pl.stumbleT -= dt) <= 0) stumble();
+  // верхняя точка полёта (на стене и на земле — текущая высота)
+  pl.peakY = pl.grounded || pl.wall ? pl.y : Math.max(pl.peakY, pl.y);
 
   pl.coyote = pl.grounded ? P.coyote : pl.coyote - dt;
   pl.jumpBuf -= dt;
@@ -1002,11 +1066,41 @@ function physicsStep(dt) {
     }
     if (fromSlide) {
       // slide-hop: прыжок из подката сохраняет разгон
-      if (!blocksBody(solidsAt(pl.x, pl.z + r), pl.y, P.bodyStand)) { pl.slideT = 0; pl.hopKeep = true; }
+      if (!blocksBody(solidsAt(pl.x, pl.z + r), pl.y, P.bodyStand)) pl.slideT = 0;
       else pl.vy = 0; // под мостом прыгать некуда
     }
     if (pl.vy > 0) cam.pitch += 0.05;
   }
+}
+
+// приземление после полёта: уже в подкате — разгон сразу; с большой высоты на ноги — ждём подкат
+// ещё landGrace секунд, не дождались — спотыкаемся
+function landed() {
+  if (pl.landDrop < P.landMin) return;
+  if (sliding()) landSlide();
+  else if (pl.landDrop >= P.hardLand) pl.stumbleT = P.landGrace;
+}
+// приземлились в подкат: высота → скорость
+function landSlide() {
+  const drop = pl.landDrop;
+  const gain = P.landGain * Math.sqrt(drop - 2);
+  pl.pump += gain;
+  pl.landT = -9; pl.stumbleT = 0;
+  rec.event('landSlide', { z: pl.z, drop: +drop.toFixed(2), gain: +gain.toFixed(2) });
+  sound.landSlide(Math.min(1, (drop - 2) / 10));
+  linesKick = 0.9; // всплеск полос скорости
+  hudPop(`+${kmh(gain)} ${tr('kmh')}`);
+  if (tut.landTodo) tutLandSave(); // приземление в подкат освоено — подсказка больше не нужна
+}
+// жёстко на ноги: скорость проседает (как после зацепа), накачка — вдвое, поток рвётся
+function stumble() {
+  rec.event('stumble', { z: pl.z, drop: +pl.landDrop.toFixed(2) });
+  pl.grabT = P.grabTime;
+  pl.pump *= 0.5; pl.boost = 0;
+  cam.dip = Math.max(cam.dip, 0.55);
+  cam.pitch -= 0.1;
+  lampHit(1);
+  flowBreak('stumble');
 }
 
 function startSlide() {
@@ -1020,6 +1114,7 @@ function startSlide() {
   if (sliding() && pl.grounded && gap < P.pumpWindow) pl.pump += P.pumpGain * (1 - gap / P.pumpWindow);
   pl.slideT = P.slideTime;
   pl.boost = Math.min(P.boostMax, pl.boost + P.slideBoost);
+  if (pl.grounded && gameTime - pl.landT <= P.landGrace && pl.landDrop >= P.landMin) landSlide();
 }
 
 function slide() {
@@ -1122,7 +1217,7 @@ function die(cause = '?') {
   if (state !== 'run') return;
   rec.event('die', { cause, z: pl.z, x: pl.x, y: pl.y, lane: pl.lane });
   tutHide(); tut.kTo = tut.k = 1;
-  if (tut.step === 'done' || tut.step === 'under') tut.step = null;
+  if (tut.step === 'done' || tut.step === 'under' || tut.step === 'land') tut.step = null;
   sound.death();
   if (slideSnd) { slideSnd = false; sound.slide(false, true); }
   state = 'dead';
@@ -1144,10 +1239,21 @@ function die(cause = '?') {
     bestSpeed = runMaxSpeed;
     try { localStorage.setItem('city-best-speed', String(bestSpeed)); } catch { /* ignore */ }
   }
+  // очки — главный рекорд
+  const score = Math.floor(flow.score);
+  const newScoreRecord = score > bestScore;
+  if (newScoreRecord) {
+    bestScore = score;
+    try { localStorage.setItem('city-best-score', String(bestScore)); } catch { /* ignore */ }
+  }
   const info = world.infoAt(pl.z + 1);
-  ui.overDist.textContent = `${meters} ${tr('m')}`;
+  ui.overDist.textContent = String(score);
+  $('over-run').innerHTML = tr('runLine', meters, flow.maxMult.toFixed(1), Math.round(flow.bestT));
   ui.overInfo.textContent = `seed ${seed} · ${info.name} (#${info.inst}) · ${tr('row')} ${info.local + 1}/${info.total}`;
-  ui.best.textContent = tr('bestLine', best) + (runMonkeys || totalMonkeys ? tr('monkLine', runMonkeys, totalMonkeys) : '');
+  ui.best.textContent = tr('bestLine', bestScore, best) + (newScoreRecord ? tr('newRec') : '')
+    + (runMonkeys || totalMonkeys ? tr('monkLine', runMonkeys, totalMonkeys) : '');
+  // подсказка — про то, чего в этом забеге не хватило
+  $('over-tip').textContent = autopilot ? '' : flow.stumbles ? tr('tipStumble') : runMaxSpeed < 100 ? tr('tipPump') : flow.maxMult < 3 ? tr('tipFlow') : '';
   ui.speedRec.textContent = tr('speedLine', runMaxSpeed, bestSpeed) + (newSpeedRecord ? tr('newRec') : '');
   if (!autopilot) syncProgress(); // прогресс и рекорды — на сервер (если вошёл в аккаунт)
   setTimeout(() => { if (state === 'dead' && !ui.seeds.classList.contains('show')) ui.over.classList.add('show'); }, 450);
@@ -1228,6 +1334,7 @@ function start() {
   sound.muffle(false);
   runMonkeys = 0;
   runMaxSpeed = 0;
+  flowReset();
   updateMonkeyHud();
   rec.begin({
     seed, url: location.href, ua: navigator.userAgent,
@@ -1256,13 +1363,16 @@ const TUT_TEXT = {
   wall: ['tWall', 'tWallT', 'tWallK'],
   kick: ['tKick', 'tKickT', 'tKickK'],
   under: ['tUnder', 'tUnderT', 'tUnderK'],
+  land: ['tLand', 'tLandT', 'tLandK'],
   done: ['tDone', '', ''],
 };
-const tut = { step: null, t: 0, shown: null, k: 1, kTo: 1, wallD: 0, doneT: 0, muf: false, underTodo: false };
+const tut = { step: null, t: 0, shown: null, k: 1, kTo: 1, wallD: 0, doneT: 0, muf: false, underTodo: false, landTodo: false };
 try { tut.underTodo = localStorage.getItem('sdwg-tut-under') !== '1' && params.get('tut') !== '0'; } catch { /* приватный режим */ }
+try { tut.landTodo = localStorage.getItem('sdwg-tut-land') !== '1' && params.get('tut') !== '0'; } catch { /* приватный режим */ }
 function tutSaved() { try { return localStorage.getItem('sdwg-tut') || ''; } catch { return 'done'; } }
 // новый забег начнётся с первых шагов обучения — нужен прямой проспект (и после смерти)
 function tutWantsAvenue() { return !autopilot && params.get('tut') !== '0' && !['done', 'wall'].includes(tutSaved()); }
+function tutLandSave() { tut.landTodo = false; try { localStorage.setItem('sdwg-tut-land', '1'); } catch { /* приватный режим */ } }
 function tutUnderSave() { tut.underTodo = false; try { localStorage.setItem('sdwg-tut-under', '1'); } catch { /* приватный режим */ } }
 function tutSave(v) { try { localStorage.setItem(TUT_KEY, v); } catch { /* приватный режим */ } }
 // true — обучение идёт с первых шагов (проспект не кончается)
@@ -1350,6 +1460,14 @@ function tutUpdate(dt) {
   if (!tut.step && state === 'run' && !autopilot && tut.underTodo && -cam.base > 2 && flankedPit(speedNow())) {
     tut.step = 'under'; tut.t = 1; $('tut').classList.add('show'); $('tut').style.visibility = '';
   }
+  // первое падение с высоты (крыша → улица и выше) — один раз показать приземление в подкат
+  if (!tut.step && state === 'run' && !autopilot && tut.landTodo && !pl.grounded && !pl.wall && !pl.launch && !pl.slideQueued && pl.vy < 0) {
+    const below = supportAt(pl.x, pl.z, pl.y);
+    if (below > -INF && pl.peakY - below >= P.hardLand && pl.y - below > 2) {
+      tut.step = 'land'; tut.t = 0; $('tut').classList.add('show'); $('tut').style.visibility = '';
+      tutShow('land', 'down'); tut.kTo = 0.3;
+    }
+  }
   if (!tut.step) return;
   $('tut').style.visibility = state === 'run' ? '' : 'hidden';
   if (state !== 'run') return;
@@ -1372,6 +1490,10 @@ function tutUpdate(dt) {
       if (tut.t > 0.5) tutWallHints(v, false);
       break;
     }
+    case 'land':
+      // свайпнул вниз (подкат встанет при касании) или уже на земле — время обратно; засчитает landSlide
+      if (pl.slideQueued || pl.grounded) { tutHide(); tut.kTo = 1; tut.step = null; }
+      break;
     case 'under': {
       // подземка: длинный провал вдоль красной стены — один раз показать, что по ней бегут
       if (-cam.base < 1) { tutHide(); tut.kTo = 1; tut.step = null; break; } // вышли из подземки — до следующего раза
@@ -1403,8 +1525,8 @@ $('tut-card').addEventListener('pointerdown', (e) => e.stopPropagation());
 $('help-tut').addEventListener('click', (e) => {
   e.stopPropagation();
   tutSave('');
-  try { localStorage.removeItem('sdwg-tut-under'); } catch { /* приватный режим */ }
-  tut.underTodo = true;
+  try { localStorage.removeItem('sdwg-tut-under'); localStorage.removeItem('sdwg-tut-land'); } catch { /* приватный режим */ }
+  tut.underTodo = true; tut.landTodo = true;
   $('help').classList.remove('show');
   if (state === 'ready') start();
 });
@@ -1413,6 +1535,11 @@ $('help-tut').addEventListener('click', (e) => {
 const AHEAD = 10;
 function autopilotStep() {
   if (pl.launch) return;
+  // с высоты — в подкат: свайп вниз перед самой землёй
+  if (!pl.grounded && !pl.wall && !pl.slideQueued && pl.vy < 0) {
+    const below = supportAt(pl.x, pl.z, pl.y);
+    if (below > -INF && pl.peakY - below >= P.landMin && pl.y - below < 1.5) slide();
+  }
   const ri = Math.floor(pl.z / ROW);
   const rows = world.rows, reach = world.reach;
   let end = Math.min(rows.length - 1, ri + AHEAD);
@@ -2187,16 +2314,19 @@ function frame(now) {
     const n = Math.ceil(dt * Math.max(120, speedNow() / 0.3));
     for (let i = 0; i < n && state === 'run'; i++) { if (autopilot) autopilotStep(); physicsStep(dt / n); }
     ensureWorld();
+    if (state === 'run') flowStep(dt, pl.z - zBefore);
     ui.dist.textContent = `${runMeters()} ${tr('m')}`;
     const sp = kmh(speedNow());
     if (sp > runMaxSpeed) runMaxSpeed = sp;
     ui.spd.textContent = `${sp} ${tr('kmh')}`;
+    hudFlow();
     recordFrame();
     collectMonkeys(zBefore);
     if (pl.grounded && !wasGroundedSnd) {
       sound.land(Math.min(1, Math.max(0, (-airVy - 4) / 16)));
       const drop = airPeak - pl.y;
-      if (airLaunch || (drop >= SOFT_FALL && drop < HARD_FALL)) sound.sfx('softFall'); // после трамплина — мягко на крышу
+      // в подкат с высоты — мягко (и «вжух» из landSlide), на ноги — жёстко
+      if (airLaunch || (drop >= SOFT_FALL && (drop < HARD_FALL || sliding()))) sound.sfx('softFall'); // после трамплина — мягко на крышу
       else if (drop >= HARD_FALL) sound.sfx('hardFall');
       airLaunch = false;
     }
@@ -2345,7 +2475,8 @@ function frame(now) {
     // полосы копятся медленно: на всю силу — только на длинной серии подкатов
     // полосы скорости — от скорости: появляются выше обычного бега (~13 м/с), на ~32 м/с — во всю силу
     const vNow = speedNow();
-    const linesT = Math.max(Math.min(1, Math.max(0, (vNow - 13) / 19)), pl.launch ? 0.45 : 0);
+    linesKick = Math.max(0, linesKick - dt * 1.4);
+    const linesT = Math.max(Math.min(1, Math.max(0, (vNow - 13) / 19)), pl.launch ? 0.45 : 0, linesKick);
     cam.lines = damp(cam.lines, run * linesT, linesT > 0 ? 6 : 2.5, dt);
     blurPass.uniforms.uLines.value = cam.lines;
     blurPass.uniforms.uTime.value = gameTime;
@@ -2392,4 +2523,4 @@ if (window.__sdwgAudio) {
 requestAnimationFrame(frame);
 
 // для автотестов
-window.__game = { materials, cam, tut, laneShift, setAuto: (v) => { autopilot = v; }, get state() { return state; }, pl, start, die, jump, runFile, get monkeys() { return monkeys; }, slide, get seed() { return seed; }, get world() { return world; }, get meshes() { return meshes; }, get exposure() { return exposurePass ? [exposurePass.exposure, exposurePass.avg] : null; } };
+window.__game = { materials, cam, tut, flow, laneShift, setAuto: (v) => { autopilot = v; }, get state() { return state; }, pl, start, die, jump, runFile, get monkeys() { return monkeys; }, slide, get seed() { return seed; }, get world() { return world; }, get meshes() { return meshes; }, get exposure() { return exposurePass ? [exposurePass.exposure, exposurePass.avg] : null; } };

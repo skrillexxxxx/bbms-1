@@ -211,7 +211,7 @@ if (!loggedIn() && !params.has('auto') && params.get('nick') !== '0') {
 
 // ---------- экран «Рекорды»: таблица, сортировка — по заголовку колонки ----------
 const lb = $('lb'), body = $('lb-body'), meEl = $('lb-me'), noteEl = $('lb-note');
-let by = 'dist', back = null, reqN = 0;
+let by = 'score', back = null, reqN = 0;
 
 function cell(text, cls) {
   const td = document.createElement('td');
@@ -222,8 +222,8 @@ function cell(text, cls) {
 function row(place, x, mine) {
   const tr = document.createElement('tr');
   if (mine) tr.className = 'me';
-  tr.append(cell(place ?? '—', 'place'), cell(x.name, 'name'), cell(x.dist, 'num'), cell(x.speed, 'num'), cell(x.monkeys || 0, 'num'));
-  tr.children[{ dist: 2, speed: 3, monkeys: 4 }[by]].classList.add('on');
+  tr.append(cell(place ?? '—', 'place'), cell(x.name, 'name'), cell(x.score || 0, 'num'), cell(x.dist, 'num'), cell(x.speed, 'num'), cell(x.monkeys || 0, 'num'));
+  tr.children[{ score: 2, dist: 3, speed: 4, monkeys: 5 }[by]].classList.add('on');
   return tr;
 }
 function note(text) {
@@ -276,7 +276,7 @@ async function loadBoard() {
   if (data.me && !meShown) {
     const gap = document.createElement('tr');
     gap.className = 'gap';
-    gap.append(cell('···'), cell(''), cell(''), cell(''), cell(''));
+    gap.append(cell('···'), cell(''), cell(''), cell(''), cell(''), cell(''));
     body.append(gap, row(data.me.rank, data.me, true));
   }
   // своя строка — посередине списка (не под шапкой)
