@@ -10,7 +10,7 @@ import {
   canStep, canJumpOver, aliveBackward, walk, lv,
 } from './world.js';
 import './onboard.js';
-import { openBoard, syncProgress, boardPlace, loadGhost, uploadGhost, playerName } from './leaderboard.js';
+import { openBoard, syncProgress, boardPlace, loadGhosts, uploadGhost, playerName } from './leaderboard.js';
 import { createMaterial, createStarMaterial, createDepthMaterial, createSunDepthMaterial, createSparkMaterial, createConeMaterial, buildInstanceMesh } from './render.js';
 import { createSound } from './sound.js';
 import { createRecorder, shareFile } from './recorder.js';
@@ -475,19 +475,23 @@ function startFree() {
 function renderDailySub() {
   const left = 86400e3 - ((Date.now() + 3 * 3600e3) % 86400e3), min = Math.ceil(left / 60e3);
   $('daily-sub').textContent = needsTutorial() ? tr('dailyFirstTut') : tr('dailySub', Math.floor(min / 60), min % 60);
+  if (!needsTutorial()) refreshGhosts(120e3); // призраки — заранее, к старту уже будут
 }
 setInterval(() => { if (state === 'ready') renderDailySub(); }, 30e3);
 window.addEventListener('sdwg-lang', renderDailySub);
 const isDailyRun = () => dailyRun && seed === dailySeed() && !autopilot;
 
-// ---------- призрак города дня: обезьянка бежит по траектории лучшего забега дня ----------
-// Свой забег в городе дня пишется каждые 0.1 с: x, y, z (×100) и подкат. Побил свой рекорд дня — трек уходит на сервер.
-// Перед забегом скачивается трек лидера дня; призрак бежит по нему в том же темпе — по времени от старта.
-// Смотрит назад, на тебя; разбился — растворяется. В HUD слева: имя и насколько он впереди (▲) или позади (▼).
+// ---------- призраки города дня: обезьянки бегут по лучшим забегам дня ----------
+// Свой забег в городе дня пишется каждые 0.1 с: x, y, z (×100) и подкат. Побил свой рекорд дня — трек уходит на сервер
+// и остаётся на телефоне. Призраки — топ дня с сервера (до 5) и твой лучший; у каждого свой цвет и ник над головой
+// (свой — «ты»). Бегут по времени от старта: трек, пришедший с опозданием, просто появляется там, где этот игрок был
+// в эту секунду. Смотрят назад, на тебя; разбился — растворяется. В HUD слева — ближайший впереди (кого догонять).
 const GHOST_DT = 0.1, GHOST_MAX = 9000; // 15 минут
-let ghostRec = [];   // свой забег: [x, y, z, подкат] подряд
-let ghost = null;    // лидер дня: { name, score, pts: [x, y, z, подкат] × n, day }
-let ghostMesh = null;
+const GHOST_COLORS = ['#ff2d33', '#2f7bff', '#ff9f0a', '#1fbf5a', '#b04dff', '#00b3c2']; // по месту: лидер — красный
+let ghostRec = [];       // свой забег: [x, y, z, подкат] подряд
+let ghosts = [];         // [{ key, name, score, own, color, pts, mat, mesh, label }]
+let serverGhosts = [], ghostsDay = '', ghostsAt = -1e9;
+const ghostLayer = $('ghost-labels');
 function encodeTrack(a) { // разностями от предыдущей точки — числа короткие
   const out = new Array(a.length);
   for (let i = 0; i < a.length; i++) out[i] = i < 4 ? a[i] : a[i] - a[i - 4];
@@ -498,48 +502,93 @@ function decodeTrack(t) {
   for (let i = 0; i < t.length; i++) { const k = i % 4; acc[k] += t[i]; pts[i] = k === 3 ? acc[k] : acc[k] / 100; }
   return pts;
 }
+const goodTrack = (g) => g && Array.isArray(g.track) && g.track.length >= 8 && g.track.length % 4 === 0;
 // свой лучший трек дня — ещё и на телефоне: призрак есть и без аккаунта, и сразу после рекорда, не дожидаясь сервера.
 // Ключ не sdwg-/city- — в синхронизацию прогресса не идёт (трек большой)
 const OWN_GHOST = 'ghost-own';
 function ownGhost() {
-  try { const g = JSON.parse(localStorage.getItem(OWN_GHOST) || 'null'); return g && g.day === dayNow() ? g : null; } catch { return null; }
-}
-// призрак — лучший из того, что знаем: свой рекорд дня или лидер дня
-function offerGhost(g, own) {
-  const day = dayNow();
-  if (ghost && ghost.day !== day) ghost = null;
-  if (!g || !Array.isArray(g.track) || g.track.length < 8) return;
-  if (ghost && ghost.score >= g.score) return;
-  ghost = { name: g.name, score: g.score, pts: decodeTrack(g.track), day, own };
-}
-function refreshGhost() {
-  offerGhost(ownGhost(), true);
-  loadGhost().then((g) => offerGhost(g, !!g && g.name === playerName()));
+  try { const g = JSON.parse(localStorage.getItem(OWN_GHOST) || 'null'); return g && g.day === dayNow() && goodTrack(g) ? g : null; } catch { return null; }
 }
 function saveOwnGhost(score, track) {
-  const g = { day: dayNow(), score, track };
-  try { localStorage.setItem(OWN_GHOST, JSON.stringify(g)); } catch { /* места нет — только на сервер */ }
-  offerGhost(g, true);
+  try { localStorage.setItem(OWN_GHOST, JSON.stringify({ day: dayNow(), score, track })); } catch { /* места нет — только на сервер */ }
+  buildGhosts();
 }
+// список призраков: топ сервера + свой (с телефона, если там лучше или на сервере ещё нет); меши и подписи — переиспользуем
+function buildGhosts() {
+  const day = dayNow();
+  if (ghostsDay !== day) { serverGhosts = []; ghostsDay = day; }
+  const me = playerName(), own = ownGhost();
+  const list = serverGhosts.filter(goodTrack).map((g) => ({ ...g, own: !!me && g.name === me }));
+  if (own) {
+    const i = list.findIndex((g) => g.own);
+    if (i < 0) list.push({ name: me, score: own.score, track: own.track, own: true });
+    else if (own.score > list[i].score) list[i] = { ...list[i], score: own.score, track: own.track };
+  }
+  list.sort((a, b) => b.score - a.score);
+  const old = new Map(ghosts.map((e) => [e.key, e]));
+  ghosts = list.slice(0, GHOST_COLORS.length).map((g, i) => {
+    const key = g.own ? '\u0000me' : g.name;
+    let e = old.get(key);
+    if (e) old.delete(key);
+    else {
+      e = { key, mat: materials.ghost.clone(), mesh: null, label: document.createElement('div') };
+      e.label.className = 'ghost-label';
+      ghostLayer.append(e.label);
+    }
+    if (!e.pts || e.score !== g.score) e.pts = decodeTrack(g.track);
+    Object.assign(e, { name: g.name, score: g.score, own: g.own, color: GHOST_COLORS[i] });
+    // цвет — как есть (sRGB): шейдер сам переводит в линейный для блума
+    e.mat.uniforms.uColor.value.setHex(parseInt(e.color.slice(1), 16), THREE.LinearSRGBColorSpace);
+    e.label.textContent = g.own ? tr('ghostYou') : g.name;
+    e.label.style.color = e.color;
+    return e;
+  });
+  for (const e of old.values()) { if (e.mesh) scene.remove(e.mesh); e.mat.dispose(); e.label.remove(); }
+}
+// свои — сразу, с сервера — не чаще раза в maxAge мс (из меню — заранее, чтобы к старту уже были)
+function refreshGhosts(maxAge = 30e3) {
+  buildGhosts();
+  if (performance.now() - ghostsAt < maxAge) return;
+  ghostsAt = performance.now();
+  const day = dayNow();
+  loadGhosts().then((list) => {
+    if (!list || day !== dayNow()) return;
+    serverGhosts = list; ghostsDay = day;
+    buildGhosts();
+  });
+}
+window.addEventListener('sdwg-lang', () => { for (const e of ghosts) if (e.own) e.label.textContent = tr('ghostYou'); });
 function ghostRecord() {
   const n = Math.floor((gameTime - runStartT) / GHOST_DT) + 1;
   while (ghostRec.length < n * 4 && ghostRec.length < GHOST_MAX * 4) {
     ghostRec.push(Math.round(pl.x * 100), Math.round(pl.y * 100), Math.round(pl.z * 100), sliding() ? 1 : 0);
   }
 }
+// точка мира → экран: тот же изгиб, что в шейдере обезьянок, и камера
+const _gv = new THREE.Vector3();
+function bentToScreen(fx, fy, fz) {
+  const uB = materials.monkey.uniforms.uB.value, s = Math.exp(-fz / LZ), r = L * s, phi = fx / L;
+  return _gv.set(r * Math.sin(phi), uB + (fy - uB) * s, r * Math.cos(phi)).project(camera);
+}
 const ghostTag = $('ghost-tag');
 let ghostTagLast = '';
-function updateGhost() {
-  const show = ghost && dailyRun && (state === 'run' || state === 'paused') && ghost.day === dayNow() && seed === dailySeed(ghost.day);
-  let text = '', ahead = false;
-  if (show && !ghostMesh && monkeyGeometry()) {
-    ghostMesh = new THREE.Mesh(monkeyGeometry(), materials.ghost);
-    ghostMesh.frustumCulled = false;
-    ghostMesh.renderOrder = 3;
-    scene.add(ghostMesh);
-  }
-  if (show && ghostMesh) {
-    const p = ghost.pts, n = p.length / 4;
+// зовётся после камеры — подписи стоят ровно над головами
+function updateGhosts() {
+  const show = dailyRun && (state === 'run' || state === 'paused') && seed === dailySeed() && ghosts.length > 0;
+  ghostLayer.classList.toggle('show', show && state === 'run'); // на паузе ники не лезут на меню
+  let chase = null; // ближайший впереди; если впереди никого — ближайший позади
+  if (show) camera.updateMatrixWorld();
+  const mu = materials.monkey.uniforms, cw = canvas.clientWidth, ch = canvas.clientHeight;
+  for (const e of ghosts) {
+    if (!show) { if (e.mesh) e.mesh.visible = false; continue; }
+    if (!e.mesh) {
+      if (!monkeyGeometry()) continue;
+      e.mesh = new THREE.Mesh(monkeyGeometry(), e.mat);
+      e.mesh.frustumCulled = false;
+      e.mesh.renderOrder = 3;
+      scene.add(e.mesh);
+    }
+    const p = e.pts, n = p.length / 4;
     const t = (gameTime - runStartT) / GHOST_DT;
     const i = Math.max(0, Math.min(n - 2, Math.floor(t))), f = Math.min(1, t - i);
     // x — по кругу: на шве не пролетаем через весь мир
@@ -548,23 +597,33 @@ function updateGhost() {
     const gx = x0 + (x1 - x0) * f, gy = p[i * 4 + 1] + (p[i * 4 + 5] - p[i * 4 + 1]) * f, gz = p[i * 4 + 2] + (p[i * 4 + 6] - p[i * 4 + 2]) * f;
     const slide = p[(f < 0.5 ? i : i + 1) * 4 + 3] > 0;
     let dx = gx - pl.x; dx -= W * Math.round(dx / W);
-    const dz = gz - pl.z;
-    ghostMesh.position.set(dx, gy + (slide ? 0.75 : 1.45) + 0.07 * Math.sin(gameTime * 9), dz);
-    ghostMesh.rotation.set(0.12 * Math.sin(gameTime * 4.5), 0.2 * Math.sin(gameTime * 2.3), 0);
+    const dz = gz - pl.z, hy = gy + (slide ? 0.75 : 1.45) + 0.07 * Math.sin(gameTime * 9 + e.score);
+    e.mesh.position.set(dx, hy, dz);
+    e.mesh.rotation.set(0.12 * Math.sin(gameTime * 4.5 + e.score), 0.2 * Math.sin(gameTime * 2.3 + e.score), 0);
     // разбился — растворяется за 0.8 с; вплотную к камере — тоже (не лицом во весь экран)
     const fade = Math.max(0, 1 - Math.max(0, t - (n - 1)) * GHOST_DT / 0.8);
     const near = Math.min(1, Math.max(0, (Math.abs(dz) - 1.5) / 3));
-    const gu = materials.ghost.uniforms, mu = materials.monkey.uniforms;
-    gu.uAlpha.value = fade * near;
+    const a = fade * near, gu = e.mat.uniforms;
+    gu.uAlpha.value = a;
     gu.uB.value = mu.uB.value; gu.uFogNear.value = mu.uFogNear.value; gu.uFogFar.value = mu.uFogFar.value;
     gu.uFogColor.value.copy(mu.uFogColor.value);
-    ghostMesh.visible = fade * near > 0.01;
-    const who = ghost.own ? tr('ghostYou') : ghost.name;
-    ahead = dz > 0;
-    text = `${who} ${ahead ? '▲' : '▼'} ${Math.round(Math.abs(dz))} ${tr('m')}`;
-  } else if (ghostMesh) ghostMesh.visible = false;
+    e.mesh.visible = a > 0.01;
+    // ник над головой; вдали тает
+    const la = a * Math.min(1, Math.max(0, 1 - (dz - 90) / 60));
+    const sp = la > 0.02 && dz > 0 ? bentToScreen(dx, hy + 0.85, dz) : null;
+    if (sp && sp.z < 1) {
+      e.label.style.opacity = la.toFixed(2);
+      e.label.style.transform = `translate(${((sp.x + 1) / 2 * cw).toFixed(1)}px, ${((1 - sp.y) / 2 * ch).toFixed(1)}px) translate(-50%, -100%)`;
+    } else e.label.style.opacity = '0';
+    if (fade > 0 && (!chase || (dz > 0 && (chase.dz <= 0 || dz < chase.dz)) || (dz <= 0 && chase.dz <= 0 && dz > chase.dz))) chase = { e, dz };
+  }
+  let text = '', color = '';
+  if (chase) {
+    text = `${chase.e.own ? tr('ghostYou') : chase.e.name} ${chase.dz > 0 ? '▲' : '▼'} ${Math.round(Math.abs(chase.dz))} ${tr('m')}`;
+    color = chase.dz > 0 ? chase.e.color : '';
+  }
   if (text !== ghostTagLast) { ghostTagLast = text; ghostTag.textContent = text; }
-  ghostTag.classList.toggle('ahead', ahead);
+  ghostTag.style.color = color;
 }
 
 function flowReset() { Object.assign(flow, { mult: 1, t: 0, idle: 0, score: 0, maxMult: 1, bestT: 0, stumbles: 0 }); }
@@ -1516,7 +1575,7 @@ function start() {
   runMaxSpeed = 0;
   deathN++;
   ghostRec = [];
-  if (dailyRun) refreshGhost();
+  if (dailyRun) refreshGhosts();
   flowReset();
   updateMonkeyHud();
   rec.begin({
@@ -2653,8 +2712,8 @@ function frame(now) {
     mu.uFogColor.value.copy(mm.uFogColor.value);
     animateMonkeys();
   }
-  updateGhost();
   updateCamera(dt, state === 'run');
+  updateGhosts();
 
   if (blurPass) {
     // точка схода (центр круга) на экране
@@ -2720,4 +2779,4 @@ if (window.__sdwgAudio) {
 requestAnimationFrame(frame);
 
 // для автотестов
-window.__game = { materials, cam, tut, flow, setGhost: (g) => { ghost = g && { ...g, pts: decodeTrack(g.track), day: dayNow() }; }, get ghost() { return ghost; }, get ghostRec() { return ghostRec; }, startDaily, laneShift, setAuto: (v) => { autopilot = v; }, get state() { return state; }, pl, start, die, jump, runFile, get monkeys() { return monkeys; }, slide, get seed() { return seed; }, get world() { return world; }, get meshes() { return meshes; }, get exposure() { return exposurePass ? [exposurePass.exposure, exposurePass.avg] : null; } };
+window.__game = { materials, cam, tut, flow, setGhosts: (list) => { serverGhosts = list; ghostsDay = dayNow(); ghostsAt = performance.now(); buildGhosts(); }, get ghosts() { return ghosts; }, get ghostRec() { return ghostRec; }, startDaily, laneShift, setAuto: (v) => { autopilot = v; }, get state() { return state; }, pl, start, die, jump, runFile, get monkeys() { return monkeys; }, slide, get seed() { return seed; }, get world() { return world; }, get meshes() { return meshes; }, get exposure() { return exposurePass ? [exposurePass.exposure, exposurePass.avg] : null; } };

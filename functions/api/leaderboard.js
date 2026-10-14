@@ -23,7 +23,7 @@
 // POST { action: 'sync', token, data }       → { ok, name, data } — объединённый прогресс
 // POST { action: 'logout', token }           → { ok }
 // Призрак города дня — траектория лучшего забега:
-// GET  /api/leaderboard?ghost=1               → { ghost: { name, score, track } | null } — лидер дня
+// GET  /api/leaderboard?ghost=1               → { ghosts: [{ name, score, track }] } — топ дня (до GHOSTS), ghost — лидер
 // POST { action: 'ghost', token, score, track } → { ok, saved } — свой забег, хранится лучший за день
 //      track — целые: [x, y, z, подкат] каждые 0.1 с, x/y/z ×100, разностями от предыдущей точки
 
@@ -36,6 +36,7 @@ const MAX_SAVE = 64 * 1024; // байт JSON прогресса
 const FAILS = 5, LOCK_MS = 10 * 60 * 1000; // неверных паролей подряд → блокировка входа
 const PBKDF2_ITER = 100_000; // больше Workers не разрешают
 const MAX_TRACK = 4 * 9000; // чисел в треке призрака: 15 минут по 0.1 с
+const GHOSTS = 5;           // сколько призраков дня отдаём (лучшие)
 
 // латиница ← похожие буквы кириллицы и греческого, цифры и знаки-двойники
 const LOOK = {
@@ -219,11 +220,13 @@ export async function onRequestGet({ request, env }) {
   if (!DB) return json({ error: 'nodb' }, 503);
   const url = new URL(request.url);
   if (url.searchParams.has('ghost')) {
-    const g = await DB.prepare(`SELECT p.name, g.score, g.track FROM ghosts g JOIN players p ON p.id = g.player
-      WHERE g.day = ? ORDER BY g.score DESC, g.updated ASC LIMIT 1`).bind(dayKey()).first();
-    let track = null;
-    try { track = g ? JSON.parse(g.track) : null; } catch { /* битый трек — без призрака */ }
-    return json({ ghost: g && track ? { name: g.name, score: g.score, track } : null });
+    const { results } = await DB.prepare(`SELECT p.name, g.score, g.track FROM ghosts g JOIN players p ON p.id = g.player
+      WHERE g.day = ? ORDER BY g.score DESC, g.updated ASC LIMIT ?`).bind(dayKey(), GHOSTS).all();
+    const ghosts = [];
+    for (const g of results) {
+      try { ghosts.push({ name: g.name, score: g.score, track: JSON.parse(g.track) }); } catch { /* битый трек — пропускаем */ }
+    }
+    return json({ ghost: ghosts[0] || null, ghosts });
   }
   const by = url.searchParams.get('by');
   const city = url.searchParams.get('board') === 'city';

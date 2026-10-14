@@ -94,6 +94,11 @@
     /* призрак города дня: имя и насколько он впереди ▲ (красным) или позади ▼ */
     #ghost-tag { margin-left: 18px; font-size: 15px; font-variant-numeric: tabular-nums; }
     #ghost-tag:empty { display: none; }
+    /* ники над головами призраков — цвет как у головы */
+    #ghost-labels { position: fixed; inset: 0; pointer-events: none; z-index: 4; display: none; overflow: hidden; }
+    #ghost-labels.show { display: block; }
+    .ghost-label { position: absolute; left: 0; top: 0; font-size: 13px; font-weight: 500; white-space: nowrap; will-change: transform;
+      text-shadow: 0 1px 3px rgba(0,0,0,0.5), 0 0 1px rgba(255,255,255,0.8); }
     #ghost-tag.ahead { color: #ff4a4f; }
     /* поток — снизу по центру (не в углу: до углов в беге глазами не дотянуться), у самого края; уже сида в углу.
        Цифры боковым зрением не читаются — главное тут полоска: длина, цвет, мигание.
@@ -450,6 +455,7 @@
   <canvas id="game"></canvas>
   <div id="halo"></div>
 
+  <div id="ghost-labels"></div>
   <div id="hud"><div id="hud-left"><span id="daily-tag" data-t="dailyCity">City of the day</span><span id="dist">0 m</span><span id="monk"></span><span id="ghost-tag"></span></div><div id="flow" class="off"><div class="row"><span id="score">0</span><b id="mult">×1.0</b><span id="spd"></span></div><i id="flow-bar"><i></i></i><span id="mpop"></span><span id="pop"></span></div><div id="hud-right"><button id="flag" class="ghost small" data-ta="flag" aria-label="Mark: something is wrong here">⚑</button><button id="pause" class="ghost small" aria-label="Pause">❚❚</button></div></div>
   <div id="rotate" data-tt="rotate" title="Turn your phone sideways"><svg viewBox="0 0 64 64" aria-hidden="true">
       <!-- дуга над телефоном справа налево (куда он поворачивается) и стрелка на её конце -->
