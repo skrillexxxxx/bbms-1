@@ -559,8 +559,8 @@ function flowStep(dt, dz) {
 }
 
 // HUD: очки, ×множитель и полоска до обрыва; меняем DOM, только когда текст правда поменялся
-const hudEl = { score: $('score'), flow: $('flow'), mult: $('mult'), bar: $('flow-bar').firstChild, pop: $('pop') };
-let hudLast = '', hudWhole = 1;
+const hudEl = { score: $('score'), flow: $('flow'), mult: $('mult'), bar: $('flow-bar').firstChild, pop: $('pop'), mpop: $('mpop') };
+let hudLast = '', hudWhole = 1, hudMk = '';
 function hudFlow() {
   const sc = String(Math.floor(flow.score)), m = `×${flow.mult.toFixed(1)}`;
   const key = sc + m;
@@ -570,10 +570,16 @@ function hudFlow() {
   // последняя секунда до обрыва — полоска мигает (это видно и боковым зрением)
   hudEl.flow.classList.toggle('warn', on && flow.idle > FLOW_GRACE - 1);
   hudEl.bar.style.transform = `scaleX(${Math.max(0, 1 - flow.idle / FLOW_GRACE).toFixed(3)})`;
-  // ×2, ×3, … — множитель подпрыгивает
+  // ×2, ×3, … — множитель подпрыгивает, над блоком всплывает «×3»; и сам понемногу растёт: ×1 — 1, ×4 — 1.3, ×16 — 1.6
   const whole = Math.floor(flow.mult);
-  if (whole > hudWhole && whole >= 2) hudBump('up');
+  if (whole > hudWhole && whole >= 2) {
+    hudBump('up');
+    hudEl.mpop.textContent = `×${whole}`;
+    hudEl.mpop.classList.remove('go'); void hudEl.mpop.offsetWidth; hudEl.mpop.classList.add('go');
+  }
   hudWhole = whole;
+  const mk = Math.min(1.8, 1 + 0.15 * Math.log2(Math.max(1, flow.mult))).toFixed(2);
+  if (mk !== hudMk) { hudMk = mk; hudEl.mult.style.setProperty('--mk', mk); }
 }
 function hudBump(cls) {
   hudEl.flow.classList.remove('up', 'broke'); void hudEl.flow.offsetWidth; hudEl.flow.classList.add(cls);
