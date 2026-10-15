@@ -434,11 +434,11 @@ const FLOW_HIGH = 3;    // выше земли под ногами больше 
 const flow = { mult: 1, t: 0, idle: 0, score: 0, maxMult: 1, bestT: 0, stumbles: 0 };
 let bestScore = 0;
 try { bestScore = Number(localStorage.getItem('city-best-score')) || 0; } catch { /* приватный режим */ }
-// рекорды дня: sdwg-day (день по Москве) + sdwg-day-stats { score, dist, speed, monkeys, cScore, cDist, cSpeed, cMonkeys }
-// (c… — город дня); другой день — нули. Синхронизируются с прогрессом; сервер собирает из них таблицы дня
+// рекорды дня: sdwg-day (день по Москве) + sdwg-day-stats { score, dist, speed, monkeys, cSpeed, cMonkeys, cTime }
+// (c… — город дня; cTime — лучшее время до финиша, мс, 0 — не финишировал); другой день — нули. Синхронизируются с прогрессом; сервер собирает из них таблицы дня
 const dayNow = () => new Date(Date.now() + 3 * 3600e3).toISOString().slice(0, 10);
 function dayStats() {
-  const st = { score: 0, dist: 0, speed: 0, monkeys: 0, cScore: 0, cDist: 0, cSpeed: 0, cMonkeys: 0 };
+  const st = { score: 0, dist: 0, speed: 0, monkeys: 0, cScore: 0, cDist: 0, cSpeed: 0, cMonkeys: 0, cTime: 0 };
   try {
     if (localStorage.getItem('sdwg-day') === dayNow()) {
       const saved = JSON.parse(localStorage.getItem('sdwg-day-stats') || '{}') || {};
@@ -450,8 +450,8 @@ function dayStats() {
 function saveDayStats(st) {
   try { localStorage.setItem('sdwg-day', dayNow()); localStorage.setItem('sdwg-day-stats', JSON.stringify(st)); } catch { /* приватный режим */ }
 }
-// таблица города дня на экране смерти: d — ответ сервера (undefined — ещё грузится, null — нет сети);
-// мои очки сегодня — myBest (для строки «ты» без аккаунта). Точка у ника — цвет его призрака
+// таблица города дня на экране смерти — по времени до финиша: d — ответ сервера (undefined — ещё грузится,
+// null — нет сети); моё лучшее время сегодня — myBest, мс (для строки «ты» без аккаунта). Точка у ника — цвет его призрака
 function renderOverBoard(d, myBest) {
   const body = $('ob-body'), head = $('ob-head'), note = $('ob-note');
   body.textContent = '';
@@ -463,7 +463,7 @@ function renderOverBoard(d, myBest) {
     tr_.innerHTML = `<td class="pl"></td><td class="nm">${c ? `<span class="dot" style="background:${c}"></span>` : ''}</td><td class="sc"></td>`;
     tr_.children[0].textContent = place ?? '—';
     tr_.children[1].append(mine && !name ? tr('ghostYou') : name);
-    tr_.children[2].textContent = score;
+    tr_.children[2].textContent = score > 0 ? fmtTime(score) : '—';
     body.append(tr_);
   };
   const me = d && d.me;
@@ -472,12 +472,12 @@ function renderOverBoard(d, myBest) {
   if (me && me.rank) { const b = document.createElement('b'); b.textContent = ` · ${tr('placeShort', me.rank, d.count || me.rank)}`; head.append(b); }
   note.textContent = d === undefined ? tr('loading') : d === null ? tr('errNet') : loggedIn() ? '' : tr('obLogin');
   if (!d) { if (myBest > 0) row(null, '', myBest, true); return; }
-  const top = d.top.filter((x) => x.score > 0).slice(0, 7);
+  const top = d.top.filter((x) => x.time > 0).slice(0, 7);
   let shown = false;
-  top.forEach((x, i) => { const mine = !!me && x.name === me.name; if (mine) shown = true; row(i + 1, x.name, x.score, mine); });
-  if (!shown && (me ? me.score > 0 : myBest > 0)) {
+  top.forEach((x, i) => { const mine = !!me && x.name === me.name; if (mine) shown = true; row(i + 1, x.name, x.time, mine); });
+  if (!shown && (me ? me.time > 0 : myBest > 0)) {
     if (top.length) { const g = document.createElement('tr'); g.className = 'gap'; g.innerHTML = '<td colspan="3">···</td>'; body.append(g); }
-    row(me ? me.rank : null, me ? me.name : '', me ? me.score : myBest, true);
+    row(me ? me.rank : null, me ? me.name : '', me && me.time > 0 ? me.time : myBest, true);
   }
   if (!top.length && !(myBest > 0)) note.textContent = tr('lbEmpty');
 }
@@ -512,16 +512,24 @@ function renderDailySub() {
 setInterval(() => { if (state === 'ready') renderDailySub(); }, 30e3);
 window.addEventListener('sdwg-lang', renderDailySub);
 const isDailyRun = () => dailyRun && seed === dailySeed() && !autopilot;
+// город дня — гонка на время: трасса COURSE_M метров от старта, рекорд — время до финишной арки
+const COURSE_M = 1500;
+let courseEnd = Infinity;
+const fmtTime = (ms) => {
+  const t = Math.max(0, ms) / 1000, m = Math.floor(t / 60), sec = t - m * 60;
+  return m ? `${m}:${sec.toFixed(2).padStart(5, '0')}` : sec.toFixed(2);
+};
 
-// ---------- призраки города дня: обезьянки бегут по лучшим забегам дня ----------
-// Свой забег в городе дня пишется каждые 0.1 с: x, y, z (×100) и подкат. Побил свой рекорд дня — трек уходит на сервер
-// и остаётся на телефоне. Призраки — топ дня с сервера (до 5) и твой лучший; у каждого свой цвет и ник над головой
-// (свой — «ты»). Бегут по времени от старта: трек, пришедший с опозданием, просто появляется там, где этот игрок был
-// в эту секунду. Смотрят назад, на тебя; разбился — растворяется. В HUD слева — ближайший впереди (кого догонять).
+// ---------- призраки города дня: обезьянки бегут по лучшим финишам дня ----------
+// Свой забег в городе дня пишется каждые 0.1 с: x, y, z (×100) и подкат. Финишировал быстрее своего лучшего — трек
+// уходит на сервер и остаётся на телефоне. Призраки — только финиши: топ дня по времени с сервера (до 5) и твой лучший;
+// у каждого свой цвет и ник над головой (свой — «ты»). Бегут по времени от старта: трек, пришедший с опозданием, просто
+// появляется там, где этот игрок был в эту секунду. Смотрят назад, на тебя; у финиша растворяются.
+// Под полоской потока — отставание в секундах от ближайшего впереди: «Masha +1.4 с» (ты позади), «−0.8 с» — впереди.
 const GHOST_DT = 0.1, GHOST_MAX = 9000; // 15 минут
 const GHOST_COLORS = ['#ff2d33', '#2f7bff', '#ff9f0a', '#1fbf5a', '#b04dff', '#00b3c2']; // по месту: лидер — красный
 let ghostRec = [];       // свой забег: [x, y, z, подкат] подряд
-let ghosts = [];         // [{ key, name, score, own, color, pts, mat, mesh, label }]
+let ghosts = [];         // [{ key, name, time, own, color, pts, mat, mesh, label }]
 let serverGhosts = [], ghostsDay = '', ghostsAt = -1e9;
 const ghostLayer = $('ghost-labels');
 function encodeTrack(a) { // разностями от предыдущей точки — числа короткие
@@ -537,12 +545,13 @@ function decodeTrack(t) {
 const goodTrack = (g) => g && Array.isArray(g.track) && g.track.length >= 8 && g.track.length % 4 === 0;
 // свой лучший трек дня — ещё и на телефоне: призрак есть и без аккаунта, и сразу после рекорда, не дожидаясь сервера.
 // Ключ не sdwg-/city- — в синхронизацию прогресса не идёт (трек большой)
-const OWN_GHOST = 'ghost-own';
+const OWN_GHOST = 'ghost-own-time';
+try { localStorage.removeItem('ghost-own'); } catch { /* старый формат — очки, а не время */ }
 function ownGhost() {
-  try { const g = JSON.parse(localStorage.getItem(OWN_GHOST) || 'null'); return g && g.day === dayNow() && goodTrack(g) ? g : null; } catch { return null; }
+  try { const g = JSON.parse(localStorage.getItem(OWN_GHOST) || 'null'); return g && g.day === dayNow() && g.time > 0 && goodTrack(g) ? g : null; } catch { return null; }
 }
-function saveOwnGhost(score, track) {
-  try { localStorage.setItem(OWN_GHOST, JSON.stringify({ day: dayNow(), score, track })); } catch { /* места нет — только на сервер */ }
+function saveOwnGhost(time, track) {
+  try { localStorage.setItem(OWN_GHOST, JSON.stringify({ day: dayNow(), time, track })); } catch { /* места нет — только на сервер */ }
   buildGhosts();
 }
 // список призраков: топ сервера + свой (с телефона, если там лучше или на сервере ещё нет); меши и подписи — переиспользуем
@@ -550,13 +559,13 @@ function buildGhosts() {
   const day = dayNow();
   if (ghostsDay !== day) { serverGhosts = []; ghostsDay = day; }
   const me = playerName(), own = ownGhost();
-  const list = serverGhosts.filter(goodTrack).map((g) => ({ ...g, own: !!me && g.name === me }));
+  const list = serverGhosts.filter((g) => goodTrack(g) && g.time > 0).map((g) => ({ ...g, own: !!me && g.name === me }));
   if (own) {
     const i = list.findIndex((g) => g.own);
-    if (i < 0) list.push({ name: me, score: own.score, track: own.track, own: true });
-    else if (own.score > list[i].score) list[i] = { ...list[i], score: own.score, track: own.track };
+    if (i < 0) list.push({ name: me, time: own.time, track: own.track, own: true });
+    else if (own.time < list[i].time) list[i] = { ...list[i], time: own.time, track: own.track };
   }
-  list.sort((a, b) => b.score - a.score);
+  list.sort((a, b) => a.time - b.time);
   const old = new Map(ghosts.map((e) => [e.key, e]));
   ghosts = list.slice(0, GHOST_COLORS.length).map((g, i) => {
     const key = g.own ? '\u0000me' : g.name;
@@ -567,8 +576,8 @@ function buildGhosts() {
       e.label.className = 'ghost-label';
       ghostLayer.append(e.label);
     }
-    if (!e.pts || e.score !== g.score) e.pts = decodeTrack(g.track);
-    Object.assign(e, { name: g.name, score: g.score, own: g.own, color: GHOST_COLORS[i] });
+    if (!e.pts || e.time !== g.time) e.pts = decodeTrack(g.track);
+    Object.assign(e, { name: g.name, time: g.time, own: g.own, color: GHOST_COLORS[i] });
     // цвет — как есть (sRGB): шейдер сам переводит в линейный для блума
     e.mat.uniforms.uColor.value.setHex(parseInt(e.color.slice(1), 16), THREE.LinearSRGBColorSpace);
     e.label.textContent = g.own ? tr('ghostYou') : g.name;
@@ -602,13 +611,79 @@ function bentToScreen(fx, fy, fz) {
   const uB = materials.monkey.uniforms.uB.value, s = Math.exp(-fz / LZ), r = L * s, phi = fx / L;
   return _gv.set(r * Math.sin(phi), uB + (fy - uB) * s, r * Math.cos(phi)).project(camera);
 }
+// ---------- финишная арка города дня: красная лента по всему кругу, яркая линия на полу и «ФИНИШ · 230 м» ----------
+let gate = null;
+const finishLabel = document.createElement('div');
+finishLabel.className = 'ghost-label finish-label';
+ghostLayer.append(finishLabel);
+function makeGate() {
+  const N = 96, H = 7, pos = [], nor = [], idx = [];
+  const quad = (a, b, c, d, n) => {
+    const i = pos.length / 3;
+    pos.push(...a, ...b, ...c, ...d);
+    for (let k = 0; k < 4; k++) nor.push(...n);
+    idx.push(i, i + 1, i + 2, i, i + 2, i + 3);
+  };
+  for (let k = 0; k < N; k++) {
+    const x0 = (k / N) * W, x1 = ((k + 1) / N) * W;
+    quad([x0, 0, 0], [x1, 0, 0], [x1, H, 0], [x0, H, 0], [0, 0, -1]);                       // лента поперёк улицы
+    quad([x0, 0.03, -0.7], [x1, 0.03, -0.7], [x1, 0.03, 0.7], [x0, 0.03, 0.7], [0, 1, 0]); // линия на полу
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
+  g.setIndex(idx);
+  const mat = materials.ghost.clone(); // тот же изгиб мира и прозрачность, что у призраков
+  mat.side = THREE.DoubleSide;
+  mat.uniforms.uColor.value.setHex(0xff2d33, THREE.LinearSRGBColorSpace);
+  const m = new THREE.Mesh(g, mat);
+  m.frustumCulled = false;
+  m.renderOrder = 2;
+  scene.add(m);
+  return m;
+}
+function updateFinishGate() {
+  const show = dailyRun && (state === 'run' || state === 'paused') && Number.isFinite(courseEnd);
+  if (show && !gate) gate = makeGate();
+  finishLabel.style.opacity = '0';
+  if (!gate) return;
+  gate.visible = show;
+  if (!show) return;
+  const dz = courseEnd - pl.z, base = world.baseAt(courseEnd);
+  gate.position.set(-pl.x, base, dz);
+  const gu = gate.material.uniforms, mu = materials.monkey.uniforms;
+  gu.uB.value = mu.uB.value; gu.uFogNear.value = mu.uFogNear.value; gu.uFogFar.value = mu.uFogFar.value;
+  gu.uFogColor.value.copy(mu.uFogColor.value);
+  gu.uAlpha.value = 0.85 + 0.15 * Math.sin(gameTime * 5);
+  if (state === 'run' && dz > 1 && dz < 260) {
+    camera.updateMatrixWorld();
+    const sp = bentToScreen(0, base + 7.6, dz);
+    if (sp.z < 1) {
+      finishLabel.textContent = tr('finishLabel', Math.ceil(dz));
+      finishLabel.style.opacity = '1';
+      finishLabel.style.transform = `translate(${((sp.x + 1) / 2 * canvas.clientWidth).toFixed(1)}px, ${((1 - sp.y) / 2 * canvas.clientHeight).toFixed(1)}px) translate(-50%, -100%)`;
+    }
+  }
+}
+
+// когда (с от старта) трек был на отметке z; дальше конца трека — конец трека
+function ghostTimeAt(p, z) {
+  const n = p.length / 4;
+  if (z <= p[2]) return 0;
+  if (z >= p[(n - 1) * 4 + 2]) return (n - 1) * GHOST_DT;
+  let lo = 0, hi = n - 1;
+  while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (p[mid * 4 + 2] <= z) lo = mid; else hi = mid; }
+  const z0 = p[lo * 4 + 2], z1 = p[hi * 4 + 2];
+  return (lo + (z1 > z0 ? (z - z0) / (z1 - z0) : 0)) * GHOST_DT;
+}
 const ghostTag = $('ghost-tag');
 let ghostTagLast = '';
 // зовётся после камеры — подписи стоят ровно над головами
 function updateGhosts() {
   const show = dailyRun && (state === 'run' || state === 'paused') && seed === dailySeed() && ghosts.length > 0;
-  ghostLayer.classList.toggle('show', show && state === 'run'); // на паузе ники не лезут на меню
-  let chase = null; // ближайший впереди; если впереди никого — ближайший позади
+  ghostLayer.classList.toggle('show', dailyRun && state === 'run'); // ники и «ФИНИШ»; на паузе не лезут на меню
+  let chase = null; // ближайший впереди по времени; если впереди никого — ближайший позади
+  const tNow = gameTime - runStartT;
   if (show) camera.updateMatrixWorld();
   const mu = materials.monkey.uniforms, cw = canvas.clientWidth, ch = canvas.clientHeight;
   for (const e of ghosts) {
@@ -632,10 +707,11 @@ function updateGhosts() {
     const dz = gz - pl.z;
     // мир к центру сжимается быстро (на 50 м — в 20 раз): вдали призрак крупнее, чтобы оставался заметным пятном
     const k = dz > 0 ? Math.min(10, Math.exp(0.85 * dz / LZ)) : 1;
-    const hy = gy + (slide ? 0.75 : 1.45) + 0.55 * (k - 1) + 0.07 * Math.sin(gameTime * 9 + e.score);
+    const ph = e.time * 1e-3;
+    const hy = gy + (slide ? 0.75 : 1.45) + 0.55 * (k - 1) + 0.07 * Math.sin(gameTime * 9 + ph);
     e.mesh.position.set(dx, hy, dz);
     e.mesh.scale.setScalar(k);
-    e.mesh.rotation.set(0.12 * Math.sin(gameTime * 4.5 + e.score), 0.2 * Math.sin(gameTime * 2.3 + e.score), 0);
+    e.mesh.rotation.set(0.12 * Math.sin(gameTime * 4.5 + ph), 0.2 * Math.sin(gameTime * 2.3 + ph), 0);
     // разбился — растворяется за 0.8 с; вплотную к камере — тоже (не лицом во весь экран)
     const fade = Math.max(0, 1 - Math.max(0, t - (n - 1)) * GHOST_DT / 0.8);
     const near = Math.min(1, Math.max(0, (Math.abs(dz) - 1.5) / 3));
@@ -651,12 +727,15 @@ function updateGhosts() {
       e.label.style.opacity = la.toFixed(2);
       e.label.style.transform = `translate(${((sp.x + 1) / 2 * cw).toFixed(1)}px, ${((1 - sp.y) / 2 * ch).toFixed(1)}px) translate(-50%, -100%)`;
     } else e.label.style.opacity = '0';
-    if (fade > 0 && (!chase || (dz > 0 && (chase.dz <= 0 || dz < chase.dz)) || (dz <= 0 && chase.dz <= 0 && dz > chase.dz))) chase = { e, dz };
+    // отставание по времени: когда призрак был там, где ты сейчас (z растёт всегда — ищем делением пополам)
+    const gap = tNow - ghostTimeAt(p, pl.z);
+    if (!chase || (gap > 0 && (chase.gap <= 0 || gap < chase.gap)) || (gap <= 0 && chase.gap <= 0 && gap > chase.gap)) chase = { e, gap };
   }
   let text = '', color = '';
   if (chase) {
-    text = `${chase.e.own ? tr('ghostYou') : chase.e.name} ${chase.dz > 0 ? '▲' : '▼'} ${Math.round(Math.abs(chase.dz))} ${tr('m')}`;
-    color = chase.dz > 0 ? chase.e.color : '';
+    const g = chase.gap;
+    text = `${chase.e.own ? tr('ghostYou') : chase.e.name} ${g > 0 ? '+' : '−'}${Math.abs(g).toFixed(1)} ${tr('sec')}`;
+    color = g > 0 ? chase.e.color : '';
   }
   if (text !== ghostTagLast) { ghostTagLast = text; ghostTag.textContent = text; }
   ghostTag.style.color = color;
@@ -689,9 +768,12 @@ function flowStep(dt, dz) {
 const hudEl = { score: $('score'), flow: $('flow'), mult: $('mult'), bar: $('flow-bar').firstChild, pop: $('pop'), mpop: $('mpop') };
 let hudLast = '', hudWhole = 1, hudMk = '';
 function hudFlow() {
-  const sc = String(Math.floor(flow.score)), m = `×${flow.mult.toFixed(1)}`;
+  // город дня: слева — сколько до финиша, в середине — секундомер; свободный забег: очки и ×множитель
+  const sc = dailyRun ? `${Math.max(0, Math.ceil(courseEnd - pl.z))} ${tr('m')}` : String(Math.floor(flow.score));
+  const m = dailyRun ? fmtTime((gameTime - runStartT) * 1000) : `×${flow.mult.toFixed(1)}`;
   const key = sc + m;
   if (key !== hudLast) { hudLast = key; hudEl.score.textContent = sc; hudEl.mult.textContent = m; }
+  hudEl.flow.classList.toggle('timer', dailyRun);
   const on = flow.mult >= 1.05;
   hudEl.flow.classList.toggle('off', !on);
   // последняя секунда до обрыва — полоска мигает (это видно и боковым зрением)
@@ -699,13 +781,13 @@ function hudFlow() {
   hudEl.bar.style.transform = `scaleX(${Math.max(0, 1 - flow.idle / FLOW_GRACE).toFixed(3)})`;
   // ×2, ×3, … — множитель подпрыгивает, над блоком всплывает «×3»; и сам понемногу растёт: ×1 — 1, ×4 — 1.3, ×16 — 1.6
   const whole = Math.floor(flow.mult);
-  if (whole > hudWhole && whole >= 2) {
+  if (whole > hudWhole && whole >= 2 && !dailyRun) {
     hudBump('up');
     hudEl.mpop.textContent = `×${whole}`;
     hudEl.mpop.classList.remove('go'); void hudEl.mpop.offsetWidth; hudEl.mpop.classList.add('go');
   }
   hudWhole = whole;
-  const mk = Math.min(1.8, 1 + 0.15 * Math.log2(Math.max(1, flow.mult))).toFixed(2);
+  const mk = dailyRun ? '1' : Math.min(1.8, 1 + 0.15 * Math.log2(Math.max(1, flow.mult))).toFixed(2);
   if (mk !== hudMk) { hudMk = mk; hudEl.mult.style.setProperty('--mk', mk); }
 }
 function hudBump(cls) {
@@ -1463,10 +1545,12 @@ function die(cause = '?') {
   rec.event('die', { cause, z: pl.z, x: pl.x, y: pl.y, lane: pl.lane });
   tutHide(); tut.kTo = tut.k = 1;
   if (tut.step === 'done' || tut.step === 'under' || tut.step === 'land') tut.step = null;
-  sound.death();
+  const finished = cause === 'finish';
+  // финиш города дня — не смерть: без удара и тряски, звон «вдалеке»
+  if (finished) sound.sfx('monkeysN'); else sound.death();
   if (slideSnd) { slideSnd = false; sound.slide(false, true); }
   state = 'dead';
-  shake = 0.6;
+  shake = finished ? 0 : 0.6;
   sound.muffle(true);
   const meters = runMeters();
   lastRun = meters;
@@ -1492,31 +1576,43 @@ function die(cause = '?') {
   // рекорды дня — их показывает экран смерти и общая таблица; в полночь по Москве — с нуля
   const day = dayStats();
   const daily = isDailyRun();
-  const newRec = daily ? score > day.cScore : score > day.score; // новый рекорд дня (в городе дня — его)
-  // новый свой рекорд в городе дня — трек на сервер: может, теперь призрак дня — ты
+  // город дня — гонка на время: рекорд — только добежав до финиша, и быстрее своего лучшего сегодня
+  const runMs = Math.round((gameTime - runStartT) * 1000);
+  const prevTime = day.cTime;
+  const newRec = daily ? finished && (!prevTime || runMs < prevTime) : score > day.score;
+  // свой новый лучший финиш — трек на телефон и на сервер: призрак, который всегда добегает
   if (daily && newRec && ghostRec.length >= 8) {
     ghostRecord();
     const track = encodeTrack(ghostRec);
-    saveOwnGhost(score, track);
-    uploadGhost(score, track);
+    saveOwnGhost(runMs, track);
+    uploadGhost(runMs, track);
   }
   if (!autopilot) {
     Object.assign(day, { score: Math.max(day.score, score), dist: Math.max(day.dist, meters), speed: Math.max(day.speed, runMaxSpeed), monkeys: day.monkeys + runMonkeys });
-    if (daily) Object.assign(day, { cScore: Math.max(day.cScore, score), cDist: Math.max(day.cDist, meters), cSpeed: Math.max(day.cSpeed, runMaxSpeed), cMonkeys: day.cMonkeys + runMonkeys });
+    if (daily) Object.assign(day, { cSpeed: Math.max(day.cSpeed, runMaxSpeed), cMonkeys: day.cMonkeys + runMonkeys, cTime: newRec ? runMs : day.cTime });
     saveDayStats(day);
   }
-  // экран смерти — коротко: очки крупно; метры · ×множитель · км/ч (единицы вместо подписей); рекорд; одна подсказка
+  // экран смерти — коротко. Свободный: очки, метры · ×множитель · км/ч. Город дня: время (или сколько не добежал)
   const info = world.infoAt(pl.z + 1);
-  ui.overDist.textContent = String(score);
-  $('over-run').innerHTML = `<span>${meters} ${tr('m')}</span><b>×${flow.maxMult.toFixed(1)}</b><span>${runMaxSpeed} ${tr('kmh')}</span>`
-    + (runMonkeys ? `<span class="mk">${runMonkeys}</span>` : '');
+  const mk = runMonkeys ? `<span class="mk">${runMonkeys}</span>` : '';
+  if (daily) {
+    ui.overDist.textContent = finished ? fmtTime(runMs) : `${meters} ${tr('m')}`;
+    $('over-run').innerHTML = finished ? `<span>${COURSE_M} ${tr('m')}</span><span>${runMaxSpeed} ${tr('kmh')}</span>${mk}`
+      : `<span>${tr('dnfLeft', Math.max(0, Math.ceil(courseEnd - pl.z)))}</span>`;
+    ui.best.textContent = newRec ? tr('recNewCity')
+      : prevTime ? tr('recTime', fmtTime(prevTime)) + (finished ? ` · +${((runMs - prevTime) / 1000).toFixed(2)}` : '')
+        : tr('finishToRank');
+  } else {
+    ui.overDist.textContent = String(score);
+    $('over-run').innerHTML = `<span>${meters} ${tr('m')}</span><b>×${flow.maxMult.toFixed(1)}</b><span>${runMaxSpeed} ${tr('kmh')}</span>${mk}`;
+    ui.best.textContent = newRec ? tr('recNewDay') : tr('recDay', day.score);
+  }
   ui.overInfo.textContent = `seed ${seed} · ${info.name} (#${info.inst}) · ${tr('row')} ${info.local + 1}/${info.total}`; // для записи забега
-  ui.best.textContent = newRec ? tr(daily ? 'recNewCity' : 'recNewDay') : tr(daily ? 'recCity' : 'recDay', daily ? day.cScore : day.score);
   ui.best.classList.toggle('new', newRec);
   // два экрана: город дня (соревнование) — «Ещё раз», рекорды, меню; свободный забег — новый город, сиды…
   // место в таблице города дня — когда ответит сервер
   ui.over.classList.toggle('daily', daily);
-  if (daily) renderOverBoard(undefined, day.cScore);
+  if (daily) renderOverBoard(undefined, day.cTime);
   // подсказка — про то, чего в этом забеге не хватило
   $('over-tip').textContent = autopilot ? '' : flow.stumbles ? tr('tipStumble') : runMaxSpeed < 100 ? tr('tipPump') : flow.maxMult < 3 ? tr('tipFlow') : '';
   if (!autopilot) {
@@ -1524,7 +1620,7 @@ function die(cause = '?') {
     const runId = ++deathN;
     syncProgress().then(() => (daily ? boardData('city') : undefined)).then((d) => {
       if (d === undefined || runId !== deathN || state !== 'dead') return;
-      renderOverBoard(d, day.cScore);
+      renderOverBoard(d, day.cTime);
     }).catch(() => {});
   }
   setTimeout(() => { if (state === 'dead' && !ui.seeds.classList.contains('show')) ui.over.classList.add('show'); }, 450);
@@ -1611,6 +1707,7 @@ function start() {
   runMaxSpeed = 0;
   deathN++;
   ghostRec = [];
+  courseEnd = dailyRun ? pl.z + COURSE_M : Infinity;
   if (dailyRun) refreshGhosts();
   flowReset();
   updateMonkeyHud();
@@ -2604,6 +2701,7 @@ function frame(now) {
     for (let i = 0; i < n && state === 'run'; i++) { if (autopilot) autopilotStep(); physicsStep(dt / n); }
     ensureWorld();
     if (state === 'run') flowStep(dt, pl.z - zBefore);
+    if (state === 'run' && dailyRun && pl.z >= courseEnd) die('finish');
     if (state === 'run' && dailyRun && !autopilot) ghostRecord();
     ui.dist.textContent = `${runMeters()} ${tr('m')}`;
     const sp = kmh(speedNow());
@@ -2750,6 +2848,7 @@ function frame(now) {
   }
   updateCamera(dt, state === 'run');
   updateGhosts();
+  updateFinishGate();
 
   if (blurPass) {
     // точка схода (центр круга) на экране
@@ -2815,4 +2914,4 @@ if (window.__sdwgAudio) {
 requestAnimationFrame(frame);
 
 // для автотестов
-window.__game = { materials, cam, tut, flow, setGhosts: (list) => { serverGhosts = list; ghostsDay = dayNow(); ghostsAt = performance.now(); buildGhosts(); }, get ghosts() { return ghosts; }, get ghostRec() { return ghostRec; }, startDaily, laneShift, setAuto: (v) => { autopilot = v; }, get state() { return state; }, pl, start, die, jump, runFile, get monkeys() { return monkeys; }, slide, get seed() { return seed; }, get world() { return world; }, get meshes() { return meshes; }, get exposure() { return exposurePass ? [exposurePass.exposure, exposurePass.avg] : null; } };
+window.__game = { materials, cam, tut, flow, setCourse: (m) => { courseEnd = pl.z + m; }, setGhosts: (list) => { serverGhosts = list; ghostsDay = dayNow(); ghostsAt = performance.now(); buildGhosts(); }, get ghosts() { return ghosts; }, get ghostRec() { return ghostRec; }, startDaily, laneShift, setAuto: (v) => { autopilot = v; }, get state() { return state; }, pl, start, die, jump, runFile, get monkeys() { return monkeys; }, slide, get seed() { return seed; }, get world() { return world; }, get meshes() { return meshes; }, get exposure() { return exposurePass ? [exposurePass.exposure, exposurePass.avg] : null; } };

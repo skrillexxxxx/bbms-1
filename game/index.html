@@ -115,6 +115,7 @@
     #ghost-labels.show { display: block; }
     .ghost-label { position: absolute; left: 0; top: 0; font-size: 15px; font-weight: 600; white-space: nowrap; will-change: transform;
       text-shadow: 0 1px 3px rgba(0,0,0,0.5), 0 0 1px rgba(255,255,255,0.8); }
+    .finish-label { color: #ff2d33; font-size: 16px; letter-spacing: 0.14em; }
     #ghost-tag.ahead { color: #ff4a4f; }
     /* поток — снизу по центру (не в углу: до углов в беге глазами не дотянуться), у самого края; уже сида в углу.
        Цифры боковым зрением не читаются — главное тут полоска: длина, цвет, мигание.
@@ -129,6 +130,7 @@
     #flow-bar { display: block; height: 4px; margin-top: 4px; border-radius: 2px; background: rgba(255,255,255,0.3); overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.35); transition: opacity 0.3s; }
     #flow-bar i { display: block; height: 100%; background: #e5262b; } /* тает к центру */
     #flow.off #mult { opacity: 0.45; }
+    #flow.timer #mult { opacity: 1; } /* город дня: в середине секундомер */
     #flow.off #flow-bar { opacity: 0; }
     #flow.warn #flow-bar i { animation: flowwarn 0.24s steps(2) infinite; } /* последняя секунда — мигает */
     @keyframes flowwarn { 50% { opacity: 0.2; } }
@@ -305,6 +307,8 @@
     #lb th { position: sticky; top: 0; z-index: 1; font-size: 11px; font-weight: 400; letter-spacing: 0.12em; text-transform: uppercase;
       padding: 6px 6px 7px; border-bottom: 2px solid var(--ink); white-space: nowrap; background: #fff; color: rgba(17,17,17,0.5); }
     #lb th[data-by] { cursor: pointer; }
+    #lb.city th[data-by="dist"], #lb.city td.dist { display: none; } /* город дня — на время, метры у всех одни */
+    #lb.city th[data-by] { cursor: default; }
     #lb th:not([data-by]) { color: var(--ink); }
     #lb th[data-by]::after { content: ' ▾'; opacity: 0; }
     #lb th.on { color: var(--ink); }

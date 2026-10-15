@@ -15,21 +15,23 @@
 //      (score — очки: метры × множитель потока; главная сортировка)
 //      Таблица — рекорды ДНЯ: день по Москве (UTC+3), в полночь у всех нули. В списке — все игроки,
 //      у кого сегодня забегов не было — нули. Дневные рекорды приходят в прогрессе: sdwg-day + sdwg-day-stats.
-//      &board=city — таблица «Города дня» (один сид на всех на сутки): те же поля, но только забеги в нём.
-//      count — сколько игроков сегодня с результатом больше нуля (для «место 3 из 12»).
+//      &board=city — таблица «Города дня» (один сид на всех на сутки) — гонка на время до финиша:
+//      { top: [{ name, time, speed, monkeys }] } — сначала добежавшие по времени (мс, меньше — лучше), потом остальные
+//      (time = 0 — не финишировал); count — сколько сегодня финишировали (для «ты 3-й из 12»).
 // POST { action: 'register', token, name, password? } → { ok, name } | { error: 'taken', name } | { error: 'bad' | 'weak' }
 //      (новый аккаунт — пароль обязателен; уже вошёл — смена ника и, если передан, пароля)
 // POST { action: 'login', name, password }   → { ok, name, token, data } | { error: 'wrong' } | { error: 'locked', wait }
 // POST { action: 'sync', token, data }       → { ok, name, data } — объединённый прогресс
 // POST { action: 'logout', token }           → { ok }
 // Призрак города дня — траектория лучшего забега:
-// GET  /api/leaderboard?ghost=1               → { ghosts: [{ name, score, track }] } — топ дня (до GHOSTS), ghost — лидер
-// POST { action: 'ghost', token, score, track } → { ok, saved } — свой забег, хранится лучший за день
+// GET  /api/leaderboard?ghost=1               → { ghosts: [{ name, time, track }] } — лучшие по времени финиши дня (до GHOSTS)
+// POST { action: 'ghost', token, time, track } → { ok, saved } — свой финиш (мс), хранится лучший за день
 //      track — целые: [x, y, z, подкат] каждые 0.1 с, x/y/z ×100, разностями от предыдущей точки
 
 const TOP = 50;
 const MAX_DIST = 1_000_000; // м — дальше не бегают, это уже подделка
 const MAX_SCORE = 1_000_000_000; // очки
+const MAX_TIME = 3_600_000;      // мс: время до финиша в городе дня — не дольше часа
 const MAX_SPEED = 400; // км/ч
 const MAX_MONKEYS = 100_000;
 const MAX_SAVE = 64 * 1024; // байт JSON прогресса
@@ -122,7 +124,9 @@ function parseSeeds(v) { try { const l = JSON.parse(v); return Array.isArray(l) 
 export const dayKey = (now = Date.now()) => new Date(now + 3 * 3600e3).toISOString().slice(0, 10);
 const DAY = 'sdwg-day', DAY_STATS = 'sdwg-day-stats';
 // поле в sdwg-day-stats → колонка таблицы; c… — город дня
-const STAT_COLS = { score: 'score', dist: 'dist', speed: 'speed', monkeys: 'monkeys', cScore: 'c_score', cDist: 'c_dist', cSpeed: 'c_speed', cMonkeys: 'c_monkeys' };
+// cTime — лучшее время до финиша в городе дня (мс, 0 — не финишировал): из двух берётся меньшее, не максимум
+const STAT_COLS = { score: 'score', dist: 'dist', speed: 'speed', monkeys: 'monkeys', cScore: 'c_score', cDist: 'c_dist', cSpeed: 'c_speed', cMonkeys: 'c_monkeys', cTime: 'c_time' };
+const minTime = (a, b) => (a > 0 && b > 0 ? Math.min(a, b) : a || b);
 const STAT_KEYS = Object.keys(STAT_COLS);
 const BOARD_FIELDS = ['score', 'dist', 'speed', 'monkeys']; // что отдаём клиенту в каждой строке
 function dayOf(save, today) {
@@ -136,7 +140,7 @@ function mergeDay(base, inc, today) {
   const b = dayOf(base, today), i = dayOf(inc, today);
   if (i.day > b.day) return i;
   if (i.day < b.day) return b;
-  return { day: b.day, st: Object.fromEntries(STAT_KEYS.map((k) => [k, Math.max(b.st[k], i.st[k])])) };
+  return { day: b.day, st: Object.fromEntries(STAT_KEYS.map((k) => [k, k === 'cTime' ? minTime(b.st[k], i.st[k]) : Math.max(b.st[k], i.st[k])])) };
 }
 
 // объединить сохранённое на сервере (base) с пришедшим с устройства (inc)
@@ -164,7 +168,7 @@ export function mergeSave(base, inc, today = dayKey()) {
 }
 const clamp = (v, max) => Math.min(max, Math.max(0, Math.round(Number(v) || 0)));
 // колонки таблицы — рекорды сегодняшнего дня (вчерашние — нули)
-const MAXES = { score: MAX_SCORE, dist: MAX_DIST, speed: MAX_SPEED, monkeys: MAX_MONKEYS };
+const MAXES = { score: MAX_SCORE, dist: MAX_DIST, speed: MAX_SPEED, monkeys: MAX_MONKEYS, time: MAX_TIME };
 function scores(save, today) {
   const d = dayOf(save, today);
   const st = d.day === today ? d.st : {};
@@ -198,14 +202,16 @@ async function db(env) {
       DB.prepare('CREATE INDEX IF NOT EXISTS tokens_player ON tokens (player)'),
       DB.prepare(`CREATE TABLE IF NOT EXISTS ghosts (
         player INTEGER NOT NULL, day TEXT NOT NULL, score INTEGER NOT NULL, track TEXT NOT NULL, updated INTEGER NOT NULL,
+        time INTEGER NOT NULL DEFAULT 0,
         PRIMARY KEY (player, day))`),
     ]);
     // база, созданная раньше: добавить колонки (уже есть — SQLite ответит ошибкой, это нормально)
     try { await DB.prepare('ALTER TABLE players ADD COLUMN score INTEGER NOT NULL DEFAULT 0').run(); } catch { /* колонка уже есть */ }
     try { await DB.prepare("ALTER TABLE players ADD COLUMN day TEXT NOT NULL DEFAULT ''").run(); } catch { /* колонка уже есть */ }
-    for (const c of ['c_score', 'c_dist', 'c_speed', 'c_monkeys']) {
+    for (const c of ['c_score', 'c_dist', 'c_speed', 'c_monkeys', 'c_time']) {
       try { await DB.prepare(`ALTER TABLE players ADD COLUMN ${c} INTEGER NOT NULL DEFAULT 0`).run(); } catch { /* колонка уже есть */ }
     }
+    try { await DB.prepare('ALTER TABLE ghosts ADD COLUMN time INTEGER NOT NULL DEFAULT 0').run(); } catch { /* колонка уже есть */ }
     ready = true;
   }
   return DB;
@@ -220,16 +226,35 @@ export async function onRequestGet({ request, env }) {
   if (!DB) return json({ error: 'nodb' }, 503);
   const url = new URL(request.url);
   if (url.searchParams.has('ghost')) {
-    const { results } = await DB.prepare(`SELECT p.name, g.score, g.track FROM ghosts g JOIN players p ON p.id = g.player
-      WHERE g.day = ? ORDER BY g.score DESC, g.updated ASC LIMIT ?`).bind(dayKey(), GHOSTS).all();
+    // только финиши (time > 0): недобежавшие треки — не призраки
+    const { results } = await DB.prepare(`SELECT p.name, g.time, g.track FROM ghosts g JOIN players p ON p.id = g.player
+      WHERE g.day = ? AND g.time > 0 ORDER BY g.time ASC, g.updated ASC LIMIT ?`).bind(dayKey(), GHOSTS).all();
     const ghosts = [];
     for (const g of results) {
-      try { ghosts.push({ name: g.name, score: g.score, track: JSON.parse(g.track) }); } catch { /* битый трек — пропускаем */ }
+      try { ghosts.push({ name: g.name, time: g.time, track: JSON.parse(g.track) }); } catch { /* битый трек — пропускаем */ }
     }
     return json({ ghost: ghosts[0] || null, ghosts });
   }
   const by = url.searchParams.get('by');
   const city = url.searchParams.get('board') === 'city';
+  if (city) {
+    // гонка на время: сначала финишировавшие сегодня по времени, потом остальные (не финишировали — time 0)
+    const today = dayKey();
+    const t = '(CASE WHEN day = ?1 THEN c_time ELSE 0 END)';
+    const { results } = await DB.prepare(
+      `SELECT name, ${t} AS time, (CASE WHEN day = ?1 THEN c_speed ELSE 0 END) AS speed, (CASE WHEN day = ?1 THEN c_monkeys ELSE 0 END) AS monkeys
+       FROM players ORDER BY (${t} > 0) DESC, ${t} ASC, id ASC LIMIT ?2`,
+    ).bind(today, TOP).all();
+    const cnt = await DB.prepare(`SELECT COUNT(*) AS n FROM players WHERE ${t} > 0`).bind(today).first();
+    let me = null;
+    const row = await playerByToken(DB, url.searchParams.get('token'));
+    if (row) {
+      const mine = row.day === today ? { time: row.c_time, speed: row.c_speed, monkeys: row.c_monkeys } : { time: 0, speed: 0, monkeys: 0 };
+      const faster = await DB.prepare(`SELECT COUNT(*) AS n FROM players WHERE ${t} > 0 AND ${t} < ?2`).bind(today, mine.time).first();
+      me = { name: row.name, ...mine, rank: mine.time > 0 ? faster.n + 1 : null };
+    }
+    return json({ day: today, board: 'city', count: cnt.n, top: results, me });
+  }
   const field = ['dist', 'speed', 'monkeys'].includes(by) ? by : 'score';
   const otherField = field === 'score' ? 'dist' : field === 'dist' ? 'speed' : 'score';
   const colOf = (f) => (city ? `c_${f}` : f);
@@ -321,8 +346,8 @@ export async function onRequestPost({ request, env }) {
     if (text.length > MAX_SAVE) return json({ error: 'big' }, 413);
     const sc = scores(merged, today);
     await DB.prepare(`UPDATE players SET save = ?2, day = ?3, score = ?4, dist = ?5, speed = ?6, monkeys = ?7,
-      c_score = ?8, c_dist = ?9, c_speed = ?10, c_monkeys = ?11, updated = ?12 WHERE id = ?1`)
-      .bind(me.id, text, today, sc.score, sc.dist, sc.speed, sc.monkeys, sc.c_score, sc.c_dist, sc.c_speed, sc.c_monkeys, now).run();
+      c_score = ?8, c_dist = ?9, c_speed = ?10, c_monkeys = ?11, c_time = ?13, updated = ?12 WHERE id = ?1`)
+      .bind(me.id, text, today, sc.score, sc.dist, sc.speed, sc.monkeys, sc.c_score, sc.c_dist, sc.c_speed, sc.c_monkeys, now, sc.c_time).run();
     return json({ ok: true, name: me.name, data: merged });
   }
 
@@ -331,12 +356,13 @@ export async function onRequestPost({ request, env }) {
     if (!me) return json({ error: 'noplayer' }, 404);
     const t = body.track;
     if (!Array.isArray(t) || t.length < 8 || t.length > MAX_TRACK || t.length % 4 || !t.every(Number.isInteger)) return json({ error: 'bad' }, 400);
-    const score = clamp(body.score, MAX_SCORE);
+    const time = clamp(body.time, MAX_TIME);
+    if (!time) return json({ error: 'bad' }, 400);
     const today = dayKey(now);
-    // хранится лучший забег за день; вчерашние призраки больше не нужны
-    const r = await DB.prepare(`INSERT INTO ghosts (player, day, score, track, updated) VALUES (?1, ?2, ?3, ?4, ?5)
-      ON CONFLICT (player, day) DO UPDATE SET score = excluded.score, track = excluded.track, updated = excluded.updated
-      WHERE excluded.score > ghosts.score`).bind(me.id, today, score, JSON.stringify(t), now).run();
+    // хранится лучший (самый быстрый) финиш за день; вчерашние призраки больше не нужны
+    const r = await DB.prepare(`INSERT INTO ghosts (player, day, score, time, track, updated) VALUES (?1, ?2, 0, ?3, ?4, ?5)
+      ON CONFLICT (player, day) DO UPDATE SET time = excluded.time, track = excluded.track, updated = excluded.updated
+      WHERE ghosts.time = 0 OR excluded.time < ghosts.time`).bind(me.id, today, time, JSON.stringify(t), now).run();
     await DB.prepare('DELETE FROM ghosts WHERE day < ?').bind(today).run();
     return json({ ok: true, saved: (r.meta?.changes ?? r.changes ?? 0) > 0 });
   }

@@ -219,11 +219,19 @@ function cell(text, cls) {
   if (cls) td.className = cls;
   return td;
 }
+// время до финиша (мс) — «48.27», «1:12.34»
+const fmtTime = (ms) => {
+  const t = Math.max(0, ms) / 1000, m = Math.floor(t / 60), sec = t - m * 60;
+  return m ? `${m}:${sec.toFixed(2).padStart(5, '0')}` : sec.toFixed(2);
+};
 function row(place, x, mine) {
   const tr = document.createElement('tr');
   if (mine) tr.className = 'me';
-  tr.append(cell(place ?? '—', 'place'), cell(x.name, 'name'), cell(x.score || 0, 'num'), cell(x.dist, 'num'), cell(x.speed, 'num'), cell(x.monkeys || 0, 'num'));
-  tr.children[{ score: 2, dist: 3, speed: 4, monkeys: 5 }[by]].classList.add('on');
+  // город дня — гонка на время: вместо очков время (не финишировал — «—»), метров нет
+  const city = board === 'city';
+  const main = city ? (x.time > 0 ? fmtTime(x.time) : '—') : x.score || 0;
+  tr.append(cell(city && !(x.time > 0) ? '—' : place ?? '—', 'place'), cell(x.name, 'name'), cell(main, 'num'), cell(x.dist, 'num dist'), cell(x.speed, 'num'), cell(x.monkeys || 0, 'num'));
+  tr.children[city ? 2 : { score: 2, dist: 3, speed: 4, monkeys: 5 }[by]].classList.add('on');
   return tr;
 }
 function note(text) {
@@ -259,7 +267,12 @@ function renderReset() {
 async function loadBoard() {
   renderMe();
   renderReset();
-  for (const th of document.querySelectorAll('#lb th[data-by]')) th.classList.toggle('on', th.dataset.by === by);
+  const city = board === 'city';
+  lb.classList.toggle('city', city);
+  const scoreTh = document.querySelector('#lb th[data-by="score"]');
+  scoreTh.dataset.t = city ? 'time' : 'points';
+  scoreTh.textContent = tr(scoreTh.dataset.t);
+  for (const th of document.querySelectorAll('#lb th[data-by]')) th.classList.toggle('on', city ? th.dataset.by === 'score' : th.dataset.by === by);
   for (const b of document.querySelectorAll('#lb-tabs button')) b.classList.toggle('on', b.dataset.board === board);
   const n = ++reqN;
   if (!body.children.length) note(tr('loading'));
@@ -313,12 +326,12 @@ for (const b of document.querySelectorAll('#lb-tabs button')) {
 export async function loadGhosts() {
   try { const d = await api(null, '?ghost=1'); return d && Array.isArray(d.ghosts) ? d.ghosts : d && d.ghost ? [d.ghost] : []; } catch { return null; }
 }
-// свой забег в городе дня — на сервер (хранится лучший за день); без аккаунта — никак
-export async function uploadGhost(score, track) {
+// свой финиш в городе дня — на сервер (хранится самый быстрый за день); без аккаунта — никак
+export async function uploadGhost(time, track) {
   if (!loggedIn()) return;
-  try { await api({ action: 'ghost', token: get(K_TOKEN), score, track }); } catch { /* нет сети */ }
+  try { await api({ action: 'ghost', token: get(K_TOKEN), time, track }); } catch { /* нет сети */ }
 }
-// таблица дня по очкам (для экрана смерти): { top, me, count } или null — нет сети
+// таблица дня (для экрана смерти): { top, me, count } или null — нет сети; город дня — по времени
 export async function boardData(which) {
   try {
     const tok = loggedIn() ? `&token=${encodeURIComponent(get(K_TOKEN))}` : '';
@@ -327,7 +340,8 @@ export async function boardData(which) {
   } catch { return null; }
 }
 for (const th of document.querySelectorAll('#lb th[data-by]')) {
-  th.addEventListener('click', (e) => { e.stopPropagation(); if (by !== th.dataset.by) { by = th.dataset.by; loadBoard(); } });
+  // в городе дня — всегда по времени
+  th.addEventListener('click', (e) => { e.stopPropagation(); if (board !== 'city' && by !== th.dataset.by) { by = th.dataset.by; loadBoard(); } });
 }
 for (const el of [lb, acc]) for (const ev of ['pointerdown', 'click']) el.addEventListener(ev, (e) => e.stopPropagation());
 
