@@ -1,7 +1,7 @@
 // Красные обезьянки — собираем, как монетки. Модель — Suzanne из Blender (models/monkey.bin:
 // сжатые до int16 вершины и индексы, ~9 КБ). Рисуются через тот же изгиб мира, что и всё остальное.
 // Ставятся редко и поодиночке — ценный артефакт: на «живой» клетке пути (куда точно можно добежать),
-// не чаще чем раз в ~300 м, в среднем раз в ~600 м.
+// не чаще чем раз в ~300 м, в среднем раз в ~600 м. В городе дня — свой набор: ровно 10 на трассе (citySpots).
 
 import * as THREE from 'three';
 import { COLS, CELL, ROW, LEVEL, L, LZ, WALL, BRIDGE, LAUNCH, aliveBackward, walk, lv, mulberry32 } from './world.js';
@@ -231,19 +231,59 @@ export function placeMonkeys(world, inst, group, material, glowMat) {
   const out = [];
   for (let k = 0; k < TRAIL; k++) {
     const row = rows[r + k];
-    const x = (c + 0.5) * CELL, y = row.b0 + lv(row[c]) * LEVEL + HOVER, zl = (r + k + 0.5) * ROW;
-    const mesh = new THREE.Mesh(geometry, material);
-    mesh.frustumCulled = false;
-    mesh.position.set(x, y, zl);
-    mesh.rotation.y = k * 0.6;
-    group.add(mesh);
-    if (glowMat) {
-      const glow = new THREE.Mesh(glowGeometry(), glowMat);
-      glow.frustumCulled = false;
-      glow.renderOrder = 2;
-      mesh.add(glow); // летит вместе с обезьянкой (крутится — квадрату всё равно, он смотрит на камеру)
+    const x = (c + 0.5) * CELL, y = row.b0 + lv(row[c]) * LEVEL + HOVER;
+    out.push({ mesh: monkeyMesh(group, x, y, (r + k + 0.5) * ROW, k * 0.6, material, glowMat), x, y, z: (r0 + r + k + 0.5) * ROW, phase: k * 0.6 });
+  }
+  return out;
+}
+
+function monkeyMesh(group, x, y, zl, phase, material, glowMat) {
+  const mesh = new THREE.Mesh(geometry, material);
+  mesh.frustumCulled = false;
+  mesh.position.set(x, y, zl);
+  mesh.rotation.y = phase;
+  group.add(mesh);
+  if (glowMat) {
+    const glow = new THREE.Mesh(glowGeometry(), glowMat);
+    glow.frustumCulled = false;
+    glow.renderOrder = 2;
+    mesh.add(glow); // летит вместе с обезьянкой (крутится — квадрату всё равно, он смотрит на камеру)
+  }
+  return mesh;
+}
+
+// Город дня: ровно n обезьянок на трассе (ряды rowFrom…rowTo), по одной на каждый из n равных отрезков —
+// случайная «живая» клетка (с неё можно добежать дальше), без мостов, трамплинов и рамп. У всех одна и та же
+// расстановка: зависит только от рядов мира (сид дня). world должен быть построен с запасом за rowTo.
+// Возвращает [{ row, x, y, z }] — row (номер ряда) и есть имя обезьянки: собрал — больше не появится.
+export function citySpots(world, rowFrom, rowTo, n) {
+  const alive = aliveBackward(world.rows, world.reach);
+  const rng = mulberry32((world.seed ?? 1) * 7919 + 2027);
+  const seg = (rowTo - rowFrom) / n, out = [];
+  for (let i = 0; i < n; i++) {
+    const a = Math.round(rowFrom + i * seg) + 2, b = Math.round(rowFrom + (i + 1) * seg) - 2;
+    const cands = [];
+    for (let r = a; r < b; r++) {
+      const row = world.rows[r];
+      if (!row || row.b0 !== row.b1) continue;
+      for (let c = 0; c < COLS; c++) if (alive[r][c] && walk(row[c]) && row[c] !== BRIDGE && row[c] !== LAUNCH) cands.push([r, c]);
     }
-    out.push({ mesh, x, y, z: (r0 + r + k + 0.5) * ROW, phase: k * 0.6 });
+    if (!cands.length) continue;
+    const [r, c] = cands[Math.floor(rng() * cands.length)];
+    const row = world.rows[r];
+    out.push({ row: r, x: (c + 0.5) * CELL, y: row.b0 + lv(row[c]) * LEVEL + HOVER, z: (r + 0.5) * ROW });
+  }
+  return out;
+}
+
+// меши обезьянок города дня, попавших в паттерн inst; skip(row) — уже собранные
+export function placeSpots(inst, group, spots, skip, material, glowMat) {
+  if (!geometry) return [];
+  const r0 = inst.rowStart, r1 = r0 + (inst.rows ? inst.rows.length : 0), out = [];
+  for (const s of spots) {
+    if (s.row < r0 || s.row >= r1 || skip(s.row)) continue;
+    const phase = (s.row % 7) * 0.9;
+    out.push({ mesh: monkeyMesh(group, s.x, s.y, s.z - r0 * ROW, phase, material, glowMat), x: s.x, y: s.y, z: s.z, phase, id: s.row });
   }
   return out;
 }

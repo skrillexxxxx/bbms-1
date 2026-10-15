@@ -118,6 +118,22 @@ const SKIP = (k) => k.startsWith('sdwg-lb-'); // аккаунт устройст
 const ours = (k) => (k.startsWith('city-') || k.startsWith('sdwg-')) && !SKIP(k);
 const MAXED = ['city-best', 'city-best-score', 'city-best-speed', 'sdwg-monkeys'];
 function parseSeeds(v) { try { const l = JSON.parse(v); return Array.isArray(l) ? l : []; } catch { return []; } }
+// собранные обезьянки города дня { day, seed, got: [ряды], total }: тот же город — объединяем, иначе — более поздний день
+const CITY_MONKEYS = 'sdwg-city-monkeys';
+function parseCity(v) {
+  try {
+    const o = JSON.parse(v);
+    if (!o || typeof o !== 'object' || !Array.isArray(o.got)) return null;
+    const got = [...new Set(o.got.map(Number).filter((r) => Number.isInteger(r) && r >= 0 && r < 10000))].slice(0, 64);
+    return { day: typeof o.day === 'string' ? o.day.slice(0, 10) : '', seed: Number(o.seed) || 0, got, total: Math.min(64, Math.max(0, Number(o.total) || 0)) };
+  } catch { return null; }
+}
+function mergeCity(a, b) {
+  const x = parseCity(a), y = parseCity(b);
+  if (!x || !y) return JSON.stringify(y || x || { day: '', seed: 0, got: [], total: 0 });
+  if (x.seed !== y.seed) return JSON.stringify(y.day >= x.day ? y : x);
+  return JSON.stringify({ ...y, day: y.day > x.day ? y.day : x.day, got: [...new Set([...x.got, ...y.got])].slice(0, 64), total: Math.max(x.total, y.total) });
+}
 
 // ---------- рекорды дня ----------
 // день — по Москве (UTC+3, без перехода на летнее время), как и в игре
@@ -150,6 +166,7 @@ export function mergeSave(base, inc, today = dayKey()) {
   for (const [k, v] of Object.entries(inc || {})) {
     if (!ours(k) || typeof v !== 'string' || k === DAY || k === DAY_STATS) continue;
     if (MAXED.includes(k)) out[k] = String(Math.max(Number(out[k]) || 0, Number(v) || 0));
+    else if (k === CITY_MONKEYS) out[k] = mergeCity(out[k], v);
     else if (k === 'sdwg-seeds') {
       const all = new Map();
       for (const e of [...parseSeeds(out[k]), ...parseSeeds(v)]) {

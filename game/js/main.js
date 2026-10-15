@@ -14,7 +14,7 @@ import { openBoard, syncProgress, boardData, loggedIn, loadGhosts, uploadGhost, 
 import { createMaterial, createStarMaterial, createDepthMaterial, createSunDepthMaterial, createSparkMaterial, createConeMaterial, buildInstanceMesh } from './render.js';
 import { createSound } from './sound.js';
 import { createRecorder, shareFile } from './recorder.js';
-import { loadMonkey, createMonkeyMaterial, createGlowMaterial, createGhostMaterial, placeMonkeys, monkeyGeometry } from './monkeys.js';
+import { loadMonkey, createMonkeyMaterial, createGlowMaterial, createGhostMaterial, placeMonkeys, citySpots, placeSpots, monkeyGeometry } from './monkeys.js';
 
 // ---------- параметры игрока (их же учитывает проверка паттернов) ----------
 const P = {
@@ -507,6 +507,14 @@ function startFree() {
 function renderDailySub() {
   const left = 86400e3 - ((Date.now() + 3 * 3600e3) % 86400e3), min = Math.ceil(left / 60e3);
   $('daily-sub').textContent = needsTutorial() ? tr('dailyFirstTut') : tr('dailySub', Math.floor(min / 60), min % 60);
+  // уже начал собирать обезьянок сегодняшнего города — сколько осталось
+  const v = needsTutorial() ? null : cityGot();
+  if (v && v.got.length && v.total) {
+    const mk = document.createElement('span');
+    mk.className = 'mk';
+    mk.textContent = `${v.got.length}/${v.total}`;
+    $('daily-sub').append(mk);
+  }
   if (!needsTutorial()) refreshGhosts(120e3); // призраки — заранее, к старту уже будут
 }
 setInterval(() => { if (state === 'ready') renderDailySub(); }, 30e3);
@@ -519,6 +527,34 @@ const fmtTime = (ms) => {
   const t = Math.max(0, ms) / 1000, m = Math.floor(t / 60), sec = t - m * 60;
   return m ? `${m}:${sec.toFixed(2).padStart(5, '0')}` : sec.toFixed(2);
 };
+
+// ---------- обезьянки города дня ----------
+// На трассе ровно CITY_MONKEYS, у всех одни и те же. Собрал — до конца дня её больше нет (даже если потом разбился):
+// в следующем забеге только оставшиеся. sdwg-city-monkeys: { day, seed, got: [номера рядов], total } —
+// синхронизируется между устройствами (сервер объединяет собранное за один и тот же город).
+const CITY_MONKEYS = 10, CITY_KEY = 'sdwg-city-monkeys';
+let cityMonk = null;    // { seed, spots } — расстановка последнего города дня
+let citySpotsOn = null; // расстановка в этом забеге (null — свободный забег, обезьянки как обычно)
+function cityGot(s = dailySeed()) {
+  try {
+    const v = JSON.parse(localStorage.getItem(CITY_KEY) || 'null');
+    if (v && v.seed === s && Array.isArray(v.got)) return v;
+  } catch { /* битые данные — с нуля */ }
+  return { day: dayNow(), seed: s, got: [], total: 0 };
+}
+function saveCityGot(v) {
+  try { localStorage.setItem(CITY_KEY, JSON.stringify(v)); } catch { /* приватный режим */ }
+}
+function citySpotsFor(s) {
+  if (cityMonk?.seed !== s) {
+    // отдельный мир того же сида: трасса целиком и запас за финишем, чтобы знать, откуда можно добежать дальше;
+    // мир забега строится как обычно, по мере бега
+    const w = new World(s), r1 = Math.floor((ROW * 0.5 + COURSE_M) / ROW) - 3;
+    w.ensureRows(r1 + 40);
+    cityMonk = { seed: s, spots: citySpots(w, 8, r1, CITY_MONKEYS) };
+  }
+  return cityMonk.spots;
+}
 
 // ---------- призраки города дня: обезьянки бегут по лучшим финишам дня ----------
 // Свой забег в городе дня пишется каждые 0.1 с: x, y, z (×100) и подкат. Финишировал быстрее своего лучшего — трек
@@ -848,6 +884,8 @@ function reset(s) {
   monkeys = [];
   built = 0;
   world = new World(seed);
+  citySpotsOn = dailyRun ? citySpotsFor(seed) : null;
+  if (citySpotsOn) { const v = cityGot(seed); if (v.total !== citySpotsOn.length) saveCityGot({ ...v, total: citySpotsOn.length }); }
   // на стартовом экране и в обучении — бесконечный прямой проспект; город дня — сразу город
   world.menu = !dailyRun && (state === 'ready' || tutWantsAvenue());
   runZ0 = 0;
@@ -879,7 +917,10 @@ function ensureWorld() {
   while (built < world.instances.length - 1) {
     const inst = world.instances[built++];
     const m = buildInstanceMesh(inst, materials, world);
-    monkeys.push(...placeMonkeys(world, inst, m, materials.monkey, materials.glow));
+    if (citySpotsOn) {
+      const got = new Set(cityGot(seed).got);
+      monkeys.push(...placeSpots(inst, m, citySpotsOn, (r) => got.has(r), materials.monkey, materials.glow));
+    } else monkeys.push(...placeMonkeys(world, inst, m, materials.monkey, materials.glow));
     meshes.push(m);
     scene.add(m);
   }
@@ -1589,16 +1630,19 @@ function die(cause = '?') {
   }
   if (!autopilot) {
     Object.assign(day, { score: Math.max(day.score, score), dist: Math.max(day.dist, meters), speed: Math.max(day.speed, runMaxSpeed), monkeys: day.monkeys + runMonkeys });
-    if (daily) Object.assign(day, { cSpeed: Math.max(day.cSpeed, runMaxSpeed), cMonkeys: day.cMonkeys + runMonkeys, cTime: newRec ? runMs : day.cTime });
+    // обезьянки города дня — сколько из тех, что на трассе, собрано за сегодня
+    if (daily) Object.assign(day, { cSpeed: Math.max(day.cSpeed, runMaxSpeed), cMonkeys: cityGot(seed).got.length, cTime: newRec ? runMs : day.cTime });
     saveDayStats(day);
   }
   // экран смерти — коротко. Свободный: очки, метры · ×множитель · км/ч. Город дня: время (или сколько не добежал)
   const info = world.infoAt(pl.z + 1);
   const mk = runMonkeys ? `<span class="mk">${runMonkeys}</span>` : '';
   if (daily) {
+    // обезьянки — собрано за сегодня из всех на трассе (и после аварии: собранные остаются собранными)
+    const cmk = citySpotsOn ? `<span class="mk">${cityGot(seed).got.length}/${citySpotsOn.length}</span>` : '';
     ui.overDist.textContent = finished ? fmtTime(runMs) : `${meters} ${tr('m')}`;
-    $('over-run').innerHTML = finished ? `<span>${COURSE_M} ${tr('m')}</span><span>${runMaxSpeed} ${tr('kmh')}</span>${mk}`
-      : `<span>${tr('dnfLeft', Math.max(0, Math.ceil(courseEnd - pl.z)))}</span>`;
+    $('over-run').innerHTML = finished ? `<span>${COURSE_M} ${tr('m')}</span><span>${runMaxSpeed} ${tr('kmh')}</span>${cmk}`
+      : `<span>${tr('dnfLeft', Math.max(0, Math.ceil(courseEnd - pl.z)))}</span>${cmk}`;
     ui.best.textContent = newRec ? tr('recNewCity')
       : prevTime ? tr('recTime', fmtTime(prevTime)) + (finished ? ` · +${((runMs - prevTime) / 1000).toFixed(2)}` : '')
         : tr('finishToRank');
@@ -2454,8 +2498,9 @@ function updateSpace(dt, deep) {
 
 // ---------- обезьянки ----------
 function updateMonkeyHud() {
-  ui.monk.textContent = String(runMonkeys);
-  ui.monk.classList.toggle('show', runMonkeys > 0);
+  // город дня — сколько собрано из всех на трассе за сегодня; свободный — за забег
+  ui.monk.textContent = citySpotsOn ? `${cityGot(seed).got.length}/${citySpotsOn.length}` : String(runMonkeys);
+  ui.monk.classList.toggle('show', !!citySpotsOn || runMonkeys > 0);
 }
 // z0 — где игрок был в начале кадра: за кадр на скорости пролетаем больше метра, проверяем весь отрезок
 function collectMonkeys(z0) {
@@ -2467,10 +2512,18 @@ function collectMonkeys(z0) {
     k.taken = gameTime;
     runMonkeys++; totalMonkeys++;
     try { localStorage.setItem('sdwg-monkeys', String(totalMonkeys)); } catch { /* приватный режим */ }
+    let all = false;
+    if (citySpotsOn && k.id !== undefined) {
+      const v = cityGot(seed);
+      if (!v.got.includes(k.id)) v.got.push(k.id);
+      saveCityGot({ ...v, day: dayNow(), total: citySpotsOn.length });
+      all = v.got.length >= citySpotsOn.length;
+    }
     updateMonkeyHud();
     ui.monk.classList.remove('pop'); void ui.monk.offsetWidth; ui.monk.classList.add('pop');
     sound.sfx('monkey');
-    if (runMonkeys % MONKEYS_N === 0) sound.sfx('monkeysN', 1, 0.25); // каждые 5 за забег — далёкая «награда»
+    // каждые 5 за забег — далёкая «награда»; в городе дня — когда собраны все на трассе
+    if (citySpotsOn ? all : runMonkeys % MONKEYS_N === 0) sound.sfx('monkeysN', 1, 0.25);
     rec.event('monkey', { z: k.z, x: k.x, n: runMonkeys });
   }
 }
@@ -2914,4 +2967,4 @@ if (window.__sdwgAudio) {
 requestAnimationFrame(frame);
 
 // для автотестов
-window.__game = { materials, cam, tut, flow, setCourse: (m) => { courseEnd = pl.z + m; }, setGhosts: (list) => { serverGhosts = list; ghostsDay = dayNow(); ghostsAt = performance.now(); buildGhosts(); }, get ghosts() { return ghosts; }, get ghostRec() { return ghostRec; }, startDaily, laneShift, setAuto: (v) => { autopilot = v; }, get state() { return state; }, pl, start, die, jump, runFile, get monkeys() { return monkeys; }, slide, get seed() { return seed; }, get world() { return world; }, get meshes() { return meshes; }, get exposure() { return exposurePass ? [exposurePass.exposure, exposurePass.avg] : null; } };
+window.__game = { materials, cam, tut, flow, get citySpots() { return citySpotsOn; }, cityGot: () => cityGot(seed), setCourse: (m) => { courseEnd = pl.z + m; }, setGhosts: (list) => { serverGhosts = list; ghostsDay = dayNow(); ghostsAt = performance.now(); buildGhosts(); }, get ghosts() { return ghosts; }, get ghostRec() { return ghostRec; }, startDaily, laneShift, setAuto: (v) => { autopilot = v; }, get state() { return state; }, pl, start, die, jump, runFile, get monkeys() { return monkeys; }, slide, get seed() { return seed; }, get world() { return world; }, get meshes() { return meshes; }, get exposure() { return exposurePass ? [exposurePass.exposure, exposurePass.avg] : null; } };

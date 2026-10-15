@@ -338,6 +338,8 @@
     #start .modes { display: flex; flex-direction: column; align-items: center; }
     #daily-sub { font-size: 13px; opacity: 0.65; margin: 0 0 6px; }
     #daily-sub:empty { display: none; }
+    #daily-sub .mk { margin-left: 10px; color: #e5262b; opacity: 1; font-weight: 700; white-space: nowrap; }
+    #daily-sub .mk::before { content: ''; display: inline-block; width: 1.3em; height: 1.3em; background: url(monkey-icon.png) center / contain no-repeat; margin-right: 0.15em; vertical-align: -0.3em; }
     #start .modes + .menu { margin-top: 10px; }
     #over.daily .free-only, #over:not(.daily) .daily-only { display: none !important; }
     #nick .fields { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; }
